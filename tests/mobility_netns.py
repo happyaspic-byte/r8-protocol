@@ -35,7 +35,11 @@ def topology(commands=None,suffix=None):
   _stage("bridge_create",lambda:(c.inside(router,"ip","link","add","brq1","type","bridge"),[c.inside(router,"ip","link","set",n[x],"master","brq1") for x in ("rb0","rb1")]))
   _stage("address_config",lambda:([c.inside(client,"ip","addr","add","10.88.0.2/24","dev",n["cr0"]),c.inside(router,"ip","addr","add","10.88.0.1/24","dev",n["cr1"]),c.inside(router,"ip","addr","add","10.88.1.1/24","dev","brq1"),c.inside(server,"ip","addr","add","10.88.1.2/24","dev",n["si0"]),c.inside(server,"ip","addr","add","10.88.1.3/24","dev",n["si1"]),c.inside(server,"ip","addr","add","10.88.1.100/32","dev",n["si0"])]))
   _stage("link_activate",lambda:([c.inside(ns,"ip","link","set","lo","up") for ns in (client,server,router)]+[c.inside(client,"ip","link","set",n["cr0"],"up")]+[c.inside(router,"ip","link","set",d,"up") for d in (n["cr1"],n["rb0"],n["rb1"],"brq1")]+[c.inside(server,"ip","link","set",n["si0"],"up")]))
-  _stage("route_config",lambda:([c.inside(client,"ip","route","add","default","via","10.88.0.1","dev",n["cr0"]),c.inside(server,"ip","route","add","10.88.0.0/24","via","10.88.1.1","dev",n["si0"]),c.inside(server,"ip","route","add","10.88.0.0/24","via","10.88.1.1","dev",n["si0"],"table","101"),c.inside(server,"ip","rule","add","from","10.88.1.2/32","table","101"),c.inside(server,"ip","route","add","10.88.0.0/24","via","10.88.1.1","dev",n["si1"],"onlink","table","102"),c.inside(server,"ip","rule","add","from","10.88.1.3/32","table","102"),c.inside(server,"ip","route","add","10.88.0.0/24","via","10.88.1.1","dev",n["si0"],"table","103"),c.inside(server,"ip","rule","add","from","10.88.1.100/32","table","103")]))
+  _stage("route_client_default",lambda:c.inside(client,"ip","route","add","default","via","10.88.0.1","dev",n["cr0"]))
+  _stage("route_server_main",lambda:c.inside(server,"ip","route","add","10.88.0.0/24","via","10.88.1.1","dev",n["si0"]))
+  _stage("route_old_policy",lambda:([c.inside(server,"ip","route","add","10.88.1.0/24","dev",n["si0"],"scope","link","table","101"),c.inside(server,"ip","route","add","10.88.0.0/24","via","10.88.1.1","dev",n["si0"],"table","101"),c.inside(server,"ip","rule","add","from","10.88.1.2/32","table","101")]))
+  _stage("route_candidate_policy",lambda:([c.inside(server,"ip","route","add","10.88.1.0/24","dev",n["si1"],"scope","link","table","102"),c.inside(server,"ip","route","add","10.88.0.0/24","via","10.88.1.1","dev",n["si1"],"onlink","table","102"),c.inside(server,"ip","rule","add","from","10.88.1.3/32","table","102")]))
+  _stage("route_vip_policy",lambda:([c.inside(server,"ip","route","add","10.88.1.0/24","dev",n["si0"],"scope","link","table","103"),c.inside(server,"ip","route","add","10.88.0.0/24","via","10.88.1.1","dev",n["si0"],"table","103"),c.inside(server,"ip","rule","add","from","10.88.1.100/32","table","103")]))
   return c,{"client":client,"server":server,"router":router,"names":n}
  except Exception: c.cleanup(); raise
 def counters(ns,devs,c):
@@ -116,7 +120,7 @@ def actions(c,t,mech,arm,cut):
  if mech=="TCP-reconnect": _stage("link_activate",lambda:c.inside(s,"ip","link","set",n["si0"],"down"))
  elif mech=="GARP-VIP":
   _stage("address_config",lambda:(c.inside(s,"ip","addr","del","10.88.1.100/32","dev",n["si0"]),c.inside(s,"ip","addr","add","10.88.1.100/32","dev",n["si1"])))
-  _stage("route_config",lambda:c.inside(s,"ip","route","replace","10.88.0.0/24","via","10.88.1.1","dev",n["si1"],"onlink","table","103"))
+  _stage("route_vip_policy",lambda:c.inside(s,"ip","route","replace","10.88.0.0/24","via","10.88.1.1","dev",n["si1"],"onlink","table","103"))
   _stage("link_activate",lambda:([c.inside(s,"arping","-U","-I",n["si1"],"10.88.1.100") if i == 2 else (c.inside(s,"arping","-U","-I",n["si1"],"10.88.1.100"),time.sleep(.1)) for i in range(3)]))
  else:
   if arm=="abrupt-break": _stage("link_activate",lambda:c.inside(s,"ip","link","set",n["si0"],"down"))

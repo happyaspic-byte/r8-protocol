@@ -65,11 +65,30 @@ class Q1Tests(unittest.TestCase):
   links=[i for i,a in enumerate(calls) if a[-2:] in {(t["names"]["cr0"],"up"),(t["names"]["si0"],"up")} or "brq1" in a and a[-1:] == ("up",)]
   self.assertLess(max(links),min(routes))
   policy=[a for a in calls if "table" in a]
-  self.assertEqual(sum("101" in a for a in policy),2)
-  self.assertEqual(sum("102" in a for a in policy),2)
-  self.assertEqual(sum("103" in a for a in policy),2)
-  candidate=next(a for a in policy if "102" in a and "route" in a)
+  self.assertEqual(sum("101" in a for a in policy),3)
+  self.assertEqual(sum("102" in a for a in policy),3)
+  self.assertEqual(sum("103" in a for a in policy),3)
+  for table in ("101","102","103"):
+   connected=next(i for i,a in enumerate(calls) if "route" in a and table in a and "10.88.1.0/24" in a)
+   remote=next(i for i,a in enumerate(calls) if "route" in a and table in a and "10.88.0.0/24" in a)
+   self.assertLess(connected,remote)
+  candidate=next(a for a in policy if "102" in a and "route" in a and "10.88.0.0/24" in a)
   self.assertEqual(candidate[candidate.index("via")+1],"10.88.1.1"); self.assertIn("onlink",candidate)
+ def test_route_stage_categories_for_exact_command_groups(self):
+  groups={
+   "route_client_default":lambda a:"route" in a and "default" in a,
+   "route_server_main":lambda a:"route" in a and "10.88.0.0/24" in a and "table" not in a,
+   "route_old_policy":lambda a:"route" in a and "table" in a and "101" in a,
+   "route_candidate_policy":lambda a:"route" in a and "table" in a and "102" in a,
+   "route_vip_policy":lambda a:"route" in a and "table" in a and "103" in a,
+  }
+  for category,matches in groups.items():
+   def run(args,**kw):
+    if matches(tuple(args)): raise subprocess.CalledProcessError(1,args)
+    return subprocess.CompletedProcess(args,0,"","")
+   result=net.worker("R8","abrupt-break",net.Commands(run=run))
+   self.assertEqual((result["setup_status"],result["error_category"]),("failed",category))
+  self.assertTrue({"route_client_default","route_server_main","route_old_policy","route_candidate_policy","route_vip_policy"} <= q1.ERROR_CATEGORIES)
  def test_only_garp_replaces_vip_policy_route(self):
   calls=[]
   def run(args,**kw): calls.append(tuple(args)); return subprocess.CompletedProcess(args,0,"","")
