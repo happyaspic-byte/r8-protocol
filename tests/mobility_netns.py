@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Privileged Q1 network-namespace worker and its real TCP endpoint helpers."""
-import argparse, hashlib, json, os, resource, socket, struct, subprocess, sys, tempfile, threading, time, uuid
+import argparse, hashlib, json, os, resource, selectors, socket, struct, subprocess, sys, tempfile, time, uuid
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT / "reference"))
@@ -58,25 +58,50 @@ def _recv_exact(s,n):
   if not p: raise OSError("eof")
   b+=p
  return b
+def _queue_frames(incoming,outgoing):
+ while len(incoming)>=PAYLOAD_SIZE:
+  outgoing.extend(incoming[:PAYLOAD_SIZE]); del incoming[:PAYLOAD_SIZE]
 def endpoint_server(mechanism,ready,stop):
- ports=PORTS[mechanism]; listeners=[]
+ ports=PORTS[mechanism]; listeners=[]; selector=selectors.DefaultSelector()
+ def close(conn):
+  try: selector.unregister(conn)
+  except Exception: pass
+  try: conn.close()
+  except OSError: pass
  try:
   bind=["0.0.0.0"] if mechanism=="GARP-VIP" else ["10.88.1.2","10.88.1.3"]
   for ip,port in zip(bind,ports):
-   s=socket.socket(); s.setsockopt(socket.IPPROTO_TCP,socket.TCP_NODELAY,1); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1); s.bind((ip,port)); s.listen(); s.settimeout(.05); listeners.append(s)
+   listener=socket.socket(); listener.setsockopt(socket.IPPROTO_TCP,socket.TCP_NODELAY,1); listener.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1); listener.bind((ip,port)); listener.listen(); listener.setblocking(False); selector.register(listener,selectors.EVENT_READ); listeners.append(listener)
   Path(ready).write_text("ready")
-  conns=[]
   while not Path(stop).exists():
-   for l in listeners:
-    try: conns.append(l.accept()[0])
-    except socket.timeout: pass
-   for s in conns[:]:
-    s.settimeout(.001)
-    try: s.sendall(_recv_exact(s,PAYLOAD_SIZE))
-    except socket.timeout: pass
-    except OSError: conns.remove(s); s.close()
+   for key,mask in selector.select(.002):
+    conn=key.fileobj
+    if conn in listeners:
+     while True:
+      try: accepted,_=conn.accept()
+      except BlockingIOError: break
+      accepted.setsockopt(socket.IPPROTO_TCP,socket.TCP_NODELAY,1); accepted.setblocking(False); selector.register(accepted,selectors.EVENT_READ,[bytearray(),bytearray()])
+     continue
+    incoming,outgoing=key.data
+    if mask & selectors.EVENT_READ:
+     try: chunk=conn.recv(4096)
+     except (BlockingIOError,InterruptedError): chunk=None
+     except OSError: close(conn); continue
+     if chunk == b"": close(conn); continue
+     if chunk:
+      incoming.extend(chunk)
+      _queue_frames(incoming,outgoing)
+    if mask & selectors.EVENT_WRITE and outgoing:
+     try: sent=conn.send(outgoing)
+     except (BlockingIOError,InterruptedError): sent=0
+     except OSError: close(conn); continue
+     del outgoing[:sent]
+    events=selectors.EVENT_READ | (selectors.EVENT_WRITE if outgoing else 0)
+    try: selector.modify(conn,events,key.data)
+    except (KeyError,OSError): pass
  finally:
-  for s in listeners: s.close()
+  for key in list(selector.get_map().values()): close(key.fileobj)
+  selector.close()
 def endpoint_client(mechanism,start,cut,end,events):
  target="10.88.1.100" if mechanism=="GARP-VIP" else "10.88.1.2"; old,new=PORTS[mechanism]; port=old; sock=None; sent=[]; received=[]; seq=0; scheduled=list(range(800))
  if end-start != len(scheduled)*RATE_NS: raise RuntimeError("invalid trial timeline")
@@ -122,15 +147,21 @@ def actions(c,t,mech,arm,cut):
  elif mech=="GARP-VIP":
   _stage("address_config",lambda:(c.inside(s,"ip","addr","del","10.88.1.100/32","dev",n["si0"]),c.inside(s,"ip","addr","add","10.88.1.100/32","dev",n["si1"])))
   _stage("route_vip_policy",lambda:c.inside(s,"ip","route","replace","10.88.0.0/24","via","10.88.1.1","dev",n["si1"],"onlink","table","103"))
-  _stage("link_activate",lambda:([c.inside(s,"arping","-U","-I",n["si1"],"10.88.1.100") if i == 2 else (c.inside(s,"arping","-U","-I",n["si1"],"10.88.1.100"),time.sleep(.1)) for i in range(3)]))
+  _stage("link_activate",lambda:([c.inside(s,"arping","-U","-c","1","-I",n["si1"],"10.88.1.100") if i == 2 else (c.inside(s,"arping","-U","-c","1","-I",n["si1"],"10.88.1.100"),time.sleep(.1)) for i in range(3)]))
  else:
   if arm=="abrupt-break": _stage("link_activate",lambda:c.inside(s,"ip","link","set",n["si0"],"down"))
 def _r8(command,seed,peer,address,peer_address,new_address,bind,extra):
- return [sys.executable,str(ROOT/"reference/r8move.py"),command,"--local-seed-hex",seed.hex(),"--peer-public-key-hex",peer.hex(),"--service-context","1","--server-context-id","1","--address",address,"--peer-address",peer_address,"--new-address",new_address,"--bind",bind,"--allow-isolated-underlay","--binding-budget","1252","--timeout","12","--deterministic-scid","1","--deterministic-candidate-hex","01"*16,"--deterministic-secret-hex","02"*32]+extra
+ return [sys.executable,str(ROOT/"reference/r8move.py"),command,"--local-seed-hex",seed.hex(),"--peer-public-key-hex",peer.hex(),"--service-context","1","--server-context-id","1","--address",address,"--peer-address",peer_address,"--new-address",new_address,"--bind",bind,"--allow-isolated-underlay","--binding-budget","1252","--timeout","3","--deterministic-scid","1","--deterministic-candidate-hex","01"*16,"--deterministic-secret-hex","02"*32]+extra
 def _r8events(fd):
  os.lseek(fd,0,os.SEEK_SET); raw=os.read(fd,1<<20)
  if len(raw)%16: raise StageError("authenticated_events")
  return {"scheduled":list(range(800)),"sent":list(range(800)),"received":[(stamp,seq) for seq,stamp in struct.iter_unpack("!QQ",raw)]}
+def _wait_r8(client,server):
+ client.wait(timeout=15)
+ if client.returncode != 0:
+  server.kill(); server.wait(timeout=3)
+  raise StageError("endpoint_exit")
+ server.wait(timeout=3)
 def worker(mechanism,arm,commands=None):
  c=commands or Commands(); t=None; children=[]; event=None; start=cut=end=activation=None; cpu=resource.getrusage(resource.RUSAGE_SELF); child_cpu=resource.getrusage(resource.RUSAGE_CHILDREN); category=None
  try:
@@ -145,7 +176,7 @@ def worker(mechanism,arm,commands=None):
     server=_stage("endpoint_setup",lambda:c.spawn(t["client"],*_r8("serve",stable,Identity.from_seed(moving).public,"::2","::1","::3","10.88.0.2:53104",common+["--max-sessions","1","--expected-post-move","1"]),pass_fds=(event,))); children.append(server)
     client=_stage("endpoint_setup",lambda:c.spawn(t["server"],*_r8("connect",moving,Identity.from_seed(stable).public,"::1","::2","::3","10.88.1.2:0",common+["--peer","10.88.0.2:53104","--candidate-bind","10.88.1.3:0","--mode","abrupt" if arm=="abrupt-break" else "mbb","--events-fd",str(event)]),pass_fds=(event,))); children.append(client)
     actions(c,t,mechanism,arm,cut)
-    _stage("endpoint_exit",lambda:(client.wait(timeout=15),server.wait(timeout=15)))
+    _stage("endpoint_exit",lambda:_wait_r8(client,server))
     event_data=_stage("authenticated_events",lambda:_r8events(event))
    else:
     ready,stop,events=(str(Path(d)/x) for x in ("ready","stop","events")); server=_stage("endpoint_setup",lambda:c.spawn(t["server"],sys.executable,str(Path(__file__).resolve()),"endpoint-server","--mechanism",mechanism,"--ready",ready,"--stop",stop)); children.append(server)

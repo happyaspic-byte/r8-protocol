@@ -13,10 +13,10 @@
     "retained_package_path": "bench/results/q1-setup-failure-v2"
   },
   "v3_smoke_diagnostic": {
-    "hosted_runs": ["31799001135", "31799350837"],
+    "hosted_runs": ["31799001135", "31799350837", "31801103160"],
     "status": "non-result-diagnostic-only",
     "application_observations": "none",
-    "reason": "V3 smoke identified route_config and route_candidate_policy before traffic: static table 102 connected and remote routes require temporary candidate-link activation during setup, followed by explicit deactivation before pre-trial counters and clock."
+    "reason": "V3 smoke identified route_config and route_candidate_policy before traffic, and later showed R8 make-before-break success while unbounded GARP workers timed out and TCP/R8 abrupt failed in implementation; all smoke runs are diagnostic only with no result observations."
   },
   "normative_references": {
     "sections": [
@@ -75,18 +75,20 @@
   },
   "timing_and_actions": {
     "event_T": "scheduled cutover instant",
+    "candidate_proof_timeout": "3 seconds, matching frozen challenge expiry; it never extends the T+5-second observation window",
+    "worker_supervisor": "may allow up to 40 seconds solely for bounded teardown and error capture, never for measurement",
     "abrupt-break": {
       "advance_notice": "none for every mechanism",
       "R8": "old and candidate carriers use the fixed server addresses and UDP port 53104; one process and session retain state. At T, bring the candidate interface up and administratively bring the old interface down before one authenticated LOC_UPDATE and the sole candidate probe/challenge/response proof; no fallback is permitted.",
       "TCP-reconnect": "the established stream initially uses numeric 10.88.1.2:53101. At T, make the new listener and interface usable, administratively bring the old server interface down, and reconnect every 10 ms without DNS to the preconfigured numeric target 10.88.1.3:53102.",
-      "GARP-VIP": "the stream initially connects to 10.88.1.100:53103 on the old interface. At T, make the new interface usable and atomically remove then add the VIP; as part of that atomic move, execute exactly one `ip route replace table 103 10.88.0.0/24 via 10.88.1.1 dev candidate onlink`, then send exactly three `arping -U` replies 100 ms apart. The listener is wildcard-bound within the isolated server namespace; no neighbor flush is permitted. No R8 or TCP route changes occur at cutover."
+      "GARP-VIP": "the stream initially connects to 10.88.1.100:53103 on the old interface. At T, make the new interface usable and atomically remove then add the VIP; as part of that atomic move, execute exactly one `ip route replace table 103 10.88.0.0/24 via 10.88.1.1 dev candidate onlink`, then execute exactly three `arping -U -c 1` commands, each sending one unsolicited announcement. Operations start 100 ms apart and each bounded command MUST return before the next. The listener is wildcard-bound within the isolated server namespace; no neighbor flush is permitted. No R8 or TCP route changes occur at cutover."
     },
     "make-before-break": {
       "advance_notice": "T-2 seconds for every mechanism",
       "activation": "at T-2 seconds activate the new carrier, listener/interface, or VIP interface respectively; do not cut over traffic",
       "R8": "old and candidate carriers use the fixed server addresses and UDP port 53104; one process and session retain state. Bring the candidate interface up at T-2 seconds; at or after T perform one authenticated LOC_UPDATE and the sole candidate proof, retain the old carrier until proof, then make it grace-only and administratively down after grace. No fallback is permitted.",
       "TCP-reconnect": "the established stream initially uses numeric 10.88.1.2:53101. At T-2 seconds make the new listener and interface usable; at T administratively bring the old server interface down and reconnect every 10 ms without DNS to numeric 10.88.1.3:53102.",
-      "GARP-VIP": "the stream initially connects to 10.88.1.100:53103 on the old interface. Bring the new interface up at T-2 seconds; at T atomically remove then add the VIP and, as part of that atomic move, execute exactly one `ip route replace table 103 10.88.0.0/24 via 10.88.1.1 dev candidate onlink`, then send exactly three `arping -U` replies 100 ms apart. The listener is wildcard-bound within the isolated server namespace; no neighbor flush is permitted. No R8 or TCP route changes occur at cutover."
+      "GARP-VIP": "the stream initially connects to 10.88.1.100:53103 on the old interface. Bring the new interface up at T-2 seconds; at T atomically remove then add the VIP and, as part of that atomic move, execute exactly one `ip route replace table 103 10.88.0.0/24 via 10.88.1.1 dev candidate onlink`, then execute exactly three `arping -U -c 1` commands, each sending one unsolicited announcement. Operations start 100 ms apart and each bounded command MUST return before the next. The listener is wildcard-bound within the isolated server namespace; no neighbor flush is permitted. No R8 or TCP route changes occur at cutover."
     }
   },
   "equalization": {

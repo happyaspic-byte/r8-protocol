@@ -120,8 +120,17 @@ class Q1Tests(unittest.TestCase):
   net.time.monotonic_ns=lambda:10; net.time.sleep=lambda delay:sleeps.append(delay)
   try: net.actions(c,topology,"GARP-VIP","abrupt-break",10)
   finally: net.time.monotonic_ns,net.time.sleep=old_clock,old_sleep
-  self.assertEqual(len([a for a in calls if "arping" in a and "-U" in a]),3)
+  arps=[a for a in calls if "arping" in a]
+  self.assertEqual(len(arps),3)
+  self.assertTrue(all(a[-7:]==("arping","-U","-c","1","-I","new","10.88.1.100") for a in arps))
   self.assertEqual(sleeps,[.1,.1])
+ def test_selector_echo_framing_handles_fragments_multiple_frames_and_listeners(self):
+  first_in,first_out=bytearray(net.payload(1)[:17]),bytearray()
+  second_in,second_out=bytearray(net.payload(3)+net.payload(4)),bytearray()
+  net._queue_frames(first_in,first_out); net._queue_frames(second_in,second_out)
+  self.assertEqual(bytes(first_out),b""); self.assertEqual(bytes(second_out),net.payload(3)+net.payload(4))
+  first_in.extend(net.payload(1)[17:]+net.payload(2)); net._queue_frames(first_in,first_out)
+  self.assertEqual(bytes(first_out),net.payload(1)+net.payload(2))
  def test_endpoint_dispatch(self):
   calls=[]
   class Proc:
@@ -143,6 +152,16 @@ class Q1Tests(unittest.TestCase):
   command=net._r8("connect",seed,peer,"::1","::2","::3","10.88.1.2:0",["--peer","10.88.0.2:53104"])
   self.assertIn(str(ROOT/"reference/r8move.py"),command); self.assertIn("connect",command)
   self.assertNotIn("endpoint-client",command); self.assertIn("--allow-isolated-underlay",command)
+  self.assertEqual(command[command.index("--timeout")+1],"3")
+ def test_runner_worker_timeout_is_forty_seconds(self):
+  seen=[]; original=q1.subprocess.run
+  def run(*args,**kwargs):
+   seen.append(kwargs["timeout"])
+   return subprocess.CompletedProcess(args[0],0,json.dumps({"setup_status":"complete","failure":False,"censored":False,"error_category":None}),"")
+  q1.subprocess.run=run
+  try: q1.invoke_worker(q1.schedule(True)[0],"config")
+  finally: q1.subprocess.run=original
+  self.assertEqual(seen,[40])
  def test_bootstrap_and_manifest_tamper(self):
   plans=[p for p in q1.schedule() if p["exclusion_reason"] is None and p["mechanism"]=="R8" and p["arm"]=="abrupt-break" and p["block_id"]%2==0]
   rows=[{"trial_id":p["trial_id"],"mechanism":p["mechanism"],"arm":p["arm"],"block_id":p["block_id"],"setup_status":"failed" if i==0 else "complete","failure":i==0,"outage_ns":None if i==0 else p["block_id"]+1} for i,p in enumerate(plans)]

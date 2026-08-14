@@ -83,7 +83,7 @@ def summary(rows, configuration_sha256):
 def invoke_worker(plan, config_sha):
     command = [sys.executable, str(ROOT / "tests/mobility_netns.py"), "worker", "--mechanism", plan["mechanism"], "--arm", plan["arm"]]
     try:
-        run = subprocess.run(command, text=True, capture_output=True, timeout=15, check=False)
+        run = subprocess.run(command, text=True, capture_output=True, timeout=40, check=False)
         payload = json.loads(run.stdout) if run.returncode == 0 else {"setup_status":"failed", "failure":True, "censored":True, "error_category":"worker_exit"}
     except subprocess.TimeoutExpired:
         payload = {"setup_status":"failed", "failure":True, "censored":True, "error_category":"worker_timeout"}
