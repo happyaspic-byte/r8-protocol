@@ -38,6 +38,10 @@ class Q1V4Tests(unittest.TestCase):
   self.assertIn('client_gate_r,client_gate_w=os.pipe()',source)
   self.assertIn('_read_exact(cpu_r,96)',source)
   self.assertIn('endpoint-server","--mechanism",mechanism,"--ready-fd",str(ready_w),"--schedule-fd"',source)
+ def test_parent_closes_ready_writer_before_waiting(self):
+  source=(ROOT/"tests/mobility_netns.py").read_text()
+  self.assertLess(source.index("os.close(ready_w)"),source.index("_read_exact(ready_r,2)"))
+  self.assertIn("fds[fds.index(ready_w)]=None",source)
  def test_baseline_server_waits_for_gate_and_reports_cpu(self):
   source=(ROOT/'tests/mobility_netns.py').read_text()
   self.assertIn('_,_,end=_schedule(schedule_fd,gate_fd); before_ns=time.monotonic_ns(); before=resource.getrusage',source)
@@ -241,6 +245,14 @@ class Q1V4Tests(unittest.TestCase):
   class Bad:
    def inside(self,*args): return subprocess.CompletedProcess(args,0,'not-a-number','')
   with self.assertRaises(net.StageError): net.counters('server',('dev',),Bad())
+ def test_counters_batches_all_statistics_per_sample(self):
+  calls=[]
+  class Commands:
+   def inside(self,*args):
+    calls.append(args)
+    return subprocess.CompletedProcess(args,0,"\n".join(str(value) for value in range(16))+"\n","")
+  measured=net.counters("server",("old","new"),Commands())
+  self.assertEqual(len(calls),1); self.assertEqual(calls[0][:2],("server","cat")); self.assertEqual(measured["1"]["tx_errors"],15)
  def test_topology_ownership_routes_and_candidate_down(self):
   calls=[]
   def run(args,**kw):
@@ -276,7 +288,7 @@ class Q1V4Tests(unittest.TestCase):
   source=(ROOT/'tests/mobility_netns.py').read_text(); self.assertIn('socket.SO_BINDTODEVICE',source); self.assertIn('(old_dev,new_dev)[index].encode()+b"\\0"',source)
  def test_r8_uses_udp_r8move_and_private_fds(self):
   command=net._r8('connect',b'x'*32,net.Identity.from_seed(b'y'*32).public,'::1','::2','::3','10.88.1.2:0',['--peer','10.88.0.2:53104'])
-  self.assertIn(str(ROOT/'reference/r8move.py'),command); self.assertNotIn('endpoint-client',command)
+  self.assertIn(str(ROOT/'reference/r8move.py'),command); self.assertNotIn('endpoint-client',command); self.assertEqual(command.count("--timeout"),0)
   source=(ROOT/'reference/r8move.py').read_text(); self.assertIn('--schedule-fd',source); self.assertIn('--attempt-fd',source)
   for due in (10,10_000_000,123_456_780):
    self.assertEqual((due+10_000_000)/1e9,due/1e9+10_000_000/1e9)

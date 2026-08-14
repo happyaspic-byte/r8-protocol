@@ -63,13 +63,13 @@ def topology(commands=None,suffix=None):
   result={"client":client,"server":server,"router":router,"names":n}; verify_environment(c,result); return c,result
  except Exception: c.cleanup(); raise
 def counters(ns,devs,c):
- out={}
- for i,d in enumerate(devs):
-  out[str(i)]={}
-  for f in COUNTERS:
-   try: out[str(i)][f]=int(c.inside(ns,"cat",f"/sys/class/net/{d}/statistics/{f}").stdout.strip())
-   except Exception as error: raise StageError("counter_read") from error
- return out
+ paths=[f"/sys/class/net/{device}/statistics/{field}" for device in devs for field in COUNTERS]
+ try: values=c.inside(ns,"cat",*paths).stdout.splitlines()
+ except Exception as error: raise StageError("counter_read") from error
+ if len(values)!=len(paths): raise StageError("counter_read")
+ try: values=[int(value) for value in values]
+ except ValueError as error: raise StageError("counter_read") from error
+ return {str(index):dict(zip(COUNTERS,values[index*len(COUNTERS):(index+1)*len(COUNTERS)])) for index in range(len(devs))}
 def verify_environment(c,topology):
  checks=((topology["client"],topology["names"]["cr0"]),)+tuple((topology["router"],topology["names"][name]) for name in ("cr1","rb0","rb1"))+((topology["router"],"brq1"),)+tuple((topology["server"],topology["names"][name]) for name in ("si0","si1"))
  for namespace,device in checks:
@@ -245,7 +245,7 @@ def actions(c,t,mech,arm,cut,control_path=None):
  elif arm=="abrupt-break": _stage("link_activate",lambda:c.inside(s,"ip","link","set",n["si0"],"down"))
  return activation_start,activation_complete
 def _r8(command,seed,peer,address,peer_address,new_address,bind,extra):
- return [sys.executable,str(ROOT/"reference/r8move.py"),command,"--local-seed-hex",seed.hex(),"--peer-public-key-hex",peer.hex(),"--service-context","1","--server-context-id","1","--address",address,"--peer-address",peer_address,"--new-address",new_address,"--bind",bind,"--allow-isolated-underlay","--binding-budget","1252","--timeout","3","--deterministic-scid","1","--deterministic-candidate-hex","01"*16,"--deterministic-secret-hex","02"*32]+extra
+ return [sys.executable,str(ROOT/"reference/r8move.py"),command,"--local-seed-hex",seed.hex(),"--peer-public-key-hex",peer.hex(),"--service-context","1","--server-context-id","1","--address",address,"--peer-address",peer_address,"--new-address",new_address,"--bind",bind,"--allow-isolated-underlay","--binding-budget","1252","--deterministic-scid","1","--deterministic-candidate-hex","01"*16,"--deterministic-secret-hex","02"*32]+extra
 def _events(fd):
  os.lseek(fd,0,os.SEEK_SET); raw=os.read(fd,1<<20)
  if len(raw)%16: raise StageError("authenticated_events")
@@ -341,7 +341,7 @@ def worker(mechanism,arm,commands=None,control_path=None,evidence_dir=None,suffi
     stop=str(directory/"stop")
     server=_stage("endpoint_setup",lambda:c.spawn(t["server"],sys.executable,str(Path(__file__).resolve()),"endpoint-server","--mechanism",mechanism,"--ready-fd",str(ready_w),"--schedule-fd",str(server_schedule_r),"--gate-fd",str(server_gate_r),"--stop",stop,"--old-dev",t["names"]["si0"],"--new-dev",t["names"]["si1"],"--cpu-fd",str(cpu_w),pass_fds=(ready_w,server_schedule_r,server_gate_r,cpu_w))); children.append(server)
     client=_stage("endpoint_setup",lambda:c.spawn(t["client"],sys.executable,str(Path(__file__).resolve()),"endpoint-client","--mechanism",mechanism,"--ready-fd",str(ready_w),"--schedule-fd",str(client_schedule_r),"--gate-fd",str(client_gate_r),"--attempt-fd",str(records["attempted"]),"--sent-fd",str(records["sent"]),"--received-fd",str(records["received"]),"--cpu-fd",str(cpu_w),pass_fds=(ready_w,client_schedule_r,client_gate_r,records["attempted"],records["sent"],records["received"],cpu_w))); children.append(client)
-   _read_exact(ready_r,2)
+   os.close(ready_w); fds[fds.index(ready_w)]=None; _read_exact(ready_r,2)
    pre_interfaces=counters(t["server"],(t["names"]["si0"],t["names"]["si1"]),c); pre_counter_ns=time.monotonic_ns(); start=pre_counter_ns+BOUNDARY_SKEW_NS; pre_cpu=resource.getrusage(resource.RUSAGE_SELF); parent_cpu_pre_ns=time.monotonic_ns()
    if parent_cpu_pre_ns>=start: raise StageError("timeline")
    cut=start+3_000_000_000; end=cut+5_000_000_000
