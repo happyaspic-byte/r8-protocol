@@ -1,0 +1,32 @@
+{
+  "cpu_policy": "process CPU clock; no affinity or governor modification",
+  "fixture_certificate_sha256": "5d3be5eaa4d12b54621a8ab27f9efdc83ceeb1ca7af51c14c12151b5d0b76409",
+  "fixture_key_sha256": "f1bca785065dc3adc357ef9b53635e0297bd33e7f2c4f5e74b2be8dbfa0cc05f",
+  "generated_at": "2026-08-14T19:58:37.871112+00:00",
+  "implementation_source_identity": "sha256:6a9dea8d7f34d508d8e8b6220935a29834b5beda4cb17a52068df32d26d68ba3",
+  "implementation_sources": {
+    "bench/fixtures/q3-cert.pem": "5d3be5eaa4d12b54621a8ab27f9efdc83ceeb1ca7af51c14c12151b5d0b76409",
+    "bench/fixtures/q3-key.pem": "f1bca785065dc3adc357ef9b53635e0297bd33e7f2c4f5e74b2be8dbfa0cc05f",
+    "bench/protocols/q3.json": "86de498d4690d9de98333d8a99b74c985e8561e57f060b7c6bb68a833ba58cbf",
+    "bench/q3.py": "9657457871c64bf9eb215c3e584087f006c1cc3eea2e2d1848bfd49555175025",
+    "reference/r8session.py": "316c7782ab510e03ab0e1fdc1426055448c287d96e8f684e00bb8e66724d6916",
+    "requirements-dev.txt": "7615cdb4d14c77a941e81dff308882ca529e021441a7a3a25554878ccffe9b6f"
+  },
+  "isolated_netns_proof": true,
+  "loopback_interface": "lo",
+  "loopback_mtu": 65536,
+  "os": {
+    "arch": "x86_64",
+    "kernel": "7.0.0-1011-azure",
+    "platform": "Linux-7.0.0-1011-azure-x86_64-with-glibc2.43"
+  },
+  "protocol_sha256": "86de498d4690d9de98333d8a99b74c985e8561e57f060b7c6bb68a833ba58cbf",
+  "reference_sha256": "316c7782ab510e03ab0e1fdc1426055448c287d96e8f684e00bb8e66724d6916",
+  "requirements_dev_sha256": "7615cdb4d14c77a941e81dff308882ca529e021441a7a3a25554878ccffe9b6f",
+  "source_identity": "sha256:6a9dea8d7f34d508d8e8b6220935a29834b5beda4cb17a52068df32d26d68ba3",
+  "toolchain": {
+    "cryptography": "46.0.5",
+    "openssl": "OpenSSL 3.5.5 27 Jan 2026",
+    "python": "3.12.14"
+  }
+}

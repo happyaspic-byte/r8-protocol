@@ -85,15 +85,15 @@ Q3 runs require a dedicated root network namespace and must not be invoked again
 |---|---|---|
 | Gate 0 | provenance / wire-change / budget / machine-contract baseline | ✅ durably checkpointed |
 | Gate 1 / M0–M1 | strict v0.2 Python/Rust wire implementation and UDP interop | ✅ durably complete locally; latest green hosted prior-snapshot CI `31803830187`; corrected dirty source awaits a new hosted CI |
-| Gate 2 / G003 | pinned cookie-first sessions and Q3 evidence | deferred in joined VB002 until G004 closes; isolated-netns v8 implementation/q3-full workflow awaits a new hosted observation |
+| Gate 2 / G003 | pinned cookie-first sessions and Q3 evidence | deferred in joined VB002 until G004 closes; canonical isolated-netns v8 Q3 evidence is retained |
 | M3 / Q1 | mobility implementation | implemented; Q1 v4 preregistered and awaits privileged smoke |
 | M4–M5 / Q2 | native binding, REDUNDANT, and registered measurement protocol | ⬜ unexecuted |
 
 ### Q3 closed-lab result
 
-No canonical Q3 result is currently retained. Q3 v7 is rejected and non-retained because host-global loopback counters were contaminated and unattributable; Q3 v6 is rejected and non-retained because expected TLS-pin setup biased its timed path. Q3 v4 is invalid and non-retained, Q3 v3 is a historical run and non-retained, and no Q3 v5 result is retained. No Q3 result package remains until the isolated-netns v8 implementation/q3-full workflow produces a new hosted observation. Any future observation remains limited to the isolated closed lab and is not an Internet or IPv8-standard claim.
+The canonical Q3 full evidence package is immutable at `bench/results/q3-closed-lab-v8`, from hosted workflow `31835193766` at commit `881826bb64bc38bbbbffe7ab9cdcedecc98a82e2`. It is bound to source identity `sha256:6a9dea8d7f34d508d8e8b6220935a29834b5beda4cb17a52068df32d26d68ba3`, epoch `closed-lab-epoch-010`, and raw-data SHA-256 `f6234ac3d504f93511b8255b180b92da7e5a3babc342a0c7be5a65df6b19861c`. The dedicated loopback-only network namespace recorded zero failures across 4,200 rows. Cold p50/p90/p99 were R8 2.833492/2.913582/3.488101 ms and TLS 43.559856/43.975300/44.645833 ms; warm p50/p90 were R8 1.773880/1.875701 ms and TLS 41.696243/42.329702 ms. Network totals were R8 1,326 bytes and 7 packets in each direction, and TLS 3,979 bytes and 12 packets. This is closed-lab-only evidence, not an Internet or IPv8-standard claim.
 
-The latest green hosted prior-snapshot CI is `31803830187`; the corrected dirty source awaits a new hosted CI and Q1 v4 privileged smoke. Gate 2/G003 remains deferred in joined VB002 until G004 closes. Q1 v2 is retained setup-only non-result evidence, Q1 v3 was cancelled without an artifact, and Q1 v4 is preregistered. No current hosted CI, Q3 result, full Q1, or G004 pass is claimed.
+Q3 v3 is historical and non-retained; v4, v6, and v7 are invalid/rejected and non-retained; no v5 exists. The latest green hosted prior-snapshot CI is `31803830187`; the corrected dirty source awaits a new hosted CI. Gate 2/G003 remains deferred in joined VB002 until G004 closes. Q1 v2 is retained setup-only non-result evidence, Q1 v3 was cancelled without an artifact, and Q1 v4 remains preregistered and pending privileged smoke. No full Q1 or G004 pass is claimed.
 
 ### Q1 retained failed setup evidence
 

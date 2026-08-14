@@ -1,0 +1,129 @@
+{
+  "contract_version": "r8-benchmark-preregistration-v1",
+  "series": {
+    "cold-process-primary": {
+      "R8-cookie-pinned-full-handshake": {
+        "failure_rate": 0.0,
+        "latency_ns": {
+          "confidence_intervals_95": {
+            "p50": [
+              2826799,
+              2838479
+            ],
+            "p90": [
+              2902219,
+              2923411
+            ],
+            "p99": [
+              3159286,
+              3577277
+            ]
+          },
+          "p50": 2833492,
+          "p90": 2913582,
+          "p99": 3488101
+        },
+        "mean_cpu_ns": 2953749.202,
+        "mean_network": {
+          "rx_bytes": 1326.0,
+          "rx_packets": 7.0,
+          "tx_bytes": 1326.0,
+          "tx_packets": 7.0
+        },
+        "p99_supported": true
+      },
+      "TLS-1.3-full-handshake": {
+        "failure_rate": 0.0,
+        "latency_ns": {
+          "confidence_intervals_95": {
+            "p50": [
+              43526041,
+              43595337
+            ],
+            "p90": [
+              43952565,
+              44006163
+            ],
+            "p99": [
+              44278830,
+              44736347
+            ]
+          },
+          "p50": 43559856,
+          "p90": 43975300,
+          "p99": 44645833
+        },
+        "mean_cpu_ns": 3561969.122,
+        "mean_network": {
+          "rx_bytes": 3979.0,
+          "rx_packets": 12.0,
+          "tx_bytes": 3979.0,
+          "tx_packets": 12.0
+        },
+        "p99_supported": true
+      }
+    },
+    "warm-process": {
+      "R8-cookie-pinned-full-handshake": {
+        "failure_rate": 0.0,
+        "latency_ns": {
+          "confidence_intervals_95": {
+            "p50": [
+              1770775,
+              1778008
+            ],
+            "p90": [
+              1849132,
+              1968887
+            ],
+            "p99": [
+              2146149,
+              2257048
+            ]
+          },
+          "p50": 1773880,
+          "p90": 1875701,
+          "p99": 2213325
+        },
+        "mean_cpu_ns": 1876211.066,
+        "mean_network": {
+          "rx_bytes": 1326.0,
+          "rx_packets": 7.0,
+          "tx_bytes": 1326.0,
+          "tx_packets": 7.0
+        },
+        "p99_supported": true
+      },
+      "TLS-1.3-full-handshake": {
+        "failure_rate": 0.0,
+        "latency_ns": {
+          "confidence_intervals_95": {
+            "p50": [
+              41685320,
+              41714783
+            ],
+            "p90": [
+              42309384,
+              42345111
+            ],
+            "p99": [
+              42447192,
+              42625982
+            ]
+          },
+          "p50": 41696243,
+          "p90": 42329702,
+          "p99": 42564303
+        },
+        "mean_cpu_ns": 1823231.235,
+        "mean_network": {
+          "rx_bytes": 3979.0,
+          "rx_packets": 12.0,
+          "tx_bytes": 3979.0,
+          "tx_packets": 12.0
+        },
+        "p99_supported": true
+      }
+    }
+  }
+}
