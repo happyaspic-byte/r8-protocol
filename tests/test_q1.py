@@ -110,6 +110,22 @@ class Q1Tests(unittest.TestCase):
    result=net.worker("R8","abrupt-break",net.Commands(run=run))
    self.assertEqual((result["setup_status"],result["error_category"]),("failed",category))
   self.assertTrue({"route_client_default","route_server_main","route_old_policy","route_candidate_policy","route_vip_policy","candidate_deactivate"} <= q1.ERROR_CATEGORIES)
+ def test_candidate_route_get_follows_activation(self):
+  calls=[]
+  c=net.Commands(run=lambda args,**kw: (calls.append(tuple(args)) or subprocess.CompletedProcess(args,0,"","")))
+  topology={"server":"s","names":{"si0":"old","si1":"new"}}
+  old_clock,old_sleep=net.time.monotonic_ns,net.time.sleep
+  net.time.monotonic_ns=lambda:10; net.time.sleep=lambda _:None
+  try: net.actions(c,topology,"R8","abrupt-break",10)
+  finally: net.time.monotonic_ns,net.time.sleep=old_clock,old_sleep
+  up=next(i for i,a in enumerate(calls) if a[-2:]==("new","up"))
+  route_get=next(i for i,a in enumerate(calls) if "route" in a and "get" in a)
+  self.assertEqual(route_get,up+1)
+  def fail(args,**kw):
+   if "get" in args: raise subprocess.CalledProcessError(1,args)
+   return subprocess.CompletedProcess(args,0,"","")
+  with self.assertRaises(net.StageError) as raised: net.actions(net.Commands(run=fail),topology,"R8","abrupt-break",10)
+  self.assertEqual(raised.exception.category,"route_candidate_policy")
  def test_only_garp_replaces_vip_policy_route(self):
   calls=[]
   def run(args,**kw): calls.append(tuple(args)); return subprocess.CompletedProcess(args,0,"","")
@@ -154,6 +170,19 @@ class Q1Tests(unittest.TestCase):
    with self.assertRaises(net.StageError) as raised: net.actions(c,topology,"GARP-VIP","abrupt-break",10)
   finally: net.time.monotonic_ns,net.time.sleep=old_clock,old_sleep
   self.assertEqual(raised.exception.category,"garp_announce")
+ def test_r8_stderr_categories_are_exact_and_redacted(self):
+  class Process:
+   def __init__(self,text): self.returncode=1; self.stderr=__import__("io").StringIO(text)
+   def wait(self,timeout=None): return self.returncode
+  class Server:
+   returncode=0
+   def kill(self): pass
+   def wait(self,timeout=None): return 0
+  self.assertEqual(net._wait_r8(Process("[r8move] error TIMEOUT\n"),Server()),"r8_move_timeout")
+  self.assertEqual(net._wait_r8(Process("[r8move] error IO\n"),Server()),"r8_move_io")
+  self.assertEqual(net._wait_r8(Process("[r8move] error raw-detail\n"),Server()),"r8_move_protocol")
+  self.assertEqual(net._wait_r8(Process("untrusted 10.88.1.2\n"),Server()),"r8_move_protocol")
+  self.assertTrue({"endpoint_runtime","r8_move_timeout","r8_move_io","r8_move_protocol"} <= q1.ERROR_CATEGORIES)
   self.assertIn("garp_announce",q1.ERROR_CATEGORIES)
  def test_selector_echo_framing_handles_fragments_multiple_frames_and_listeners(self):
   first_in,first_out=bytearray(net.payload(1)[:17]),bytearray()
@@ -178,6 +207,12 @@ class Q1Tests(unittest.TestCase):
   try: net.worker("TCP-reconnect","abrupt-break")
   finally: net.topology,net.tempfile.TemporaryDirectory=old_topology,old_temp
   self.assertEqual(len(calls),2); self.assertEqual(calls[0][1][2],"endpoint-server"); self.assertEqual(calls[1][1][2],"endpoint-client")
+  self.assertEqual(calls[0][1][-4:],("--old-dev","o","--new-dev","n"))
+ def test_tcp_listener_binds_each_numeric_address_to_its_device(self):
+  source=(ROOT/"tests/mobility_netns.py").read_text()
+  self.assertIn("socket.SO_BINDTODEVICE",source)
+  self.assertIn("(old_dev,new_dev)[index].encode()+b\"\\0\"",source)
+  self.assertIn("--old-dev",source); self.assertIn("--new-dev",source)
  def test_r8_uses_udp_r8move_not_tcp_endpoint(self):
   seed=b"x"*32; peer=net.Identity.from_seed(b"y"*32).public
   command=net._r8("connect",seed,peer,"::1","::2","::3","10.88.1.2:0",["--peer","10.88.0.2:53104"])

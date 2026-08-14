@@ -62,7 +62,7 @@ def _recv_exact(s,n):
 def _queue_frames(incoming,outgoing):
  while len(incoming)>=PAYLOAD_SIZE:
   outgoing.extend(incoming[:PAYLOAD_SIZE]); del incoming[:PAYLOAD_SIZE]
-def endpoint_server(mechanism,ready,stop):
+def endpoint_server(mechanism,ready,stop,old_dev=None,new_dev=None):
  ports=PORTS[mechanism]; listeners=[]; selector=selectors.DefaultSelector()
  def close(conn):
   try: selector.unregister(conn)
@@ -71,8 +71,10 @@ def endpoint_server(mechanism,ready,stop):
   except OSError: pass
  try:
   bind=["0.0.0.0"] if mechanism=="GARP-VIP" else ["10.88.1.2","10.88.1.3"]
-  for ip,port in zip(bind,ports):
-   listener=socket.socket(); listener.setsockopt(socket.IPPROTO_TCP,socket.TCP_NODELAY,1); listener.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1); listener.bind((ip,port)); listener.listen(); listener.setblocking(False); selector.register(listener,selectors.EVENT_READ); listeners.append(listener)
+  for index,(ip,port) in enumerate(zip(bind,ports)):
+   listener=socket.socket(); listener.setsockopt(socket.IPPROTO_TCP,socket.TCP_NODELAY,1); listener.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
+   if mechanism=="TCP-reconnect": listener.setsockopt(socket.SOL_SOCKET,socket.SO_BINDTODEVICE,(old_dev,new_dev)[index].encode()+b"\0")
+   listener.bind((ip,port)); listener.listen(); listener.setblocking(False); selector.register(listener,selectors.EVENT_READ); listeners.append(listener)
   Path(ready).write_text("ready")
   while not Path(stop).exists():
    for key,mask in selector.select(.002):
@@ -142,13 +144,17 @@ def _garp(c,server,device):
   result=c.inside(server,"arping","-U","-c","1","-w","1","-I",device,"10.88.1.100",check=False)
   if result.returncode not in (0,1): raise StageError("garp_announce")
   if i < 2: time.sleep(.1)
+def _activate_candidate(c,t):
+ n=t["names"]; s=t["server"]
+ _stage("link_activate",lambda:c.inside(s,"ip","link","set",n["si1"],"up"))
+ _stage("route_candidate_policy",lambda:c.inside(s,"ip","route","get","10.88.0.2","from","10.88.1.3"))
 def actions(c,t,mech,arm,cut):
  n=t["names"]; s=t["server"]
  if arm=="make-before-break":
   while time.monotonic_ns()<cut-2_000_000_000: time.sleep(.001)
-  _stage("link_activate",lambda:c.inside(s,"ip","link","set",n["si1"],"up"))
+  _activate_candidate(c,t)
  while time.monotonic_ns()<cut: time.sleep(.0005)
- if arm=="abrupt-break": _stage("link_activate",lambda:c.inside(s,"ip","link","set",n["si1"],"up"))
+ if arm=="abrupt-break": _activate_candidate(c,t)
  if mech=="TCP-reconnect": _stage("link_activate",lambda:c.inside(s,"ip","link","set",n["si0"],"down"))
  elif mech=="GARP-VIP":
   _stage("address_config",lambda:(c.inside(s,"ip","addr","del","10.88.1.100/32","dev",n["si0"]),c.inside(s,"ip","addr","add","10.88.1.100/32","dev",n["si1"])))
@@ -162,12 +168,31 @@ def _r8events(fd):
  os.lseek(fd,0,os.SEEK_SET); raw=os.read(fd,1<<20)
  if len(raw)%16: raise StageError("authenticated_events")
  return {"scheduled":list(range(800)),"sent":list(range(800)),"received":[(stamp,seq) for seq,stamp in struct.iter_unpack("!QQ",raw)]}
+def _r8_error(process):
+ raw=process.stderr.read() if process.stderr else ""
+ lines=[line for line in raw.splitlines() if line.startswith("[r8move] error ")]
+ if len(lines)!=1 or lines[0] != raw.strip(): return "r8_move_protocol"
+ token=lines[0].removeprefix("[r8move] error ")
+ return "r8_move_timeout" if token=="TIMEOUT" else "r8_move_io" if token=="IO" else "r8_move_protocol"
 def _wait_r8(client,server):
- client.wait(timeout=15)
+ try: client.wait(timeout=15)
+ except subprocess.TimeoutExpired:
+  client.kill(); server.kill(); client.wait(timeout=3); server.wait(timeout=3); return "endpoint_runtime"
  if client.returncode != 0:
   server.kill(); server.wait(timeout=3)
-  raise StageError("endpoint_exit")
- server.wait(timeout=3)
+  return _r8_error(client)
+ try: server.wait(timeout=3)
+ except subprocess.TimeoutExpired:
+  server.kill(); server.wait(timeout=3); return "endpoint_runtime"
+ return "endpoint_runtime" if server.returncode != 0 else None
+def _wait_tcp(client,server,stop):
+ try: client.wait(timeout=15)
+ except subprocess.TimeoutExpired:
+  client.kill()
+ Path(stop).touch()
+ try: server.wait(timeout=3)
+ except subprocess.TimeoutExpired: server.kill(); server.wait(timeout=3)
+ return "endpoint_runtime" if client.returncode != 0 or server.returncode != 0 else None
 def worker(mechanism,arm,commands=None):
  c=commands or Commands(); t=None; children=[]; event=None; start=cut=end=activation=None; cpu=resource.getrusage(resource.RUSAGE_SELF); child_cpu=resource.getrusage(resource.RUSAGE_CHILDREN); category=None
  try:
@@ -182,21 +207,22 @@ def worker(mechanism,arm,commands=None):
     server=_stage("endpoint_setup",lambda:c.spawn(t["client"],*_r8("serve",stable,Identity.from_seed(moving).public,"::2","::1","::3","10.88.0.2:53104",common+["--max-sessions","1","--expected-post-move","1"]),pass_fds=(event,))); children.append(server)
     client=_stage("endpoint_setup",lambda:c.spawn(t["server"],*_r8("connect",moving,Identity.from_seed(stable).public,"::1","::2","::3","10.88.1.2:0",common+["--peer","10.88.0.2:53104","--candidate-bind","10.88.1.3:0","--mode","abrupt" if arm=="abrupt-break" else "mbb","--events-fd",str(event)]),pass_fds=(event,))); children.append(client)
     actions(c,t,mechanism,arm,cut)
-    _stage("endpoint_exit",lambda:_wait_r8(client,server))
+    runtime_category=_stage("endpoint_exit",lambda:_wait_r8(client,server))
     event_data=_stage("authenticated_events",lambda:_r8events(event))
    else:
-    ready,stop,events=(str(Path(d)/x) for x in ("ready","stop","events")); server=_stage("endpoint_setup",lambda:c.spawn(t["server"],sys.executable,str(Path(__file__).resolve()),"endpoint-server","--mechanism",mechanism,"--ready",ready,"--stop",stop)); children.append(server)
+    ready,stop,events=(str(Path(d)/x) for x in ("ready","stop","events")); server=_stage("endpoint_setup",lambda:c.spawn(t["server"],sys.executable,str(Path(__file__).resolve()),"endpoint-server","--mechanism",mechanism,"--ready",ready,"--stop",stop,"--old-dev",t["names"]["si0"],"--new-dev",t["names"]["si1"])); children.append(server)
     deadline=time.monotonic()+2
     while not Path(ready).exists() and time.monotonic()<deadline: time.sleep(.01)
     if not Path(ready).exists(): raise StageError("endpoint_setup")
     client=_stage("endpoint_setup",lambda:c.spawn(t["client"],sys.executable,str(Path(__file__).resolve()),"endpoint-client","--mechanism",mechanism,"--start",str(start),"--cut",str(cut),"--end",str(end),"--events",events)); children.append(client)
     actions(c,t,mechanism,arm,cut)
-    _stage("endpoint_exit",lambda:client.wait(timeout=15)); Path(stop).touch(); _stage("endpoint_exit",lambda:server.wait(timeout=3))
-    event_data=_stage("authenticated_events",lambda:json.loads(Path(events).read_text()))
+    runtime_category=_wait_tcp(client,server,stop)
+    event_data=json.loads(Path(events).read_text()) if Path(events).exists() else {"scheduled":list(range(800)),"sent":[],"received":[]}
    if len(event_data.get("scheduled",())) != 800 or event_data["scheduled"] != list(range(800)): raise StageError("timeline")
-   if any(p.returncode != 0 for p in children): raise StageError("endpoint_exit")
    result=metrics(event_data,cut,end)
-   if result["failure"]: category="authenticated_events"
+   if runtime_category:
+    result["failure"]=True; result["censored"]=True
+   if runtime_category or result["failure"]: category=runtime_category or "endpoint_runtime"
    result.update({"setup_status":"complete","error_category":category,"t_minus_3_ns":start,"activation_ns":activation,"cutover_ns":cut,"observation_end_ns":end,"interface_counter_by_ordinal":{"pre":pre,"post":counters(t["server"],(t["names"]["si0"],t["names"]["si1"]),c)}})
  except StageError as error:
   category=error.category; result={"setup_status":"failed","error_category":category,"failure":True,"censored":True,"t_minus_3_ns":start,"activation_ns":activation,"cutover_ns":cut,"observation_end_ns":end,"sent_payloads":0,"received_payloads":0,"lost_payloads":800,"duplicate_payloads":0,"reordered_payloads":0,"outage_ns":None,"interface_counter_by_ordinal":{}}
@@ -213,9 +239,9 @@ def worker(mechanism,arm,commands=None):
   c.cleanup()
  after=resource.getrusage(resource.RUSAGE_SELF); child_after=resource.getrusage(resource.RUSAGE_CHILDREN); result["process_user_cpu_ns"]=int(((after.ru_utime-cpu.ru_utime)+(child_after.ru_utime-child_cpu.ru_utime))*1e9); result["process_system_cpu_ns"]=int(((after.ru_stime-cpu.ru_stime)+(child_after.ru_stime-child_cpu.ru_stime))*1e9); result["command_sha256"]=hashlib.sha256(json.dumps(c.transcript,separators=(",",":")).encode()).hexdigest(); return result
 def main(argv=None):
- p=argparse.ArgumentParser(); p.add_argument("command"); p.add_argument("--mechanism",choices=PORTS); p.add_argument("--arm",choices=("abrupt-break","make-before-break")); p.add_argument("--ready"); p.add_argument("--stop"); p.add_argument("--start",type=int); p.add_argument("--cut",type=int); p.add_argument("--end",type=int); p.add_argument("--events"); a=p.parse_args(argv)
+ p=argparse.ArgumentParser(); p.add_argument("command"); p.add_argument("--mechanism",choices=PORTS); p.add_argument("--arm",choices=("abrupt-break","make-before-break")); p.add_argument("--ready"); p.add_argument("--stop"); p.add_argument("--start",type=int); p.add_argument("--cut",type=int); p.add_argument("--end",type=int); p.add_argument("--events"); p.add_argument("--old-dev"); p.add_argument("--new-dev"); a=p.parse_args(argv)
  if a.command=="worker": print(json.dumps(worker(a.mechanism,a.arm),sort_keys=True))
- elif a.command=="endpoint-server": endpoint_server(a.mechanism,a.ready,a.stop)
+ elif a.command=="endpoint-server": endpoint_server(a.mechanism,a.ready,a.stop,a.old_dev,a.new_dev)
  elif a.command=="endpoint-client": endpoint_client(a.mechanism,a.start,a.cut,a.end,a.events)
  else: p.error("unknown endpoint command")
 if __name__=="__main__": main()
