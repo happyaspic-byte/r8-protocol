@@ -12,8 +12,8 @@
       "protocol_id": "Q1",
       "path": "bench/protocols/q1.json",
       "contract_version": "r8-benchmark-preregistration-v3",
-      "size_bytes": 16191,
-      "sha256": "2c2251ca045336e14f79499a5869867494245852a1326cd66ae266722275c3c2",
+      "size_bytes": 16890,
+      "sha256": "fc55647092b6c8e007b9e2f9f1b913d114e264f6a84e27e42b2bcbf0f9d200e6",
       "status": "frozen-preregistered-no-results",
       "superseded": [
         {

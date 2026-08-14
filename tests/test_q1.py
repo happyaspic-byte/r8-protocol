@@ -127,21 +127,32 @@ class Q1Tests(unittest.TestCase):
    result=net.worker("R8","abrupt-break",net.Commands(run=run))
    self.assertEqual((result["setup_status"],result["error_category"]),("failed",category))
   self.assertTrue({"route_client_default","route_server_main","route_old_policy","route_candidate_policy","route_vip_policy","neighbor_config","candidate_deactivate"} <= q1.ERROR_CATEGORIES)
- def test_candidate_route_get_follows_activation(self):
-  calls=[]
-  c=net.Commands(run=lambda args,**kw: (calls.append(tuple(args)) or subprocess.CompletedProcess(args,0,"","")))
+ def test_candidate_main_replace_and_route_get_follow_activation(self):
   topology={"server":"s","names":{"si0":"old","si1":"new"}}
-  old_clock,old_sleep=net.time.monotonic_ns,net.time.sleep
-  net.time.monotonic_ns=lambda:10; net.time.sleep=lambda _:None
-  try: net.actions(c,topology,"R8","abrupt-break",10)
-  finally: net.time.monotonic_ns,net.time.sleep=old_clock,old_sleep
-  up=next(i for i,a in enumerate(calls) if a[-2:]==("new","up"))
-  route_get=next(i for i,a in enumerate(calls) if "route" in a and "get" in a)
-  self.assertEqual(route_get,up+1)
+  for mechanism in net.PORTS:
+   for arm in ("abrupt-break","make-before-break"):
+    calls=[]
+    c=net.Commands(run=lambda args,**kw: (calls.append(tuple(args)) or subprocess.CompletedProcess(args,0,"","")))
+    old_clock,old_sleep=net.time.monotonic_ns,net.time.sleep
+    net.time.monotonic_ns=lambda:10; net.time.sleep=lambda _:None
+    try: net.actions(c,topology,mechanism,arm,10)
+    finally: net.time.monotonic_ns,net.time.sleep=old_clock,old_sleep
+    common=[a for a in calls if "route" in a and "replace" in a and "table" not in a]
+    self.assertEqual(len(common),1)
+    self.assertEqual(common[0],("ip","netns","exec","s","ip","route","replace","10.88.0.0/24","via","10.88.1.1","dev","new","onlink"))
+    up=next(i for i,a in enumerate(calls) if a[-2:]==("new","up"))
+    replacement=calls.index(common[0]); route_get=next(i for i,a in enumerate(calls) if "route" in a and "get" in a)
+    self.assertEqual((replacement,route_get),(up+1,up+2))
+    if mechanism=="GARP-VIP":
+     self.assertEqual(len([a for a in calls if "route" in a and "replace" in a and "103" in a]),1)
   def fail(args,**kw):
    if "get" in args: raise subprocess.CalledProcessError(1,args)
    return subprocess.CompletedProcess(args,0,"","")
-  with self.assertRaises(net.StageError) as raised: net.actions(net.Commands(run=fail),topology,"R8","abrupt-break",10)
+  old_clock,old_sleep=net.time.monotonic_ns,net.time.sleep
+  net.time.monotonic_ns=lambda:10; net.time.sleep=lambda _:None
+  try:
+   with self.assertRaises(net.StageError) as raised: net.actions(net.Commands(run=fail),topology,"R8","abrupt-break",10)
+  finally: net.time.monotonic_ns,net.time.sleep=old_clock,old_sleep
   self.assertEqual(raised.exception.category,"route_candidate_policy")
  def test_only_garp_replaces_vip_policy_route(self):
   calls=[]
@@ -152,10 +163,11 @@ class Q1Tests(unittest.TestCase):
   try:
    net.actions(c,topology,"GARP-VIP","abrupt-break",10)
    garp_replaces=[a for a in calls if "route" in a and "replace" in a]
-   self.assertEqual(len(garp_replaces),1)
-   self.assertIn("103",garp_replaces[0]); self.assertIn("onlink",garp_replaces[0]); self.assertIn("via",garp_replaces[0])
+   self.assertEqual(len(garp_replaces),2)
+   self.assertEqual(sum("103" in a for a in garp_replaces),1)
+   self.assertIn("103",next(a for a in garp_replaces if "103" in a)); self.assertIn("onlink",garp_replaces[0]); self.assertIn("via",garp_replaces[0])
    calls.clear(); net.actions(c,topology,"R8","abrupt-break",10); net.actions(c,topology,"TCP-reconnect","abrupt-break",10)
-   self.assertFalse(any("route" in a and "replace" in a for a in calls))
+   self.assertEqual(len([a for a in calls if "route" in a and "replace" in a]),2)
    self.assertEqual(sum(a[-2:]==("new","up") for a in calls),2)
    net.actions(c,topology,"R8","make-before-break",10)
    self.assertEqual(sum(a[-2:]==("new","up") for a in calls),3)

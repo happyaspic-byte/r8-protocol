@@ -149,6 +149,7 @@ def _garp(c,server,device):
 def _activate_candidate(c,t):
  n=t["names"]; s=t["server"]
  _stage("link_activate",lambda:c.inside(s,"ip","link","set",n["si1"],"up"))
+ _stage("route_server_main",lambda:c.inside(s,"ip","route","replace","10.88.0.0/24","via","10.88.1.1","dev",n["si1"],"onlink"))
  _stage("route_candidate_policy",lambda:c.inside(s,"ip","route","get","10.88.0.2","from","10.88.1.3"))
 def actions(c,t,mech,arm,cut):
  n=t["names"]; s=t["server"]
