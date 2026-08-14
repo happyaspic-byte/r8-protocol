@@ -1,0 +1,13 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/r8-proto",
+    "crates/r8d",
+    "crates/r8ping",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "UNLICENSED"
+publish = false
