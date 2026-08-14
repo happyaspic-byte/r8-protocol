@@ -434,20 +434,64 @@ class Q3Tests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 q3.require_isolated_netns()
 
-    def test_isolation_accepts_up_loopback_with_unknown_operstate(self):
+    def test_isolation_uses_current_netns_proc_and_ioctl_not_sysfs(self):
         stat = type("Stat", (), {"st_ino": 1})
-        reads = {
-            "/sys/class/net/lo/flags": "0x9\n",
-            "/sys/class/net/lo/operstate": "unknown\n",
-            "/sys/class/net/lo/mtu": "65536\n",
-        }
+        proc = "Inter-| Receive | Transmit\n face |bytes packets errs drop fifo frame compressed multicast|bytes packets errs drop fifo colls carrier compressed\n lo: 10 11 0 0 0 0 0 0 12 13 0 0 0 0 0 0\n"
+
+        def read_text(path, *_args, **_kwargs):
+            self.assertEqual(str(path), "/proc/net/dev")
+            return proc
+
         with (
             mock.patch.dict(q3.os.environ, {"Q3_ISOLATED_NETNS": "1"}),
             mock.patch.object(q3.os, "stat", side_effect=[stat(), type("Stat", (), {"st_ino": 2})()]),
-            mock.patch.object(Path, "iterdir", return_value=iter([Path("lo")])),
-            mock.patch.object(Path, "read_text", autospec=True, side_effect=lambda path, *_args, **_kwargs: reads[str(path)]),
+            mock.patch.object(q3, "_loopback_flags_mtu", return_value=(1, 65536)),
+            mock.patch.object(Path, "read_text", autospec=True, side_effect=read_text),
         ):
             self.assertTrue(q3.isolated_netns_proof())
+
+    def test_proc_net_dev_maps_loopback_without_rejecting_worker_interfaces(self):
+        valid = "Inter-| Receive | Transmit\n face |bytes packets errs drop fifo frame compressed multicast|bytes packets errs drop fifo colls carrier compressed\n lo: 10 11 0 0 0 0 0 0 12 13 0 0 0 0 0 0\n eth0: 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16\n"
+        with mock.patch.object(Path, "read_text", autospec=True, return_value=valid):
+            self.assertEqual(q3.net(), {"rx_bytes": 10, "rx_packets": 11, "tx_bytes": 12, "tx_packets": 13})
+        for content in (
+            "Inter-| Receive | Transmit\n face |bytes packets errs drop fifo frame compressed multicast|bytes packets errs drop fifo colls carrier compressed\n lo: 10 not-a-counter\n",
+            "Inter-| Receive | Transmit\n face |bytes packets errs drop fifo frame compressed multicast|bytes packets errs drop fifo colls carrier compressed\n eth0: 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16\n",
+        ):
+            with self.subTest(content=content), mock.patch.object(Path, "read_text", autospec=True, return_value=content):
+                with self.assertRaises(ValueError):
+                    q3.net()
+        malformed_header = "Inter-| Receive | Transmit\n face |bytes packets errs drop fifo frame compressed multicast|bytes packets errs drop fifo colls carrier wrong\n lo: 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16\n"
+        with mock.patch.object(Path, "read_text", autospec=True, return_value=malformed_header):
+            with self.assertRaises(ValueError):
+                q3.net()
+
+    def test_isolation_rejects_extra_proc_interfaces(self):
+        stat = type("Stat", (), {"st_ino": 1})
+        with (
+            mock.patch.dict(q3.os.environ, {"Q3_ISOLATED_NETNS": "1"}),
+            mock.patch.object(q3.os, "stat", side_effect=[stat(), type("Stat", (), {"st_ino": 2})()]),
+            mock.patch.object(q3, "_loopback_flags_mtu", return_value=(1, 65536)),
+            mock.patch.object(q3, "_proc_net_dev", return_value=({"lo", "eth0"}, {"rx_bytes": 0, "rx_packets": 0, "tx_bytes": 0, "tx_packets": 0})),
+        ):
+            self.assertFalse(q3.isolated_netns_proof())
+
+    def test_loopback_ioctl_flags_and_mtu_are_required(self):
+        stat = type("Stat", (), {"st_ino": 1})
+        with (
+            mock.patch.dict(q3.os.environ, {"Q3_ISOLATED_NETNS": "1"}),
+            mock.patch.object(q3.os, "stat", side_effect=[stat(), type("Stat", (), {"st_ino": 2})()]),
+            mock.patch.object(q3, "_proc_net_dev", return_value=({"lo"}, {"rx_bytes": 0, "rx_packets": 0, "tx_bytes": 0, "tx_packets": 0})),
+            mock.patch.object(q3, "_loopback_flags_mtu", return_value=(0, 65536)),
+        ):
+            self.assertFalse(q3.isolated_netns_proof())
+        with (
+            mock.patch.dict(q3.os.environ, {"Q3_ISOLATED_NETNS": "1"}),
+            mock.patch.object(q3.os, "stat", side_effect=[stat(), type("Stat", (), {"st_ino": 2})()]),
+            mock.patch.object(q3, "_proc_net_dev", return_value=({"lo"}, {"rx_bytes": 0, "rx_packets": 0, "tx_bytes": 0, "tx_packets": 0})),
+            mock.patch.object(q3, "_loopback_flags_mtu", return_value=(1, 1500)),
+        ):
+            self.assertFalse(q3.isolated_netns_proof())
 
     def test_loopback_delta_requires_symmetric_counters(self):
         q3.require_loopback_delta({"rx_bytes": 1, "tx_bytes": 1, "rx_packets": 2, "tx_packets": 2})

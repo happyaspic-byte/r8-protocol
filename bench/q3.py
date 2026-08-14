@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import importlib.metadata
+import fcntl
 import json
 import os
 import random
@@ -17,6 +18,7 @@ import platform
 import tempfile
 import threading
 import time
+import struct
 from datetime import datetime, timezone
 import re
 from pathlib import Path
@@ -60,23 +62,65 @@ def source_identity():
 
 
 
+def _proc_net_dev():
+    lines = Path("/proc/net/dev").read_text().splitlines()
+    headers = [line.split("|") for line in lines[:2]]
+    expected_rx = ["bytes", "packets", "errs", "drop", "fifo", "frame", "compressed", "multicast"]
+    expected_tx = ["bytes", "packets", "errs", "drop", "fifo", "colls", "carrier", "compressed"]
+    if (
+        len(lines) < 3
+        or len(headers[0]) != 3
+        or [part.strip() for part in headers[0]] != ["Inter-", "Receive", "Transmit"]
+        or len(headers[1]) != 3
+        or headers[1][0].strip() != "face"
+        or headers[1][1].split() != expected_rx
+        or headers[1][2].split() != expected_tx
+    ):
+        raise ValueError("malformed /proc/net/dev")
+    interfaces = {}
+    for line in lines[2:]:
+        if not line.strip() or ":" not in line:
+            raise ValueError("malformed /proc/net/dev")
+        name, values = line.split(":", 1)
+        name = name.strip()
+        fields = values.split()
+        if not name or len(fields) != 16 or any(not field.isdecimal() for field in fields):
+            raise ValueError("malformed /proc/net/dev")
+        if name in interfaces:
+            raise ValueError("duplicate interface in /proc/net/dev")
+        interfaces[name] = [int(field) for field in fields]
+    if "lo" not in interfaces:
+        raise ValueError("/proc/net/dev missing lo")
+    values = interfaces["lo"]
+    counters = {
+        "rx_bytes": values[0],
+        "tx_bytes": values[8],
+        "rx_packets": values[1],
+        "tx_packets": values[9],
+    }
+    return set(interfaces), counters
+
+def _loopback_counters():
+    return _proc_net_dev()[1]
+
 def net():
-    base = Path("/sys/class/net/lo/statistics")
-    return {name: int((base / name).read_text().strip()) for name in LO_COUNTERS}
+    return _loopback_counters()
+
+def _loopback_flags_mtu():
+    name = b"lo"
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as control:
+        flags = struct.unpack("16sH", fcntl.ioctl(control.fileno(), 0x8913, struct.pack("16sH", name, 0))[:18])[1]
+        mtu = struct.unpack("16si", fcntl.ioctl(control.fileno(), 0x8921, struct.pack("16si", name, 0))[:20])[1]
+    return flags, mtu
 
 def isolated_netns_proof():
     try:
         own = os.stat("/proc/self/ns/net").st_ino
         init = os.stat("/proc/1/ns/net").st_ino
-        interfaces = sorted(path.name for path in Path("/sys/class/net").iterdir())
-        return (
-            os.environ.get("Q3_ISOLATED_NETNS") == "1"
-            and own != init
-            and interfaces == ["lo"]
-            and int(Path("/sys/class/net/lo/flags").read_text().strip(), 16) & 1
-            and int(Path("/sys/class/net/lo/mtu").read_text().strip()) == 65536
-        )
-    except (OSError, ValueError):
+        flags, mtu = _loopback_flags_mtu()
+        interfaces, _ = _proc_net_dev()
+        return os.environ.get("Q3_ISOLATED_NETNS") == "1" and own != init and interfaces == {"lo"} and bool(flags & 1) and mtu == 65536
+    except (OSError, ValueError, struct.error):
         return False
 
 def require_isolated_netns():
