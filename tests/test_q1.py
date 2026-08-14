@@ -60,7 +60,12 @@ class Q1Tests(unittest.TestCase):
   c,t=net.topology(net.Commands(run=run),"fixed"); c.cleanup()
   adds=[x[3] for x in calls if x[:3]==("ip","netns","add")]; dels=[x[3] for x in calls if x[:3]==("ip","netns","del")]
   self.assertEqual(dels,list(reversed(adds))); self.assertFalse(any("flush" in x for a in calls for x in a if isinstance(x,str)))
-  self.assertFalse(any(a[-2:]==(t["names"]["si1"],"up") for a in calls))
+  candidate_up=[i for i,a in enumerate(calls) if a[-2:]==(t["names"]["si1"],"up")]
+  candidate_down=[i for i,a in enumerate(calls) if a[-2:]==(t["names"]["si1"],"down")]
+  self.assertEqual(len(candidate_up),1); self.assertEqual(len(candidate_down),1)
+  candidate_routes=[i for i,a in enumerate(calls) if "table" in a and "102" in a]
+  self.assertLess(candidate_up[0],min(candidate_routes)); self.assertGreater(candidate_down[0],max(candidate_routes))
+  self.assertFalse(any(a[-2:]==(t["names"]["si1"],"up") for a in calls[candidate_down[0]+1:]))
   routes=[i for i,a in enumerate(calls) if "route" in a]
   links=[i for i,a in enumerate(calls) if a[-2:] in {(t["names"]["cr0"],"up"),(t["names"]["si0"],"up")} or "brq1" in a and a[-1:] == ("up",)]
   self.assertLess(max(links),min(routes))
@@ -81,6 +86,7 @@ class Q1Tests(unittest.TestCase):
    "route_old_policy":lambda a:"route" in a and "table" in a and "101" in a,
    "route_candidate_policy":lambda a:"route" in a and "table" in a and "102" in a,
    "route_vip_policy":lambda a:"route" in a and "table" in a and "103" in a,
+   "candidate_deactivate":lambda a:a[-3:][0]=="set" and a[-1]=="down",
   }
   for category,matches in groups.items():
    def run(args,**kw):
@@ -88,7 +94,7 @@ class Q1Tests(unittest.TestCase):
     return subprocess.CompletedProcess(args,0,"","")
    result=net.worker("R8","abrupt-break",net.Commands(run=run))
    self.assertEqual((result["setup_status"],result["error_category"]),("failed",category))
-  self.assertTrue({"route_client_default","route_server_main","route_old_policy","route_candidate_policy","route_vip_policy"} <= q1.ERROR_CATEGORIES)
+  self.assertTrue({"route_client_default","route_server_main","route_old_policy","route_candidate_policy","route_vip_policy","candidate_deactivate"} <= q1.ERROR_CATEGORIES)
  def test_only_garp_replaces_vip_policy_route(self):
   calls=[]
   def run(args,**kw): calls.append(tuple(args)); return subprocess.CompletedProcess(args,0,"","")
@@ -102,6 +108,9 @@ class Q1Tests(unittest.TestCase):
    self.assertIn("103",garp_replaces[0]); self.assertIn("onlink",garp_replaces[0]); self.assertIn("via",garp_replaces[0])
    calls.clear(); net.actions(c,topology,"R8","abrupt-break",10); net.actions(c,topology,"TCP-reconnect","abrupt-break",10)
    self.assertFalse(any("route" in a and "replace" in a for a in calls))
+   self.assertEqual(sum(a[-2:]==("new","up") for a in calls),2)
+   net.actions(c,topology,"R8","make-before-break",10)
+   self.assertEqual(sum(a[-2:]==("new","up") for a in calls),3)
   finally: net.time.monotonic_ns,net.time.sleep=old_clock,old_sleep
  def test_garp_emits_three_spaced_unsolicited_announcements(self):
   calls=[]; sleeps=[]

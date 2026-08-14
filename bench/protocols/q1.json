@@ -13,10 +13,10 @@
     "retained_package_path": "bench/results/q1-setup-failure-v2"
   },
   "v3_smoke_diagnostic": {
-    "hosted_run": "31799001135",
+    "hosted_runs": ["31799001135", "31799350837"],
     "status": "non-result-diagnostic-only",
     "application_observations": "none",
-    "reason": "All six setup attempts reported route_config before traffic; the retry contract now freezes required per-table link-scope gateway subnet routes."
+    "reason": "V3 smoke identified route_config and route_candidate_policy before traffic: static table 102 connected and remote routes require temporary candidate-link activation during setup, followed by explicit deactivation before pre-trial counters and clock."
   },
   "normative_references": {
     "sections": [
@@ -39,8 +39,9 @@
   "topology": {
     "network": "IPv4-only isolated Linux namespaces on one host. Base namespace names are r8q1-client, r8q1-server, and r8q1-router; an operational random suffix is permitted only after each base name.",
     "links_and_addresses": "client/router veth is 10.88.0.2/24 on client and 10.88.0.1/24 on router. Router server-side bridge is 10.88.1.1/24. Server old and candidate interfaces are separate veths with 10.88.1.2/24 and 10.88.1.3/24 respectively. VIP is 10.88.1.100/32.",
-    "routing": "Client has a static default route via 10.88.0.1. Server main route to 10.88.0.0/24 via 10.88.1.1 dev old is unchanged. Source 10.88.1.2/32 uses table 101, which first installs 10.88.1.0/24 dev old scope link, then 10.88.0.0/24 via 10.88.1.1 dev old. Source 10.88.1.3/32 uses table 102, which first installs 10.88.1.0/24 dev candidate scope link while candidate is down, then 10.88.0.0/24 via 10.88.1.1 dev candidate onlink. VIP source uses table 103, which initially first installs 10.88.1.0/24 dev old scope link, then 10.88.0.0/24 via 10.88.1.1 dev old. These rules make bound TCP and R8 carriers use their actual interface while both are up. IPv4 forwarding is enabled only inside r8q1-router; no namespace has an outside route; no dynamic routing is permitted.",
-    "setup_order": ["namespace setup", "veth setup", "bridge setup", "address setup", "bring loopbacks up", "bring client link up", "bring router links and bridge up", "bring old server link up", "leave candidate server link down", "install routes and source-policy rules"],
+    "routing": "Client has a static default route via 10.88.0.1. Server main route to 10.88.0.0/24 via 10.88.1.1 dev old is unchanged. Source 10.88.1.2/32 uses table 101, which first installs 10.88.1.0/24 dev old scope link, then 10.88.0.0/24 via 10.88.1.1 dev old. Source 10.88.1.3/32 uses table 102; temporarily bring candidate up solely to first install 10.88.1.0/24 dev candidate scope link and then 10.88.0.0/24 via 10.88.1.1 dev candidate onlink. VIP source uses table 103, which initially first installs 10.88.1.0/24 dev old scope link, then 10.88.0.0/24 via 10.88.1.1 dev old. These rules make bound TCP and R8 carriers use their actual interface while both are up. IPv4 forwarding is enabled only inside r8q1-router; no namespace has an outside route; no dynamic routing is permitted.",
+    "setup_order": ["namespace setup", "veth setup", "bridge setup", "address setup", "bring loopbacks up", "bring client link up", "bring router links and bridge up", "bring old server link up", "temporarily bring candidate server link up solely for table 102 static connected and remote route installation", "install routes and source-policy rules", "explicitly bring candidate server link down before pre-trial counters and clock"],
+    "setup_constraints": "Temporary candidate activation is solely for static table 102 route installation; no traffic, neighbor flush, or dynamic discovery is permitted during setup. Candidate is administratively down for the initial trial state.",
     "dns": "disabled; every endpoint is a numeric IPv4 address",
     "privileges": "runner MUST start as root and retain CAP_NET_ADMIN and CAP_NET_RAW; missing privilege is setup failure and the run fails, never skips",
     "neighbor_cache": "no neighbor-cache flush is permitted",
@@ -110,7 +111,7 @@
       "success_value": null,
       "setup_failure_value": "the actual setup-stage category",
       "outcome_failure_value": "the applicable finite redacted category",
-      "enum": ["namespace_create", "forwarding_config", "veth_create", "namespace_move", "bridge_create", "address_config", "link_activate", "route_config", "route_client_default", "route_server_main", "route_old_policy", "route_candidate_policy", "route_vip_policy", "counter_read", "endpoint_setup", "endpoint_exit", "timeline", "authenticated_events", "worker_timeout", "worker_exit", "worker_output", "worker_internal"]
+      "enum": ["namespace_create", "forwarding_config", "veth_create", "namespace_move", "bridge_create", "address_config", "link_activate", "candidate_deactivate", "route_config", "route_client_default", "route_server_main", "route_old_policy", "route_candidate_policy", "route_vip_policy", "counter_read", "endpoint_setup", "endpoint_exit", "timeline", "authenticated_events", "worker_timeout", "worker_exit", "worker_output", "worker_internal"]
     },
     "environment_fields": ["kernel_release", "distribution", "cpu_model", "cpu_governor", "nic_driver", "topology_sha256", "command_sha256", "binary_sha256", "configuration_sha256", "capabilities", "clock_source", "namespace_count", "interface_count", "non_loopback_interface_count", "veth_pair_count"],
     "topology_fields": ["address_family", "topology_sha256", "command_sha256", "configuration_sha256", "namespace_count", "interface_count", "non_loopback_interface_count", "veth_pair_count", "dns_disabled", "neighbor_flush_prohibited"],
