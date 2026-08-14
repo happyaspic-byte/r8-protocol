@@ -79,6 +79,21 @@ class Q1Tests(unittest.TestCase):
    self.assertLess(connected,remote)
   candidate=next(a for a in policy if "102" in a and "route" in a and "10.88.0.0/24" in a)
   self.assertEqual(candidate[candidate.index("via")+1],"10.88.1.1"); self.assertIn("onlink",candidate)
+ def test_server_strong_host_sysctls_precede_activation_and_fail_as_forwarding(self):
+  calls=[]; c,t=net.topology(net.Commands(run=lambda args,**kw: (calls.append(tuple(args)) or subprocess.CompletedProcess(args,0,"",""))),"fixed")
+  c.cleanup()
+  sysctls=[(i,a) for i,a in enumerate(calls) if "sysctl" in a and any(str(x).startswith("net.ipv4.conf.") for x in a)]
+  self.assertEqual(len(sysctls),12)
+  activation=min(i for i,a in enumerate(calls) if a[-2:]==(t["names"]["si0"],"up"))
+  self.assertLess(max(i for i,_ in sysctls),activation)
+  values={next(str(x) for x in a if str(x).startswith("net.ipv4.conf.")) for _,a in sysctls}
+  for scope in ("all","default",t["names"]["si0"],t["names"]["si1"]):
+   self.assertTrue({f"net.ipv4.conf.{scope}.rp_filter=0",f"net.ipv4.conf.{scope}.arp_ignore=1",f"net.ipv4.conf.{scope}.arp_announce=2"} <= values)
+  def fail(args,**kw):
+   if any(str(x).startswith("net.ipv4.conf.") for x in args): raise subprocess.CalledProcessError(1,args)
+   return subprocess.CompletedProcess(args,0,"","")
+  result=net.worker("R8","abrupt-break",net.Commands(run=fail))
+  self.assertEqual((result["setup_status"],result["error_category"]),("failed","forwarding_config"))
  def test_route_stage_categories_for_exact_command_groups(self):
   groups={
    "route_client_default":lambda a:"route" in a and "default" in a,
@@ -122,8 +137,24 @@ class Q1Tests(unittest.TestCase):
   finally: net.time.monotonic_ns,net.time.sleep=old_clock,old_sleep
   arps=[a for a in calls if "arping" in a]
   self.assertEqual(len(arps),3)
-  self.assertTrue(all(a[-7:]==("arping","-U","-c","1","-I","new","10.88.1.100") for a in arps))
+  self.assertTrue(all(a[-9:]==("arping","-U","-c","1","-w","1","-I","new","10.88.1.100") for a in arps))
   self.assertEqual(sleeps,[.1,.1])
+ def test_garp_accepts_status_zero_one_and_categories_other_statuses(self):
+  topology={"server":"s","names":{"si0":"old","si1":"new"}}
+  for status in (0,1):
+   c=net.Commands(run=lambda args,**kw: subprocess.CompletedProcess(args,status,"",""))
+   old_clock,old_sleep=net.time.monotonic_ns,net.time.sleep
+   net.time.monotonic_ns=lambda:10; net.time.sleep=lambda _:None
+   try: net.actions(c,topology,"GARP-VIP","abrupt-break",10)
+   finally: net.time.monotonic_ns,net.time.sleep=old_clock,old_sleep
+  c=net.Commands(run=lambda args,**kw: subprocess.CompletedProcess(args,2,"",""))
+  old_clock,old_sleep=net.time.monotonic_ns,net.time.sleep
+  net.time.monotonic_ns=lambda:10; net.time.sleep=lambda _:None
+  try:
+   with self.assertRaises(net.StageError) as raised: net.actions(c,topology,"GARP-VIP","abrupt-break",10)
+  finally: net.time.monotonic_ns,net.time.sleep=old_clock,old_sleep
+  self.assertEqual(raised.exception.category,"garp_announce")
+  self.assertIn("garp_announce",q1.ERROR_CATEGORIES)
  def test_selector_echo_framing_handles_fragments_multiple_frames_and_listeners(self):
   first_in,first_out=bytearray(net.payload(1)[:17]),bytearray()
   second_in,second_out=bytearray(net.payload(3)+net.payload(4)),bytearray()

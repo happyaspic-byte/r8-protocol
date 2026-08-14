@@ -16,7 +16,7 @@ def _stage(category,operation):
 class Commands:
  def __init__(self,run=subprocess.run,popen=subprocess.Popen): self.run,self.popen,self.owned,self.transcript=run,popen,[],[]
  def call(self,*a,check=True): self.transcript.append(tuple(a)); return self.run(a,check=check,text=True,capture_output=True)
- def inside(self,ns,*a): return self.call("ip","netns","exec",ns,*a)
+ def inside(self,ns,*a,check=True): return self.call("ip","netns","exec",ns,*a,check=check)
  def netns(self,n): self.call("ip","netns","add",n); self.owned.append(n)
  def spawn(self,ns,*a,pass_fds=()): self.transcript.append(("ip","netns","exec",ns)+a); return self.popen(("ip","netns","exec",ns)+a,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,pass_fds=pass_fds)
  def cleanup(self):
@@ -32,6 +32,7 @@ def topology(commands=None,suffix=None):
   _stage("forwarding_config",lambda:c.inside(router,"sysctl","-w","net.ipv4.ip_forward=1"))
   _stage("veth_create",lambda:[c.call("ip","link","add",a,"type","veth","peer","name",b) for a,b in ((n["cr0"],n["cr1"]),(n["si0"],n["rb0"]),(n["si1"],n["rb1"]))])
   _stage("namespace_move",lambda:([c.call("ip","link","set",n["cr0"],"netns",client),c.call("ip","link","set",n["cr1"],"netns",router)]+[c.call("ip","link","set",n[x],"netns",router) for x in ("rb0","rb1")]+[c.call("ip","link","set",n[x],"netns",server) for x in ("si0","si1")]))
+  _stage("forwarding_config",lambda:[c.inside(server,"sysctl","-w",f"net.ipv4.conf.{scope}.{setting}={value}") for scope in ("all","default",n["si0"],n["si1"]) for setting,value in (("rp_filter","0"),("arp_ignore","1"),("arp_announce","2"))])
   _stage("bridge_create",lambda:(c.inside(router,"ip","link","add","brq1","type","bridge"),[c.inside(router,"ip","link","set",n[x],"master","brq1") for x in ("rb0","rb1")]))
   _stage("address_config",lambda:([c.inside(client,"ip","addr","add","10.88.0.2/24","dev",n["cr0"]),c.inside(router,"ip","addr","add","10.88.0.1/24","dev",n["cr1"]),c.inside(router,"ip","addr","add","10.88.1.1/24","dev","brq1"),c.inside(server,"ip","addr","add","10.88.1.2/24","dev",n["si0"]),c.inside(server,"ip","addr","add","10.88.1.3/24","dev",n["si1"]),c.inside(server,"ip","addr","add","10.88.1.100/32","dev",n["si0"])]))
   _stage("link_activate",lambda:([c.inside(ns,"ip","link","set","lo","up") for ns in (client,server,router)]+[c.inside(client,"ip","link","set",n["cr0"],"up")]+[c.inside(router,"ip","link","set",d,"up") for d in (n["cr1"],n["rb0"],n["rb1"],"brq1")]+[c.inside(server,"ip","link","set",d,"up") for d in (n["si0"],n["si1"])]))
@@ -136,6 +137,11 @@ def metrics(event,t,end):
   if all(post[j+1][1]==post[j][1]+1 for j in range(i,i+9)): ready=post[i+9][0]; break
  pre=[x for x in event_received if x[0]<t]; failed=ready is None or not pre
  return {"readiness_ns":ready,"censored":failed,"failure":failed,"sent_payloads":len(scheduled),"received_payloads":len(event_received),"lost_payloads":len(set(scheduled)-seen),"duplicate_payloads":dup,"reordered_payloads":reorder,"outage_ns":ready-pre[-1][0] if ready and pre else None}
+def _garp(c,server,device):
+ for i in range(3):
+  result=c.inside(server,"arping","-U","-c","1","-w","1","-I",device,"10.88.1.100",check=False)
+  if result.returncode not in (0,1): raise StageError("garp_announce")
+  if i < 2: time.sleep(.1)
 def actions(c,t,mech,arm,cut):
  n=t["names"]; s=t["server"]
  if arm=="make-before-break":
@@ -147,7 +153,7 @@ def actions(c,t,mech,arm,cut):
  elif mech=="GARP-VIP":
   _stage("address_config",lambda:(c.inside(s,"ip","addr","del","10.88.1.100/32","dev",n["si0"]),c.inside(s,"ip","addr","add","10.88.1.100/32","dev",n["si1"])))
   _stage("route_vip_policy",lambda:c.inside(s,"ip","route","replace","10.88.0.0/24","via","10.88.1.1","dev",n["si1"],"onlink","table","103"))
-  _stage("link_activate",lambda:([c.inside(s,"arping","-U","-c","1","-I",n["si1"],"10.88.1.100") if i == 2 else (c.inside(s,"arping","-U","-c","1","-I",n["si1"],"10.88.1.100"),time.sleep(.1)) for i in range(3)]))
+  _garp(c,s,n["si1"])
  else:
   if arm=="abrupt-break": _stage("link_activate",lambda:c.inside(s,"ip","link","set",n["si0"],"down"))
 def _r8(command,seed,peer,address,peer_address,new_address,bind,extra):
