@@ -13,10 +13,10 @@
     "retained_package_path": "bench/results/q1-setup-failure-v2"
   },
   "v3_smoke_diagnostic": {
-    "hosted_runs": ["31799001135", "31799350837", "31801103160", "31801574992", "31801926398"],
+    "hosted_runs": ["31799001135", "31799350837", "31801103160", "31801574992", "31801926398", "31802829388"],
     "status": "non-result-diagnostic-only",
     "application_observations": "none",
-    "reason": "V3 smoke isolated R8 abrupt child exit and TCP new-interface receive without response; GARP and R8 make-before-break passed. All smoke runs are diagnostic only with no result observations."
+    "reason": "V3 smoke isolated R8 abrupt move timeout and TCP candidate receive without response while GARP passed. All smoke runs are diagnostic only with no result observations."
   },
   "normative_references": {
     "sections": [
@@ -39,10 +39,12 @@
   "topology": {
     "network": "IPv4-only isolated Linux namespaces on one host. Base namespace names are r8q1-client, r8q1-server, and r8q1-router; an operational random suffix is permitted only after each base name.",
     "links_and_addresses": "client/router veth is 10.88.0.2/24 on client and 10.88.0.1/24 on router. Router server-side bridge is 10.88.1.1/24. Server old and candidate interfaces are separate veths with 10.88.1.2/24 and 10.88.1.3/24 respectively. VIP is 10.88.1.100/32.",
+    "fixed_mac_addresses": "While down, assign router bridge 02:00:00:00:01:01, old server interface 02:00:00:00:01:02, and candidate server interface 02:00:00:00:01:03.",
     "routing": "Client has a static default route via 10.88.0.1. Server main route to 10.88.0.0/24 via 10.88.1.1 dev old is unchanged. Source 10.88.1.2/32 uses table 101, which first installs 10.88.1.0/24 dev old scope link, then 10.88.0.0/24 via 10.88.1.1 dev old. Source 10.88.1.3/32 uses table 102; temporarily bring candidate up solely to first install 10.88.1.0/24 dev candidate scope link and then 10.88.0.0/24 via 10.88.1.1 dev candidate onlink. VIP source uses table 103, which initially first installs 10.88.1.0/24 dev old scope link, then 10.88.0.0/24 via 10.88.1.1 dev old. These rules make bound TCP and R8 carriers use their actual interface while both are up. IPv4 forwarding is enabled only inside r8q1-router; no namespace has an outside route; no dynamic routing is permitted.",
-    "setup_order": ["namespace setup", "veth setup", "bridge setup", "address setup", "bring loopbacks up", "bring client link up", "bring router links and bridge up", "bring old server link up", "temporarily bring candidate server link up solely for table 102 static connected and remote route installation", "install routes and source-policy rules", "set isolated-server strong-host sysctls", "explicitly bring candidate server link down before pre-trial counters and clock"],
+    "setup_order": ["namespace setup", "veth setup", "bridge setup", "assign fixed MAC addresses while down", "address setup", "bring loopbacks up", "bring client link up", "bring router links and bridge up", "bring old server link up", "temporarily bring candidate server link up solely for table 102 static connected and remote route installation", "install routes and source-policy rules", "set isolated-server strong-host sysctls", "install permanent static neighbors identically for all mechanisms and arms", "explicitly bring candidate server link down before pre-trial counters and clock"],
     "setup_constraints": "Temporary candidate activation is solely for static table 102 route installation; no traffic, neighbor flush, or dynamic discovery is permitted during setup. Candidate is administratively down for the initial trial state.",
     "server_strong_host_sysctls": "Before trials, only in the isolated server namespace, set IPv4 rp_filter=0 and arp_ignore=1, arp_announce=2 for all, default, old, and candidate interfaces. This makes source-policy routes govern the multihomed return path and prevents the old interface from answering ARP for candidate or VIP; it is not public-network guidance.",
+    "static_neighbors": "Before the clock, install permanent static neighbors identically for every mechanism and arm: router bridge maps 10.88.1.2 to 02:00:00:00:01:02 and 10.88.1.3 to 02:00:00:00:01:03; each old and candidate server interface maps gateway 10.88.1.1 to 02:00:00:00:01:01. Do not install a static VIP neighbor: GARP remains measured. No neighbor flush or dynamic discovery is permitted; raw MACs and commands remain absent from evidence, which records only command hashes.",
     "dns": "disabled; every endpoint is a numeric IPv4 address",
     "privileges": "runner MUST start as root and retain CAP_NET_ADMIN and CAP_NET_RAW; missing privilege is setup failure and the run fails, never skips",
     "neighbor_cache": "no neighbor-cache flush is permitted",

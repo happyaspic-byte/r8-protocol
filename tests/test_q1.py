@@ -79,6 +79,22 @@ class Q1Tests(unittest.TestCase):
    self.assertLess(connected,remote)
   candidate=next(a for a in policy if "102" in a and "route" in a and "10.88.0.0/24" in a)
   self.assertEqual(candidate[candidate.index("via")+1],"10.88.1.1"); self.assertIn("onlink",candidate)
+ def test_static_neighbor_baselines_and_macs_precede_candidate_shutdown(self):
+  calls=[]
+  c,t=net.topology(net.Commands(run=lambda args,**kw: (calls.append(tuple(args)) or subprocess.CompletedProcess(args,0,"",""))),"fixed")
+  c.cleanup()
+  mac_commands=[a for a in calls if "address" in a and any(str(x).startswith("02:00:00:00:01:") for x in a)]
+  self.assertEqual({a[-1] for a in mac_commands},{"02:00:00:00:01:01","02:00:00:00:01:02","02:00:00:00:01:03"})
+  self.assertEqual({(a[-3],a[-1]) for a in mac_commands},{("brq1","02:00:00:00:01:01"),(t["names"]["si0"],"02:00:00:00:01:02"),(t["names"]["si1"],"02:00:00:00:01:03")})
+  self.assertLess(max(calls.index(a) for a in mac_commands),min(i for i,a in enumerate(calls) if a[-1:] == ("up",)))
+  neighbors=[(i,a) for i,a in enumerate(calls) if "neigh" in a]
+  self.assertEqual(len(neighbors),4)
+  self.assertEqual({(a[a.index("replace")+1],a[a.index("lladdr")+1],a[-1]) for _,a in neighbors},{("10.88.1.2","02:00:00:00:01:02","brq1"),("10.88.1.3","02:00:00:00:01:03","brq1"),("10.88.1.1","02:00:00:00:01:01",t["names"]["si0"]),("10.88.1.1","02:00:00:00:01:01",t["names"]["si1"])})
+  self.assertTrue(all(("replace" in a and "nud" in a and "permanent" in a) for _,a in neighbors))
+  self.assertFalse(any("10.88.1.100" in a for _,a in neighbors))
+  candidate_down=next(i for i,a in enumerate(calls) if a[-2:]==(t["names"]["si1"],"down"))
+  self.assertLess(max(i for i,_ in neighbors),candidate_down)
+  self.assertIn("neighbor_config",q1.ERROR_CATEGORIES)
  def test_server_strong_host_sysctls_precede_activation_and_fail_as_forwarding(self):
   calls=[]; c,t=net.topology(net.Commands(run=lambda args,**kw: (calls.append(tuple(args)) or subprocess.CompletedProcess(args,0,"",""))),"fixed")
   c.cleanup()
@@ -102,6 +118,7 @@ class Q1Tests(unittest.TestCase):
    "route_candidate_policy":lambda a:"route" in a and "table" in a and "102" in a,
    "route_vip_policy":lambda a:"route" in a and "table" in a and "103" in a,
    "candidate_deactivate":lambda a:a[-3:][0]=="set" and a[-1]=="down",
+   "neighbor_config":lambda a:"neigh" in a and "permanent" in a,
   }
   for category,matches in groups.items():
    def run(args,**kw):
@@ -109,7 +126,7 @@ class Q1Tests(unittest.TestCase):
     return subprocess.CompletedProcess(args,0,"","")
    result=net.worker("R8","abrupt-break",net.Commands(run=run))
    self.assertEqual((result["setup_status"],result["error_category"]),("failed",category))
-  self.assertTrue({"route_client_default","route_server_main","route_old_policy","route_candidate_policy","route_vip_policy","candidate_deactivate"} <= q1.ERROR_CATEGORIES)
+  self.assertTrue({"route_client_default","route_server_main","route_old_policy","route_candidate_policy","route_vip_policy","neighbor_config","candidate_deactivate"} <= q1.ERROR_CATEGORIES)
  def test_candidate_route_get_follows_activation(self):
   calls=[]
   c=net.Commands(run=lambda args,**kw: (calls.append(tuple(args)) or subprocess.CompletedProcess(args,0,"","")))

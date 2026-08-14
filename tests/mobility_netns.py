@@ -7,6 +7,7 @@ sys.path.insert(0,str(ROOT / "reference"))
 from r8session import Identity
 PAYLOAD_SIZE=64; RATE_NS=10_000_000; PORTS={"TCP-reconnect":(53101,53102),"GARP-VIP":(53103,53103),"R8":(53104,53104)}
 COUNTERS=("rx_bytes","tx_bytes","rx_packets","tx_packets","rx_dropped","tx_dropped","rx_errors","tx_errors")
+MACS={"bridge":"02:00:00:00:01:01","old":"02:00:00:00:01:02","candidate":"02:00:00:00:01:03"}
 class StageError(RuntimeError):
  def __init__(self,category): self.category=category
 def _stage(category,operation):
@@ -34,13 +35,14 @@ def topology(commands=None,suffix=None):
   _stage("namespace_move",lambda:([c.call("ip","link","set",n["cr0"],"netns",client),c.call("ip","link","set",n["cr1"],"netns",router)]+[c.call("ip","link","set",n[x],"netns",router) for x in ("rb0","rb1")]+[c.call("ip","link","set",n[x],"netns",server) for x in ("si0","si1")]))
   _stage("forwarding_config",lambda:[c.inside(server,"sysctl","-w",f"net.ipv4.conf.{scope}.{setting}={value}") for scope in ("all","default",n["si0"],n["si1"]) for setting,value in (("rp_filter","0"),("arp_ignore","1"),("arp_announce","2"))])
   _stage("bridge_create",lambda:(c.inside(router,"ip","link","add","brq1","type","bridge"),[c.inside(router,"ip","link","set",n[x],"master","brq1") for x in ("rb0","rb1")]))
-  _stage("address_config",lambda:([c.inside(client,"ip","addr","add","10.88.0.2/24","dev",n["cr0"]),c.inside(router,"ip","addr","add","10.88.0.1/24","dev",n["cr1"]),c.inside(router,"ip","addr","add","10.88.1.1/24","dev","brq1"),c.inside(server,"ip","addr","add","10.88.1.2/24","dev",n["si0"]),c.inside(server,"ip","addr","add","10.88.1.3/24","dev",n["si1"]),c.inside(server,"ip","addr","add","10.88.1.100/32","dev",n["si0"])]))
+  _stage("address_config",lambda:([c.inside(router,"ip","link","set","brq1","address",MACS["bridge"]),c.inside(server,"ip","link","set",n["si0"],"address",MACS["old"]),c.inside(server,"ip","link","set",n["si1"],"address",MACS["candidate"]),c.inside(client,"ip","addr","add","10.88.0.2/24","dev",n["cr0"]),c.inside(router,"ip","addr","add","10.88.0.1/24","dev",n["cr1"]),c.inside(router,"ip","addr","add","10.88.1.1/24","dev","brq1"),c.inside(server,"ip","addr","add","10.88.1.2/24","dev",n["si0"]),c.inside(server,"ip","addr","add","10.88.1.3/24","dev",n["si1"]),c.inside(server,"ip","addr","add","10.88.1.100/32","dev",n["si0"])]))
   _stage("link_activate",lambda:([c.inside(ns,"ip","link","set","lo","up") for ns in (client,server,router)]+[c.inside(client,"ip","link","set",n["cr0"],"up")]+[c.inside(router,"ip","link","set",d,"up") for d in (n["cr1"],n["rb0"],n["rb1"],"brq1")]+[c.inside(server,"ip","link","set",d,"up") for d in (n["si0"],n["si1"])]))
   _stage("route_client_default",lambda:c.inside(client,"ip","route","add","default","via","10.88.0.1","dev",n["cr0"]))
   _stage("route_server_main",lambda:c.inside(server,"ip","route","add","10.88.0.0/24","via","10.88.1.1","dev",n["si0"]))
   _stage("route_old_policy",lambda:([c.inside(server,"ip","route","add","10.88.1.0/24","dev",n["si0"],"scope","link","table","101"),c.inside(server,"ip","route","add","10.88.0.0/24","via","10.88.1.1","dev",n["si0"],"table","101"),c.inside(server,"ip","rule","add","from","10.88.1.2/32","table","101")]))
   _stage("route_candidate_policy",lambda:([c.inside(server,"ip","route","add","10.88.1.0/24","dev",n["si1"],"scope","link","table","102"),c.inside(server,"ip","route","add","10.88.0.0/24","via","10.88.1.1","dev",n["si1"],"onlink","table","102"),c.inside(server,"ip","rule","add","from","10.88.1.3/32","table","102")]))
   _stage("route_vip_policy",lambda:([c.inside(server,"ip","route","add","10.88.1.0/24","dev",n["si0"],"scope","link","table","103"),c.inside(server,"ip","route","add","10.88.0.0/24","via","10.88.1.1","dev",n["si0"],"table","103"),c.inside(server,"ip","rule","add","from","10.88.1.100/32","table","103")]))
+  _stage("neighbor_config",lambda:([c.inside(router,"ip","neigh","replace","10.88.1.2","lladdr",MACS["old"],"nud","permanent","dev","brq1"),c.inside(router,"ip","neigh","replace","10.88.1.3","lladdr",MACS["candidate"],"nud","permanent","dev","brq1"),c.inside(server,"ip","neigh","replace","10.88.1.1","lladdr",MACS["bridge"],"nud","permanent","dev",n["si0"]),c.inside(server,"ip","neigh","replace","10.88.1.1","lladdr",MACS["bridge"],"nud","permanent","dev",n["si1"])]))
   _stage("candidate_deactivate",lambda:c.inside(server,"ip","link","set",n["si1"],"down"))
   return c,{"client":client,"server":server,"router":router,"names":n}
  except Exception: c.cleanup(); raise
