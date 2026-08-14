@@ -1,11 +1,13 @@
-//! R8 wire format v0.1 — source of truth: spec/0001-wire-format-v0.1.md
-//!
-//! Lab use only; NOT an Internet standard. std-only, no external crates.
+//! Strict R8 wire format v0.2 for a private, experimental closed lab.
 
-pub const R8_UDP_PORT: u16 = 52808; // dynamic/private range (RFC 6335)
-pub const R8_ETHERTYPE: u16 = 0x88B5; // IEEE local experimental (eth-binding, M4)
+use std::error::Error;
+use std::fmt;
+
+pub const R8_UDP_PORT: u16 = 52808;
+pub const R8_ETHERTYPE: u16 = 0x88B5;
 pub const VERSION: u8 = 8;
 pub const HEADER_LEN: usize = 48;
+pub const SERIALIZED_R8_MAX: usize = 1280;
 
 pub const NH_CTL: u8 = 1;
 pub const NH_DGRAM: u8 = 2;
@@ -18,20 +20,79 @@ pub const CTL_DEST_UNREACHABLE: u8 = 128;
 pub const CTL_TIME_EXCEEDED: u8 = 129;
 pub const CTL_PACKET_TOO_BIG: u8 = 130;
 
-/// 128-bit locator or EID.
 pub type Loc = [u8; 16];
 
-/// Parse an RFC 4291 textual locator, e.g. "8:1::10".
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WireError {
+    Truncated,
+    TrailingBytes,
+    PacketCap,
+    BindingBudget,
+    LengthOverflow,
+    Version,
+    Profile,
+    TrafficClass,
+    NextHeader,
+    HopLimit,
+    Flags,
+    PathSlot,
+    Scid,
+    NonePayload,
+    CtlShort,
+    CtlType,
+    CtlCode,
+    CtlBody,
+    CtlChecksum,
+    DgramShort,
+    DgramLength,
+    DgramChecksum,
+}
+
+impl WireError {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Truncated => "TRUNCATED",
+            Self::TrailingBytes => "TRAILING_BYTES",
+            Self::PacketCap => "PACKET_CAP",
+            Self::BindingBudget => "BINDING_BUDGET",
+            Self::LengthOverflow => "LENGTH_OVERFLOW",
+            Self::Version => "VERSION",
+            Self::Profile => "PROFILE",
+            Self::TrafficClass => "TRAFFIC_CLASS",
+            Self::NextHeader => "NEXT_HEADER",
+            Self::HopLimit => "HOP_LIMIT",
+            Self::Flags => "FLAGS",
+            Self::PathSlot => "PATH_SLOT",
+            Self::Scid => "SCID",
+            Self::NonePayload => "NONE_PAYLOAD",
+            Self::CtlShort => "CTL_SHORT",
+            Self::CtlType => "CTL_TYPE",
+            Self::CtlCode => "CTL_CODE",
+            Self::CtlBody => "CTL_BODY",
+            Self::CtlChecksum => "CTL_CHECKSUM",
+            Self::DgramShort => "DGRAM_SHORT",
+            Self::DgramLength => "DGRAM_LENGTH",
+            Self::DgramChecksum => "DGRAM_CHECKSUM",
+        }
+    }
+}
+
+impl fmt::Display for WireError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl Error for WireError {}
+
 pub fn parse_loc(s: &str) -> Result<Loc, std::net::AddrParseError> {
     Ok(s.parse::<std::net::Ipv6Addr>()?.octets())
 }
 
-/// Format a locator in RFC 4291 compressed form.
 pub fn fmt_loc(l: &Loc) -> String {
     std::net::Ipv6Addr::from(*l).to_string()
 }
 
-/// R8 base header, 48 bytes (spec section 2).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Header {
     pub profile: u8,
@@ -45,9 +106,25 @@ pub struct Header {
     pub dst: Loc,
 }
 
+fn checked_packet_len(payload_len: usize, budget: usize) -> Result<usize, WireError> {
+    if payload_len > u16::MAX as usize {
+        return Err(WireError::LengthOverflow);
+    }
+    let total = HEADER_LEN
+        .checked_add(payload_len)
+        .ok_or(WireError::LengthOverflow)?;
+    if total > SERIALIZED_R8_MAX {
+        return Err(WireError::PacketCap);
+    }
+    if total > budget {
+        return Err(WireError::BindingBudget);
+    }
+    Ok(total)
+}
+
 impl Header {
     pub fn new(next_header: u8, src: Loc, dst: Loc) -> Self {
-        Header {
+        Self {
             profile: 0,
             tc: 0,
             next_header,
@@ -60,12 +137,18 @@ impl Header {
         }
     }
 
-    /// Serialize header + payload (payload length is taken from `payload`).
-    pub fn pack(&self, payload: &[u8]) -> Vec<u8> {
-        let mut out = Vec::with_capacity(HEADER_LEN + payload.len());
-        out.push((VERSION << 4) | (self.profile & 0x0f));
+    pub fn pack(&self, payload: &[u8]) -> Result<Vec<u8>, WireError> {
+        self.pack_with_budget(payload, SERIALIZED_R8_MAX)
+    }
+
+    pub fn pack_with_budget(&self, payload: &[u8], budget: usize) -> Result<Vec<u8>, WireError> {
+        let total = checked_packet_len(payload.len(), budget)?;
+        validate_header(self, payload)?;
+        let payload_len = u16::try_from(payload.len()).map_err(|_| WireError::LengthOverflow)?;
+        let mut out = Vec::with_capacity(total);
+        out.push((VERSION << 4) | self.profile);
         out.push(self.tc);
-        out.extend_from_slice(&(payload.len() as u16).to_be_bytes());
+        out.extend_from_slice(&payload_len.to_be_bytes());
         out.push(self.next_header);
         out.push(self.hop_limit);
         out.push(self.flags);
@@ -74,186 +157,541 @@ impl Header {
         out.extend_from_slice(&self.src);
         out.extend_from_slice(&self.dst);
         out.extend_from_slice(payload);
-        out
+        Ok(out)
     }
 
-    /// Parse header; returns the header and the payload slice.
-    pub fn unpack(data: &[u8]) -> Result<(Header, &[u8]), &'static str> {
+    pub fn unpack(data: &[u8]) -> Result<(Header, &[u8]), WireError> {
+        Self::unpack_with_budget(data, SERIALIZED_R8_MAX)
+    }
+
+    pub fn unpack_with_budget(data: &[u8], budget: usize) -> Result<(Header, &[u8]), WireError> {
+        if data.len() > SERIALIZED_R8_MAX {
+            return Err(WireError::PacketCap);
+        }
+        if data.len() > budget {
+            return Err(WireError::BindingBudget);
+        }
         if data.len() < HEADER_LEN {
-            return Err("short packet");
+            return Err(WireError::Truncated);
+        }
+        let payload_len = usize::from(u16::from_be_bytes([data[2], data[3]]));
+        let expected = HEADER_LEN
+            .checked_add(payload_len)
+            .ok_or(WireError::LengthOverflow)?;
+        if data.len() < expected {
+            return Err(WireError::Truncated);
+        }
+        if data.len() > expected {
+            return Err(WireError::TrailingBytes);
         }
         if data[0] >> 4 != VERSION {
-            return Err("bad version");
+            return Err(WireError::Version);
         }
-        let plen = u16::from_be_bytes([data[2], data[3]]) as usize;
-        if data.len() < HEADER_LEN + plen {
-            return Err("truncated payload");
+        if !matches!(data[4], NH_CTL | NH_DGRAM | NH_SES | NH_NONE) {
+            return Err(WireError::NextHeader);
         }
-        let scid = u64::from_be_bytes(data[8..16].try_into().map_err(|_| "scid")?);
-        let mut src = [0u8; 16];
+        let mut src = [0; 16];
         src.copy_from_slice(&data[16..32]);
-        let mut dst = [0u8; 16];
+        let mut dst = [0; 16];
         dst.copy_from_slice(&data[32..48]);
-        let hdr = Header {
+        let header = Header {
             profile: data[0] & 0x0f,
             tc: data[1],
             next_header: data[4],
             hop_limit: data[5],
             flags: data[6],
             path_slot: data[7],
-            scid,
+            scid: u64::from_be_bytes(data[8..16].try_into().map_err(|_| WireError::Truncated)?),
             src,
             dst,
         };
-        Ok((hdr, &data[HEADER_LEN..HEADER_LEN + plen]))
+        let payload = &data[HEADER_LEN..expected];
+        validate_header(&header, payload)?;
+        Ok((header, payload))
     }
+}
+
+fn validate_header(header: &Header, payload: &[u8]) -> Result<(), WireError> {
+    if !matches!(header.next_header, NH_CTL | NH_DGRAM | NH_SES | NH_NONE) {
+        return Err(WireError::NextHeader);
+    }
+    if header.next_header == NH_SES {
+        return validate_ses_header(header, payload);
+    }
+    if header.profile > 3 {
+        return Err(WireError::Profile);
+    }
+    if header.tc != 0 {
+        return Err(WireError::TrafficClass);
+    }
+    if header.hop_limit == 0 {
+        return Err(WireError::HopLimit);
+    }
+    if header.flags & !0x03 != 0 {
+        return Err(WireError::Flags);
+    }
+    match header.next_header {
+        NH_CTL => {
+            if header.profile != 0 {
+                return Err(WireError::Profile);
+            }
+            if header.flags != 0 {
+                return Err(WireError::Flags);
+            }
+            if header.path_slot != 0 {
+                return Err(WireError::PathSlot);
+            }
+            if header.scid != 0 {
+                return Err(WireError::Scid);
+            }
+            parse_ctl(header, payload)?;
+        }
+        NH_DGRAM => {
+            if header.profile != 0 {
+                return Err(WireError::Profile);
+            }
+            if header.flags != 0 {
+                return Err(WireError::Flags);
+            }
+            if header.path_slot != 0 {
+                return Err(WireError::PathSlot);
+            }
+            if header.scid != 0 {
+                return Err(WireError::Scid);
+            }
+            parse_dgram(header, payload)?;
+        }
+        NH_NONE => {
+            if header.profile != 0 {
+                return Err(WireError::Profile);
+            }
+            if header.flags != 0 {
+                return Err(WireError::Flags);
+            }
+            if header.path_slot != 0 {
+                return Err(WireError::PathSlot);
+            }
+            if header.scid != 0 {
+                return Err(WireError::Scid);
+            }
+            if !payload.is_empty() {
+                return Err(WireError::NonePayload);
+            }
+        }
+        _ => unreachable!(),
+    }
+    Ok(())
+}
+
+fn validate_ses_header(header: &Header, payload: &[u8]) -> Result<(), WireError> {
+    if header.scid == 0 {
+        return Err(WireError::Scid);
+    }
+    if payload.len() < 4 {
+        return Err(WireError::Truncated);
+    }
+    let typ = payload[0];
+    if !matches!(typ, 1..=7) || payload[1] != 1 {
+        return Err(WireError::NextHeader);
+    }
+    if header.profile > 3 || payload[2] != header.profile {
+        return Err(WireError::Profile);
+    }
+    if header.tc != 0 {
+        return Err(WireError::TrafficClass);
+    }
+    if header.hop_limit == 0 {
+        return Err(WireError::HopLimit);
+    }
+    if payload[3] != 0 || header.flags & !0x03 != 0 {
+        return Err(WireError::Flags);
+    }
+    match typ {
+        1..=4 => {
+            if header.flags != 0 {
+                return Err(WireError::Flags);
+            }
+            if header.path_slot != 0 {
+                return Err(WireError::PathSlot);
+            }
+        }
+        5 => {
+            if header.flags != 1 {
+                return Err(WireError::Flags);
+            }
+            if header.path_slot != 0 {
+                return Err(WireError::PathSlot);
+            }
+        }
+        6 | 7 if header.profile == 3 => {
+            if !matches!(header.flags, 1 | 3) {
+                return Err(WireError::Flags);
+            }
+            let expected_slot = if header.flags == 1 { 0 } else { 1 };
+            if header.path_slot != expected_slot {
+                return Err(WireError::PathSlot);
+            }
+        }
+        6 | 7 => {
+            if header.flags != 1 {
+                return Err(WireError::Flags);
+            }
+            if header.path_slot != 0 {
+                return Err(WireError::PathSlot);
+            }
+        }
+        _ => unreachable!(),
+    }
+    Ok(())
 }
 
 fn sum16(data: &[u8]) -> u32 {
-    let mut s: u32 = 0;
-    let mut chunks = data.chunks_exact(2);
-    for w in &mut chunks {
-        s += u16::from_be_bytes([w[0], w[1]]) as u32;
-        s = (s & 0xffff) + (s >> 16);
+    let mut sum = 0u32;
+    let mut pairs = data.chunks_exact(2);
+    for pair in &mut pairs {
+        sum += u32::from(u16::from_be_bytes([pair[0], pair[1]]));
+        sum = (sum & 0xffff) + (sum >> 16);
     }
-    let rem = chunks.remainder();
-    if !rem.is_empty() {
-        s += (rem[0] as u32) << 8;
-        s = (s & 0xffff) + (s >> 16);
+    if let [last] = pairs.remainder() {
+        sum += u32::from(*last) << 8;
+        sum = (sum & 0xffff) + (sum >> 16);
     }
-    s
+    sum
 }
 
-/// 16-bit one's-complement checksum over pseudo-header + body.
-/// `pseudo` must be even-length (the R8 pseudo-header is always 40 bytes).
+fn checksum_raw(pseudo: &[u8], body: &[u8]) -> u16 {
+    let mut sum = sum16(pseudo) + sum16(body);
+    sum = (sum & 0xffff) + (sum >> 16);
+    sum = (sum & 0xffff) + (sum >> 16);
+    match u16::try_from(sum) {
+        Ok(folded) => !folded,
+        Err(_) => 0,
+    }
+}
+
 pub fn checksum16(pseudo: &[u8], body: &[u8]) -> u16 {
-    debug_assert!(pseudo.len() % 2 == 0);
-    let mut s = sum16(pseudo).wrapping_add(sum16(body));
-    s = (s & 0xffff) + (s >> 16);
-    !(s as u16)
-}
-
-/// Pseudo-header: src(16) + dst(16) + payload-len(4) + next-header(4).
-pub fn pseudo_header(hdr: &Header, plen: u32, nh: u8) -> [u8; 40] {
-    let mut p = [0u8; 40];
-    p[..16].copy_from_slice(&hdr.src);
-    p[16..32].copy_from_slice(&hdr.dst);
-    p[32..36].copy_from_slice(&plen.to_be_bytes());
-    p[36..40].copy_from_slice(&(nh as u32).to_be_bytes());
-    p
-}
-
-/// Build a full R8 packet carrying a CTL message.
-pub fn build_ctl(hdr: &Header, ctype: u8, code: u8, body: &[u8], with_checksum: bool) -> Vec<u8> {
-    let mut msg = Vec::with_capacity(4 + body.len());
-    msg.push(ctype);
-    msg.push(code);
-    msg.extend_from_slice(&0u16.to_be_bytes());
-    msg.extend_from_slice(body);
-    if with_checksum {
-        let c = checksum16(&pseudo_header(hdr, msg.len() as u32, NH_CTL), &msg);
-        msg[2..4].copy_from_slice(&c.to_be_bytes());
+    let checksum = checksum_raw(pseudo, body);
+    if checksum == 0 {
+        0xffff
+    } else {
+        checksum
     }
-    hdr.pack(&msg)
 }
 
-/// Parse a CTL payload; `ok` is the checksum verdict (true when checksum is absent).
-pub fn parse_ctl<'a>(
-    hdr: &Header,
-    payload: &'a [u8],
-) -> Result<(u8, u8, u16, &'a [u8], bool), &'static str> {
+pub fn pseudo_header(header: &Header, payload_len: u32, next_header: u8) -> [u8; 40] {
+    let mut pseudo = [0; 40];
+    pseudo[..16].copy_from_slice(&header.src);
+    pseudo[16..32].copy_from_slice(&header.dst);
+    pseudo[32..36].copy_from_slice(&payload_len.to_be_bytes());
+    pseudo[36..40].copy_from_slice(&u32::from(next_header).to_be_bytes());
+    pseudo
+}
+
+fn checksum_valid(header: &Header, payload: &[u8], next_header: u8) -> bool {
+    checksum_raw(
+        &pseudo_header(
+            header,
+            u32::try_from(payload.len()).unwrap_or(u32::MAX),
+            next_header,
+        ),
+        payload,
+    ) == 0
+}
+
+fn validate_ctl(typ: u8, code: u8, body: &[u8]) -> Result<(), WireError> {
+    match typ {
+        CTL_ECHO_REQUEST | CTL_ECHO_REPLY => {
+            if code != 0 {
+                return Err(WireError::CtlCode);
+            }
+            if body.len() < 4 {
+                return Err(WireError::CtlBody);
+            }
+        }
+        CTL_DEST_UNREACHABLE => {
+            if !matches!(code, 0 | 1 | 3 | 4) {
+                return Err(WireError::CtlCode);
+            }
+            if body.len() > 512 {
+                return Err(WireError::CtlBody);
+            }
+        }
+        CTL_TIME_EXCEEDED => {
+            if code != 0 {
+                return Err(WireError::CtlCode);
+            }
+            if body.len() > 512 {
+                return Err(WireError::CtlBody);
+            }
+        }
+        CTL_PACKET_TOO_BIG => {
+            if code != 0 {
+                return Err(WireError::CtlCode);
+            }
+            if body.len() < 4 || body.len() - 4 > 512 {
+                return Err(WireError::CtlBody);
+            }
+        }
+        _ => return Err(WireError::CtlType),
+    }
+    Ok(())
+}
+
+fn validate_ctl_shape(payload: &[u8]) -> Result<(), WireError> {
     if payload.len() < 4 {
-        return Err("short ctl");
+        return Err(WireError::CtlShort);
     }
-    let csum = u16::from_be_bytes([payload[2], payload[3]]);
-    let ok = csum == 0 || checksum16(&pseudo_header(hdr, payload.len() as u32, NH_CTL), payload) == 0;
-    Ok((payload[0], payload[1], csum, &payload[4..], ok))
+    validate_ctl(payload[0], payload[1], &payload[4..])
 }
 
-/// Build a full R8 packet carrying a DGRAM message.
-pub fn build_dgram(hdr: &Header, sport: u16, dport: u16, data: &[u8], with_checksum: bool) -> Vec<u8> {
-    let length = (8 + data.len()) as u16;
-    let mut msg = Vec::with_capacity(length as usize);
-    msg.extend_from_slice(&sport.to_be_bytes());
-    msg.extend_from_slice(&dport.to_be_bytes());
-    msg.extend_from_slice(&length.to_be_bytes());
-    msg.extend_from_slice(&0u16.to_be_bytes());
-    msg.extend_from_slice(data);
-    if with_checksum {
-        let c = checksum16(&pseudo_header(hdr, msg.len() as u32, NH_DGRAM), &msg);
-        msg[6..8].copy_from_slice(&c.to_be_bytes());
-    }
-    hdr.pack(&msg)
+pub fn build_ctl(header: &Header, ctype: u8, code: u8, body: &[u8]) -> Result<Vec<u8>, WireError> {
+    build_ctl_with_budget(header, ctype, code, body, SERIALIZED_R8_MAX)
 }
 
-/// Parse a DGRAM payload -> (sport, dport, data, checksum_ok).
-pub fn parse_dgram<'a>(
-    hdr: &Header,
-    payload: &'a [u8],
-) -> Result<(u16, u16, &'a [u8], bool), &'static str> {
+pub fn build_ctl_with_budget(
+    header: &Header,
+    ctype: u8,
+    code: u8,
+    body: &[u8],
+    budget: usize,
+) -> Result<Vec<u8>, WireError> {
+    if header.next_header != NH_CTL {
+        return Err(WireError::NextHeader);
+    }
+    let length = 4usize
+        .checked_add(body.len())
+        .ok_or(WireError::LengthOverflow)?;
+    checked_packet_len(length, budget)?;
+    validate_ctl(ctype, code, body)?;
+    let mut payload = Vec::with_capacity(length);
+    payload.extend_from_slice(&[ctype, code, 0, 0]);
+    payload.extend_from_slice(body);
+    let checksum = checksum16(
+        &pseudo_header(
+            header,
+            u32::try_from(length).map_err(|_| WireError::LengthOverflow)?,
+            NH_CTL,
+        ),
+        &payload,
+    );
+    payload[2..4].copy_from_slice(&checksum.to_be_bytes());
+    header.pack_with_budget(&payload, budget)
+}
+
+pub fn parse_ctl<'a>(header: &Header, payload: &'a [u8]) -> Result<(u8, u8, &'a [u8]), WireError> {
+    validate_ctl_shape(payload)?;
+    if u16::from_be_bytes([payload[2], payload[3]]) == 0 || !checksum_valid(header, payload, NH_CTL)
+    {
+        return Err(WireError::CtlChecksum);
+    }
+    Ok((payload[0], payload[1], &payload[4..]))
+}
+
+fn validate_dgram_shape(payload: &[u8]) -> Result<(), WireError> {
     if payload.len() < 8 {
-        return Err("short dgram");
+        return Err(WireError::DgramShort);
     }
-    let length = u16::from_be_bytes([payload[4], payload[5]]) as usize;
-    if length < 8 || payload.len() < length {
-        return Err("bad dgram length");
+    let declared = usize::from(u16::from_be_bytes([payload[4], payload[5]]));
+    if declared != payload.len() {
+        return Err(WireError::DgramLength);
     }
-    let csum = u16::from_be_bytes([payload[6], payload[7]]);
-    let ok = csum == 0 || checksum16(&pseudo_header(hdr, payload.len() as u32, NH_DGRAM), payload) == 0;
-    let sport = u16::from_be_bytes([payload[0], payload[1]]);
-    let dport = u16::from_be_bytes([payload[2], payload[3]]);
-    Ok((sport, dport, &payload[8..length], ok))
+    Ok(())
 }
 
+pub fn build_dgram(
+    header: &Header,
+    sport: u16,
+    dport: u16,
+    data: &[u8],
+) -> Result<Vec<u8>, WireError> {
+    build_dgram_with_budget(header, sport, dport, data, SERIALIZED_R8_MAX)
+}
+
+pub fn build_dgram_with_budget(
+    header: &Header,
+    sport: u16,
+    dport: u16,
+    data: &[u8],
+    budget: usize,
+) -> Result<Vec<u8>, WireError> {
+    if header.next_header != NH_DGRAM {
+        return Err(WireError::NextHeader);
+    }
+    let length = 8usize
+        .checked_add(data.len())
+        .ok_or(WireError::LengthOverflow)?;
+    checked_packet_len(length, budget)?;
+    let length_u16 = u16::try_from(length).map_err(|_| WireError::LengthOverflow)?;
+    let mut payload = Vec::with_capacity(length);
+    payload.extend_from_slice(&sport.to_be_bytes());
+    payload.extend_from_slice(&dport.to_be_bytes());
+    payload.extend_from_slice(&length_u16.to_be_bytes());
+    payload.extend_from_slice(&[0, 0]);
+    payload.extend_from_slice(data);
+    let checksum = checksum16(
+        &pseudo_header(
+            header,
+            u32::try_from(length).map_err(|_| WireError::LengthOverflow)?,
+            NH_DGRAM,
+        ),
+        &payload,
+    );
+    payload[6..8].copy_from_slice(&checksum.to_be_bytes());
+    header.pack_with_budget(&payload, budget)
+}
+
+pub fn parse_dgram<'a>(
+    header: &Header,
+    payload: &'a [u8],
+) -> Result<(u16, u16, &'a [u8]), WireError> {
+    validate_dgram_shape(payload)?;
+    if u16::from_be_bytes([payload[6], payload[7]]) == 0
+        || !checksum_valid(header, payload, NH_DGRAM)
+    {
+        return Err(WireError::DgramChecksum);
+    }
+    Ok((
+        u16::from_be_bytes([payload[0], payload[1]]),
+        u16::from_be_bytes([payload[2], payload[3]]),
+        &payload[8..],
+    ))
+}
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn loc(s: &str) -> Loc {
-        parse_loc(s).unwrap()
+    fn header(next_header: u8) -> Header {
+        Header::new(next_header, [0; 16], [0; 16])
+    }
+
+    fn body_for_zero_checksum(header: &Header, next_header: u8, prefix: &[u8]) -> [u8; 2] {
+        for value in 0..=u16::MAX {
+            let mut payload = prefix.to_vec();
+            payload.extend_from_slice(&value.to_be_bytes());
+            if checksum_raw(
+                &pseudo_header(header, u32::try_from(payload.len()).unwrap(), next_header),
+                &payload,
+            ) == 0
+            {
+                return value.to_be_bytes();
+            }
+        }
+        panic!("a 16-bit checksum complement must exist");
     }
 
     #[test]
-    fn header_roundtrip() {
-        let mut h = Header::new(NH_CTL, loc("8:1::10"), loc("8:1::20"));
-        h.scid = 0x1122_3344_5566_7788;
-        let raw = h.pack(b"hello");
-        assert_eq!(raw.len(), HEADER_LEN + 5);
-        let (h2, pl) = Header::unpack(&raw).unwrap();
-        assert_eq!(pl, b"hello");
-        assert_eq!(h2, h);
+    fn builders_encode_computed_zero_as_ffff_and_parsers_accept_it() {
+        let ctl_header = header(NH_CTL);
+        let ctl_prefix = [CTL_ECHO_REQUEST, 0, 0, 0, 0, 0];
+        let ctl_tail = body_for_zero_checksum(&ctl_header, NH_CTL, &ctl_prefix);
+        let ctl_packet = build_ctl(
+            &ctl_header,
+            CTL_ECHO_REQUEST,
+            0,
+            &[0, 0, ctl_tail[0], ctl_tail[1]],
+        )
+        .unwrap();
+        let (ctl_header, ctl_payload) = Header::unpack(&ctl_packet).unwrap();
+        assert_eq!(&ctl_payload[2..4], &[0xff, 0xff]);
+        assert!(parse_ctl(&ctl_header, ctl_payload).is_ok());
+
+        let dgram_header = header(NH_DGRAM);
+        let dgram_prefix = [0, 1, 0, 2, 0, 10, 0, 0];
+        let dgram_tail = body_for_zero_checksum(&dgram_header, NH_DGRAM, &dgram_prefix);
+        let dgram_packet = build_dgram(&dgram_header, 1, 2, &dgram_tail).unwrap();
+        let (dgram_header, dgram_payload) = Header::unpack(&dgram_packet).unwrap();
+        assert_eq!(&dgram_payload[6..8], &[0xff, 0xff]);
+        assert!(parse_dgram(&dgram_header, dgram_payload).is_ok());
     }
 
     #[test]
-    fn rejects_bad_version_and_truncation() {
-        let h = Header::new(NH_CTL, loc("8:1::10"), loc("8:1::20"));
-        let mut raw = h.pack(b"abc");
-        raw[0] = 6 << 4; // IPv6 masquerading as R8
-        assert!(Header::unpack(&raw).is_err());
-        let raw = h.pack(b"abc");
-        assert!(Header::unpack(&raw[..raw.len() - 1]).is_err());
+    fn profile_three_session_data_allows_primary_and_redundant_pairs_only() {
+        let mut session = header(NH_SES);
+        session.profile = 3;
+        session.scid = 1;
+        let envelope = [6, 1, 3, 0];
+
+        session.flags = 1;
+        session.path_slot = 0;
+        assert_eq!(validate_ses_header(&session, &envelope), Ok(()));
+
+        session.flags = 3;
+        session.path_slot = 1;
+        assert_eq!(validate_ses_header(&session, &envelope), Ok(()));
+
+        session.flags = 1;
+        session.path_slot = 1;
+        assert_eq!(
+            validate_ses_header(&session, &envelope),
+            Err(WireError::PathSlot)
+        );
+
+        session.flags = 3;
+        session.path_slot = 0;
+        assert_eq!(
+            validate_ses_header(&session, &envelope),
+            Err(WireError::PathSlot)
+        );
+
+        session.flags = 0;
+        session.path_slot = 0;
+        assert_eq!(
+            validate_ses_header(&session, &envelope),
+            Err(WireError::Flags)
+        );
+
+        session.flags = 2;
+        assert_eq!(
+            validate_ses_header(&session, &envelope),
+            Err(WireError::Flags)
+        );
     }
 
     #[test]
-    fn ctl_checksum_detects_corruption() {
-        let h = Header::new(NH_CTL, loc("8:1::10"), loc("8:1::20"));
-        let pkt = build_ctl(&h, CTL_ECHO_REQUEST, 0, &[0, 7, 0, 42], true);
-        let (h3, p3) = Header::unpack(&pkt).unwrap();
-        let (t, _c, _s, body, ok) = parse_ctl(&h3, p3).unwrap();
-        assert!(ok && t == CTL_ECHO_REQUEST && body == [0, 7, 0, 42]);
-        let mut bad = pkt.clone();
-        let n = bad.len();
-        bad[n - 1] ^= 0xff;
-        let (hb, pb) = Header::unpack(&bad).unwrap();
-        assert!(!parse_ctl(&hb, pb).unwrap().4);
+    fn ses_validation_uses_contract_precedence() {
+        let mut session = header(NH_SES);
+        session.profile = 3;
+        session.scid = 1;
+        let envelope = [6, 1, 3, 0];
+
+        session.tc = 1;
+        session.hop_limit = 0;
+        session.flags = 0;
+        session.path_slot = 1;
+        assert_eq!(
+            validate_ses_header(&session, &envelope),
+            Err(WireError::TrafficClass)
+        );
+
+        session.tc = 0;
+        assert_eq!(
+            validate_ses_header(&session, &envelope),
+            Err(WireError::HopLimit)
+        );
+
+        session.hop_limit = 64;
+        assert_eq!(
+            validate_ses_header(&session, &envelope),
+            Err(WireError::Flags)
+        );
+
+        session.flags = 1;
+        assert_eq!(
+            validate_ses_header(&session, &envelope),
+            Err(WireError::PathSlot)
+        );
     }
 
     #[test]
-    fn dgram_roundtrip() {
-        let h = Header::new(NH_DGRAM, loc("8:1::10"), loc("8:1::20"));
-        let pkt = build_dgram(&h, 1000, 9000, b"ping", true);
-        let (hd, pd) = Header::unpack(&pkt).unwrap();
-        let (sp, dp, data, ok) = parse_dgram(&hd, pd).unwrap();
-        assert!(ok && sp == 1000 && dp == 9000 && data == b"ping");
+    fn unknown_next_header_preempts_all_other_header_conflicts() {
+        let mut packet = [0u8; HEADER_LEN];
+        packet[0] = (VERSION << 4) | 0x0f;
+        packet[1] = 1;
+        packet[4] = 4;
+        packet[5] = 0;
+        packet[6] = 0xff;
+        packet[7] = 1;
+        packet[8..16].copy_from_slice(&1u64.to_be_bytes());
+        assert_eq!(Header::unpack(&packet), Err(WireError::NextHeader));
     }
 }

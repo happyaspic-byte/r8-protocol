@@ -1,7 +1,9 @@
 [package]
 name = "r8-proto"
-description = "R8 wire format v0.1 (lab use only; not an Internet standard)"
+description = "Strict R8 wire format v0.2 (private experimental closed lab)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
+[dev-dependencies]
+serde_json = "1"

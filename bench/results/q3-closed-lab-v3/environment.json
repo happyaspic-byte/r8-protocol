@@ -1,0 +1,21 @@
+{
+  "cpu_policy": "process CPU clock; no affinity or governor modification",
+  "fixture_certificate_sha256": "5d3be5eaa4d12b54621a8ab27f9efdc83ceeb1ca7af51c14c12151b5d0b76409",
+  "fixture_spki_sha256": "cce70090770926fef515cc330acdbc5c85add70443d55ef893139c79ba217198",
+  "generated_at": "2026-08-14T11:16:37.512802+00:00",
+  "loopback_interface": "lo",
+  "loopback_mtu": 65536,
+  "os": {
+    "arch": "x86_64",
+    "kernel": "7.0.0-29-generic",
+    "platform": "Linux-7.0.0-29-generic-x86_64-with-glibc2.43"
+  },
+  "protocol_sha256": "86de498d4690d9de98333d8a99b74c985e8561e57f060b7c6bb68a833ba58cbf",
+  "reference_sha256": "99fce7ea4587e34c991cc651a368cdfa879c760b8171d4be80869ef8b8b087ee",
+  "source_identity": "sha256:0cb64705a171f61f1ba36369cb6986cdb6fcb87d31cf88559b34b4b473aa2380",
+  "toolchain": {
+    "cryptography": "46.0.5",
+    "openssl": "OpenSSL 3.5.5 27 Jan 2026",
+    "python": "3.14.4"
+  }
+}

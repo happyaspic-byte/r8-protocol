@@ -1,0 +1,270 @@
+{
+  "schemaVersion": 1,
+  "surface": "cli",
+  "tool": "tests/interop.py",
+  "sourceId": "sha256:a4d25aad74579ee3e11e0f18ceaddb8dc35a75a6e836852bf911f9a9ec86ce4c",
+  "toolchain": {
+    "python": "3.14.4"
+  },
+  "environment": {
+    "platform": "linux"
+  },
+  "startedAt": 665039.759616015,
+  "endedAt": 665041.546169725,
+  "actions": [
+    {
+      "type": "custom",
+      "selector": "udp:malformed-corpus",
+      "target": "udp:malformed-corpus",
+      "startedAt": 665039.920049874,
+      "endedAt": 665039.927413464,
+      "exitCode": 0,
+      "stdout": "captured_bytes=40",
+      "timestamp": 1
+    },
+    {
+      "type": "custom",
+      "selector": "cli:python-daemon-echo",
+      "target": "cli:python-daemon-echo",
+      "startedAt": 665039.927432238,
+      "endedAt": 665040.265906038,
+      "exitCode": 0,
+      "stdout": "captured_bytes=64",
+      "timestamp": 2
+    },
+    {
+      "type": "custom",
+      "selector": "cli:rust-daemon-echo",
+      "target": "cli:rust-daemon-echo",
+      "startedAt": 665040.26593289,
+      "endedAt": 665040.26888537,
+      "exitCode": 0,
+      "stdout": "captured_bytes=85",
+      "timestamp": 3
+    },
+    {
+      "type": "custom",
+      "selector": "cli:python-dgram",
+      "target": "cli:python-dgram",
+      "startedAt": 665040.268901246,
+      "endedAt": 665040.425769878,
+      "exitCode": 0,
+      "stdout": "captured_bytes=33",
+      "timestamp": 4
+    },
+    {
+      "type": "custom",
+      "selector": "cli:rust-dgram",
+      "target": "cli:rust-dgram",
+      "startedAt": 665040.425791403,
+      "endedAt": 665040.428566514,
+      "exitCode": 0,
+      "stdout": "captured_bytes=23",
+      "timestamp": 5
+    },
+    {
+      "type": "custom",
+      "selector": "cli:python-hostile-reply-recovery",
+      "target": "cli:python-hostile-reply-recovery",
+      "startedAt": 665040.433507612,
+      "endedAt": 665040.834826341,
+      "exitCode": 1,
+      "stdout": "captured_bytes=64",
+      "timestamp": 6
+    },
+    {
+      "type": "custom",
+      "selector": "cli:rust-hostile-reply-recovery",
+      "target": "cli:rust-hostile-reply-recovery",
+      "startedAt": 665040.835389567,
+      "endedAt": 665040.888760092,
+      "exitCode": 1,
+      "stdout": "captured_bytes=122",
+      "timestamp": 7
+    },
+    {
+      "type": "custom",
+      "selector": "cli:python-timeout",
+      "target": "cli:python-timeout",
+      "startedAt": 665040.888932136,
+      "endedAt": 665041.307147859,
+      "exitCode": 1,
+      "stdout": "captured_bytes=79",
+      "timestamp": 8
+    },
+    {
+      "type": "custom",
+      "selector": "cli:rust-timeout",
+      "target": "cli:rust-timeout",
+      "startedAt": 665041.307200326,
+      "endedAt": 665041.361760894,
+      "exitCode": 1,
+      "stdout": "captured_bytes=107",
+      "timestamp": 9
+    },
+    {
+      "type": "custom",
+      "selector": "cli:budget-reject-1232",
+      "target": "cli:budget-reject-1232",
+      "startedAt": 665041.361881542,
+      "endedAt": 665041.364305145,
+      "exitCode": 1,
+      "stdout": "captured_bytes=18",
+      "timestamp": 10
+    },
+    {
+      "type": "custom",
+      "selector": "cli:budget-reject-1252",
+      "target": "cli:budget-reject-1252",
+      "startedAt": 665041.364324296,
+      "endedAt": 665041.366819041,
+      "exitCode": 1,
+      "stdout": "captured_bytes=18",
+      "timestamp": 11
+    },
+    {
+      "type": "custom",
+      "selector": "cli:budget-accept-1280",
+      "target": "cli:budget-accept-1280",
+      "startedAt": 665041.366829361,
+      "endedAt": 665041.369197018,
+      "exitCode": 0,
+      "stdout": "captured_bytes=42",
+      "timestamp": 12
+    },
+    {
+      "type": "custom",
+      "selector": "cli:python-public-underlay-refusal",
+      "target": "cli:python-public-underlay-refusal",
+      "startedAt": 665041.36923775,
+      "endedAt": 665041.543550208,
+      "exitCode": 2,
+      "stdout": "captured_bytes=73",
+      "timestamp": 13
+    },
+    {
+      "type": "custom",
+      "selector": "cli:rust-public-underlay-refusal",
+      "target": "cli:rust-public-underlay-refusal",
+      "startedAt": 665041.543577005,
+      "endedAt": 665041.546123909,
+      "exitCode": 1,
+      "stdout": "captured_bytes=37",
+      "timestamp": 14
+    }
+  ],
+  "assertions": [
+    {
+      "selector": "daemon.malformed-recovery",
+      "status": "passed",
+      "startedAt": 665039.92742358,
+      "endedAt": 665039.92742358,
+      "evidence": "both daemons live after malformed input",
+      "timestamp": 15
+    },
+    {
+      "selector": "python.echo",
+      "status": "passed",
+      "startedAt": 665040.265917279,
+      "endedAt": 665040.265917279,
+      "evidence": "reply received",
+      "timestamp": 16
+    },
+    {
+      "selector": "rust.echo",
+      "status": "passed",
+      "startedAt": 665040.268891772,
+      "endedAt": 665040.268891772,
+      "evidence": "reply received",
+      "timestamp": 17
+    },
+    {
+      "selector": "r8d.dgram",
+      "status": "passed",
+      "startedAt": 665040.425779551,
+      "endedAt": 665040.425779551,
+      "evidence": "dgram received",
+      "timestamp": 18
+    },
+    {
+      "selector": "r8ref.dgram",
+      "status": "passed",
+      "startedAt": 665040.428573233,
+      "endedAt": 665040.428573233,
+      "evidence": "dgram received",
+      "timestamp": 19
+    },
+    {
+      "selector": "python.hostile-reply-recovery",
+      "status": "passed",
+      "startedAt": 665040.834837218,
+      "endedAt": 665040.834837218,
+      "evidence": "final expected-endpoint reply received; invalid replies caused required nonzero exit",
+      "timestamp": 20
+    },
+    {
+      "selector": "rust.hostile-reply-recovery",
+      "status": "passed",
+      "startedAt": 665040.888769556,
+      "endedAt": 665040.888769556,
+      "evidence": "final expected-endpoint reply received; invalid replies caused required nonzero exit",
+      "timestamp": 21
+    },
+    {
+      "selector": "cli:python-timeout",
+      "status": "passed",
+      "startedAt": 665041.307177113,
+      "endedAt": 665041.307177113,
+      "evidence": "nonzero exit",
+      "timestamp": 22
+    },
+    {
+      "selector": "cli:rust-timeout",
+      "status": "passed",
+      "startedAt": 665041.361776769,
+      "endedAt": 665041.361776769,
+      "evidence": "nonzero exit",
+      "timestamp": 23
+    },
+    {
+      "selector": "cli:budget-reject-1232",
+      "status": "passed",
+      "startedAt": 665041.364310758,
+      "endedAt": 665041.364310758,
+      "evidence": "nonzero exit",
+      "timestamp": 24
+    },
+    {
+      "selector": "cli:budget-reject-1252",
+      "status": "passed",
+      "startedAt": 665041.366824562,
+      "endedAt": 665041.366824562,
+      "evidence": "nonzero exit",
+      "timestamp": 25
+    },
+    {
+      "selector": "budget.1280",
+      "status": "passed",
+      "startedAt": 665041.369202983,
+      "endedAt": 665041.369202983,
+      "evidence": "send accepted",
+      "timestamp": 26
+    },
+    {
+      "selector": "cli:python-public-underlay-refusal",
+      "status": "passed",
+      "startedAt": 665041.543562299,
+      "endedAt": 665041.543562299,
+      "evidence": "nonzero exit",
+      "timestamp": 27
+    },
+    {
+      "selector": "cli:rust-public-underlay-refusal",
+      "status": "passed",
+      "startedAt": 665041.546131251,
+      "endedAt": 665041.546131251,
+      "evidence": "nonzero exit",
+      "timestamp": 28
+    }
+  ]
+}

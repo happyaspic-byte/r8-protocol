@@ -1,0 +1,123 @@
+{
+  "contract_version": "r8-benchmark-preregistration-v2",
+  "protocol_id": "Q1",
+  "status": "preregistered-no-results",
+  "scope": "private-experimental-closed-lab",
+  "additional_properties": false,
+  "pre_observation_repair": {
+    "supersedes_sha256": "a63788866da7a7b0cfbb8af0b07f96a0ddc041b2926d04debe8ee48e83cd5960",
+    "reason": "Q1 v1 contained no observations and left topology, timing, actions, collection, and analysis inputs under-specified; v2 freezes them before trials."
+  },
+  "normative_references": {
+    "sections": [
+      {"document": "spec/0003-test-plan.md", "section": "4"},
+      {"document": "spec/parameters-v0.1.md", "section": "2"},
+      {"document": "spec/parameters-v0.1.md", "section": "7"}
+    ],
+    "parameter_ids": [
+      "P-APPLICATION-BUDGET",
+      "P-Q1-WARMUPS",
+      "P-Q1-MEASURED-TRIALS",
+      "P-Q1-BLOCK-SIZE",
+      "P-Q1-MAKE-BEFORE-BREAK-NOTICE",
+      "P-Q1-READINESS-DELIVERIES",
+      "P-Q1-SUPPORTED-QUANTILES",
+      "P-Q1-BLOCK-BOOTSTRAP-RESAMPLES"
+    ]
+  },
+  "hypothesis": "Under identical isolated-lab notice, trust, and load, Q1 reports R8 mobility, TCP reconnect, and GARP VIP movement without post-hoc tuning.",
+  "topology": {
+    "network": "IPv4-only isolated Linux namespaces on one host. Base namespace names are r8q1-client, r8q1-server, and r8q1-router; an operational random suffix is permitted only after each base name.",
+    "links_and_addresses": "client/router veth is 10.88.0.2/24 on client and 10.88.0.1/24 on router. Router server-side bridge is 10.88.1.1/24. Server old and candidate interfaces are separate veths with 10.88.1.2/24 and 10.88.1.3/24 respectively. VIP is 10.88.1.100/32.",
+    "routing": "client has static default route via 10.88.0.1; server source-policy rules and routes are installed before trials: source 10.88.1.2/32 to 10.88.0.0/24 uses table 101 via 10.88.1.1 dev old, and source 10.88.1.3/32 to 10.88.0.0/24 uses table 102 via 10.88.1.1 dev candidate. VIP source uses table 103, initially routing 10.88.0.0/24 via 10.88.1.1 dev old. These rules make bound TCP and R8 carriers use their actual interface while both are up. IPv4 forwarding is enabled only inside r8q1-router; no namespace has an outside route; no dynamic routing is permitted.",
+    "dns": "disabled; every endpoint is a numeric IPv4 address",
+    "privileges": "runner MUST start as root and retain CAP_NET_ADMIN and CAP_NET_RAW; missing privilege is setup failure and the run fails, never skips",
+    "neighbor_cache": "no neighbor-cache flush is permitted",
+    "evidence_counts": "interface_count is exactly 10 including three loopbacks; non_loopback_interface_count is exactly 7; veth_pair_count is exactly 3.",
+    "teardown": "teardown of owned namespaces removes their source-policy rules and routes."
+  },
+  "arms": ["abrupt-break", "make-before-break"],
+  "mechanisms": ["R8", "TCP-reconnect", "GARP-VIP"],
+  "traffic": {
+    "payload": "exactly 64 bytes: big-endian u64 sequence number followed by 56 zero bytes",
+    "rate": "100 Hz exactly, one numbered payload every 10 ms",
+    "transport": "TCP with TCP_NODELAY enabled; TCP-reconnect reconnects once every 10 ms until connected",
+    "start": "T-3 seconds",
+    "observation_end": "T+5 seconds",
+    "censor_timeout": "T+5 seconds"
+  },
+  "trial_counts": {
+    "warmups": 20,
+    "warmups_excluded_from_analysis": true,
+    "measured": 200,
+    "unit": "trial per mechanism per arm"
+  },
+  "blocking": {
+    "block_size": 20,
+    "global_schedule": "form a multiset of exactly 220 trials for each of the six mechanism-arm pairs, for exactly 1320 trials total; deterministically shuffle that multiset with the fixed seed; partition the shuffled sequence into 66 consecutive host-epoch blocks of exactly 20 total trials",
+    "warmup_assignment": "for each mechanism-arm pair, its first 20 occurrences in the shuffled sequence are warmups and its remaining 200 occurrences are measured trials",
+    "randomization": "the deterministic global shuffle is the sole trial order; no within-block re-randomization occurs",
+    "seed": "r8-q1-block-order-v2",
+    "bootstrap_resampling_unit": "the 66 consecutive 20-trial host-epoch blocks",
+    "host_epoch_required": true
+  },
+  "timing_and_actions": {
+    "event_T": "scheduled cutover instant",
+    "abrupt-break": {
+      "advance_notice": "none for every mechanism",
+      "R8": "old and candidate carriers use the fixed server addresses and UDP port 53104; one process and session retain state. At T, bring the candidate interface up and administratively bring the old interface down before one authenticated LOC_UPDATE and the sole candidate probe/challenge/response proof; no fallback is permitted.",
+      "TCP-reconnect": "the established stream initially uses numeric 10.88.1.2:53101. At T, make the new listener and interface usable, administratively bring the old server interface down, and reconnect every 10 ms without DNS to the preconfigured numeric target 10.88.1.3:53102.",
+      "GARP-VIP": "the stream initially connects to 10.88.1.100:53103 on the old interface. At T, make the new interface usable and atomically remove then add the VIP; as part of that atomic move, execute exactly one `ip route replace table 103 10.88.0.0/24 via 10.88.1.1 dev candidate`, then send exactly three `arping -U` replies 100 ms apart. The listener is wildcard-bound within the isolated server namespace; no neighbor flush is permitted. No R8 or TCP route changes occur at cutover."
+    },
+    "make-before-break": {
+      "advance_notice": "T-2 seconds for every mechanism",
+      "activation": "at T-2 seconds activate the new carrier, listener/interface, or VIP interface respectively; do not cut over traffic",
+      "R8": "old and candidate carriers use the fixed server addresses and UDP port 53104; one process and session retain state. Bring the candidate interface up at T-2 seconds; at or after T perform one authenticated LOC_UPDATE and the sole candidate proof, retain the old carrier until proof, then make it grace-only and administratively down after grace. No fallback is permitted.",
+      "TCP-reconnect": "the established stream initially uses numeric 10.88.1.2:53101. At T-2 seconds make the new listener and interface usable; at T administratively bring the old server interface down and reconnect every 10 ms without DNS to numeric 10.88.1.3:53102.",
+      "GARP-VIP": "the stream initially connects to 10.88.1.100:53103 on the old interface. Bring the new interface up at T-2 seconds; at T atomically remove then add the VIP and, as part of that atomic move, execute exactly one `ip route replace table 103 10.88.0.0/24 via 10.88.1.1 dev candidate`, then send exactly three `arping -U` replies 100 ms apart. The listener is wildcard-bound within the isolated server namespace; no neighbor flush is permitted. No R8 or TCP route changes occur at cutover."
+    }
+  },
+  "equalization": {
+    "notice": "identical arm-defined advance notice",
+    "trust": "all peers use preconfigured closed-lab trust before the trial; no PKI, TOFU, or trust change during a trial",
+    "load": "the identical 64-byte, 100 Hz numbered stream",
+    "candidate_mechanism": "R8 uses only the contract mechanism in spec/0006-mobility-v0.1.md; no dynamic routing, fallback, passive promotion, or alternate candidate mechanism"
+  },
+  "readiness_and_outage": {
+    "readiness": "first 10 consecutive on-schedule post-T payload deliveries",
+    "outage_start": "last successfully received pre-T sequence-numbered payload",
+    "outage_end": "timestamp of readiness",
+    "timeout": "a trial without readiness by T+5 seconds is censored at T+5 seconds and retained as failure"
+  },
+  "collection": {
+    "interface_counters": "record pre-trial and T+5-second per-interface rx_bytes, tx_bytes, rx_packets, tx_packets, rx_dropped, tx_dropped, rx_errors, and tx_errors; output identifies interfaces only by ordinal and count",
+    "process_cpu": "record process user_cpu_ns and system_cpu_ns over T-3 seconds through T+5 seconds",
+    "identifier_redaction": "results and telemetry record configuration_sha256 only and MUST NOT record raw IP address, port, argv, LOC, namespace name, interface name, veth name, VIP, route, or command.",
+    "raw_row_fields": ["protocol_id", "contract_version", "trial_id", "block_id", "host_epoch", "mechanism", "arm", "randomization_position", "setup_status", "exclusion_reason", "t_minus_3_ns", "activation_ns", "cutover_ns", "observation_end_ns", "readiness_ns", "censored", "failure", "sent_payloads", "received_payloads", "lost_payloads", "duplicate_payloads", "reordered_payloads", "outage_ns", "interface_counter_by_ordinal", "process_user_cpu_ns", "process_system_cpu_ns", "configuration_sha256"],
+    "environment_fields": ["kernel_release", "distribution", "cpu_model", "cpu_governor", "nic_driver", "topology_sha256", "command_sha256", "binary_sha256", "configuration_sha256", "capabilities", "clock_source", "namespace_count", "interface_count", "non_loopback_interface_count", "veth_pair_count"],
+    "topology_fields": ["address_family", "topology_sha256", "command_sha256", "configuration_sha256", "namespace_count", "interface_count", "non_loopback_interface_count", "veth_pair_count", "dns_disabled", "neighbor_flush_prohibited"],
+    "summary_fields": ["protocol_id", "contract_version", "mechanism", "arm", "measured_trial_count", "setup_failure_count", "failure_rate", "outage_p50_ns", "outage_p95_ns", "block_bootstrap_95_percent_ci", "configuration_sha256"]
+  },
+  "exclusions": {
+    "only": "setup failure retained as a raw row with setup_status=failed and exclusion_reason=setup_failure",
+    "forbidden": "no other exclusion, retry, replacement, omission, or post-hoc filtering"
+  },
+  "analysis": {
+    "estimators": ["failure-rate", "outage-p50", "outage-p95", "block-bootstrap-95-percent-CI"],
+    "quantiles": ["p50", "p95"],
+    "forbidden_quantiles": ["p99"],
+    "quantile_convention": "nearest-rank: sorted[min(n-1,floor((n-1)q))]",
+    "block_bootstrap_95_percent_ci": {
+      "object_fields_exactly": ["failure_rate", "outage_p50_ns", "outage_p95_ns"],
+      "value_form": "each field is [2.5th percentile, 97.5th percentile] over bootstrap resamples, or null when its estimator has no defined resamples",
+      "resamples": 10000,
+      "seed": "r8-q1-block-bootstrap-v2",
+      "sampling": "deterministically resample the 66 complete 20-trial blocks with replacement",
+      "per_pair_rows": "for each mechanism-arm pair and each resample, include all selected measured pair rows occurring in sampled blocks; blocks with zero rows for that pair are valid and no block is required to contain the pair",
+      "failure_rate": "compute over all resampled pair rows",
+      "outage_quantiles": "compute only over nonfailed uncensored outage values among the resampled pair rows"
+    },
+    "post_hoc_changes": "require a new labeled series"
+  },
+  "result_fields_prohibited": ["observed_values", "digests", "summary", "confidence_intervals", "results"]
+}

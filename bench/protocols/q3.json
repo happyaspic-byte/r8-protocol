@@ -1,0 +1,59 @@
+{
+  "contract_version": "r8-benchmark-preregistration-v1",
+  "protocol_id": "Q3",
+  "status": "preregistered-no-results",
+  "scope": "private-experimental-closed-lab",
+  "additional_properties": false,
+  "normative_references": {
+    "sections": [
+      {"document": "spec/0003-test-plan.md", "section": "4"},
+      {"document": "spec/parameters-v0.1.md", "section": "2"},
+      {"document": "spec/parameters-v0.1.md", "section": "4"}
+    ],
+    "parameter_ids": [
+      "P-APPLICATION-BUDGET",
+      "P-OPEN-TOTAL-TIMEOUT",
+      "P-POST-COOKIE-PENDING-TIMEOUT"
+    ]
+  },
+  "hypothesis": "R8 cookie-authenticated pinned-peer full handshakes are compared with TLS 1.3 full handshakes under identical closed-lab host, interface, MTU, payload, and lifecycle controls.",
+  "mechanisms": ["R8-cookie-pinned-full-handshake", "TLS-1.3-full-handshake"],
+  "warmups": {"count": 50, "excluded_from_analysis": true, "unit": "full-handshake-per-mechanism"},
+  "measured_trials": {"count": 1000, "unit": "full-handshake-per-mechanism", "fixed": true},
+  "blocking": {
+    "block_size": 20,
+    "unit": "trials",
+    "randomization": "randomize mechanism order within each host-epoch block",
+    "seed": "r8-q3-block-order-v1",
+    "host_epoch_required": true
+  },
+  "trigger_and_readiness": {
+    "start": "client userspace connect/send intent",
+    "complete": "authenticated delivery and response of one application byte",
+    "readiness": "completion condition is identical for both mechanisms"
+  },
+  "controls": {
+    "R8": "includes cookie processing and configured peer-pin verification",
+    "TLS-1.3": "full handshake only; resumption and 0-RTT disabled; preconfigured self-signed certificate and SPKI pin",
+    "environment": ["same hosts", "same interface", "same MTU", "same application bytes", "same CPU policy"],
+    "process_lifecycle": "cold-process primary; warm-process reported separately",
+    "trust": "preconfigured pins before trials; no trust-on-first-use or public PKI substitution"
+  },
+  "timeout_and_censoring": {
+    "timeout": "5s",
+    "timeout_rows_retained": true,
+    "failure_rows_retained": true,
+    "latency_censoring": "timed-out latency is right-censored",
+    "failure_rate": "timeouts contribute to failure rate",
+    "exclusions": "no post-hoc exclusions"
+  },
+  "outcomes": ["failure-rate", "latency", "bytes", "packets", "CPU"],
+  "analysis": {
+    "estimators": ["failure-rate", "empirical-latency-quantiles", "block-bootstrap-95-percent-CI"],
+    "quantiles": ["p50", "p90", "p99"],
+    "bootstrap": {"resamples": 10000, "seed": "r8-q3-block-bootstrap-v1", "resampling_unit": "host-epoch block"},
+    "p99_unsupported_rule": "Label p99 unsupported, rather than substitute a maximum, if its confidence interval spans the 5s timeout or effective successes are insufficient for the empirical p99 and its block bootstrap.",
+    "post_hoc_changes": "require a new labeled series"
+  },
+  "result_fields_prohibited": ["observed_values", "digests", "summary", "confidence_intervals"]
+}

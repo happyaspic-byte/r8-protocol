@@ -1,0 +1,397 @@
+{
+  "contract_version": "r8-session-v0.1-vectors-v1",
+  "status": "real-reviewed-synthetic-artifact",
+  "synthetic_only": true,
+  "synthetic_material_notice": "SYNTHETIC-NON-OPERATIONAL: fixed test-only material; never a runtime default or deployable credential.",
+  "baseline": {
+    "commit": "aacadeee2a83b7639225cd11b9c020c69526fa1e",
+    "tree": "94fed3c18bbfb276c9fe5d558277b8afe1d7bca5"
+  },
+  "normative_references": {
+    "sections": [
+      {
+        "document": "spec/0005-session-security-v0.1.md",
+        "section": "1"
+      },
+      {
+        "document": "spec/0005-session-security-v0.1.md",
+        "section": "2"
+      },
+      {
+        "document": "spec/0005-session-security-v0.1.md",
+        "section": "2.1"
+      },
+      {
+        "document": "spec/0005-session-security-v0.1.md",
+        "section": "2.2"
+      },
+      {
+        "document": "spec/0005-session-security-v0.1.md",
+        "section": "2.3"
+      },
+      {
+        "document": "spec/0005-session-security-v0.1.md",
+        "section": "3"
+      },
+      {
+        "document": "spec/0005-session-security-v0.1.md",
+        "section": "4"
+      }
+    ],
+    "parameter_ids": [
+      "P-COOKIE-BUCKET",
+      "P-REPLAY-WINDOW",
+      "P-REPLAY-FORWARD-JUMP-MAX",
+      "P-COUNTER-RESERVED",
+      "P-COUNTER-USABLE-RANGE"
+    ]
+  },
+  "identities": {
+    "client_ed25519_seed_hex": "1010101010101010101010101010101010101010101010101010101010101010",
+    "server_ed25519_seed_hex": "2020202020202020202020202020202020202020202020202020202020202020",
+    "client_public_key_hex": "5c9c6df261c9cb840475776aaefcd944b405328fab28f9b3a95ef40490d3de84",
+    "server_public_key_hex": "4ed32f63bf35f0eeefcb25f28a2e1fbdc873ae2835671b0c9460f5f12e4556a8",
+    "client_eid_hex": "d1d5bbe49b1f829a1ebd4af95cbe4fcf",
+    "server_eid_hex": "73ccb6872d154e3e6ec3cbc3884d9c2f",
+    "client_x25519_secret_hex": "3030303030303030303030303030303030303030303030303030303030303030",
+    "server_x25519_secret_hex": "4040404040404040404040404040404040404040404040404040404040404040",
+    "client_ephemeral_hex": "e50c239bc204f1341664c9d9c50c6a0d0fff6fc79d9301f1e713aab2e0344b3f",
+    "server_ephemeral_hex": "d7b5e81d336e578b13b8d706e82d061e3038c96bce66cdcf50d566b96ddbba10",
+    "shared_secret_hex": "2ffc24cce9eed2a0d0357986878c0691154eb70589bef1afeb4fbf513170fa33",
+    "all_zero_shared_secret_input_hex": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "context": {
+    "client_role": 1,
+    "server_role": 2,
+    "service_context": 287454020,
+    "profile": 0,
+    "scid": 72623859790382856,
+    "client_nonce_hex": "6060606060606060606060606060606060606060606060606060606060606060",
+    "server_nonce_hex": "7070707070707070707070707070707070707070707070707070707070707070",
+    "server_boot_instance_hex": "50505050505050505050505050505050",
+    "udp_binding_ipv4_hex": "0104c000020ace480190909090909090909090909090909090",
+    "cookie_key_hex": "8080808080808080808080808080808080808080808080808080808080808080",
+    "cookie_bucket": 123456789,
+    "server_context_id": 1432778632,
+    "cookie_input_hex": "523820636f6f6b69652076310104c000020ace48019090909090909090909090909090909008010102112233440102030405060708d1d5bbe49b1f829a1ebd4af95cbe4fcf79fb38ef414ebed57f2f3a5ba81799ed7a357623cdb1e363a724a4bb9d92bfc4a34723ee7079a74e439854884792604d5c4f7eb88dc436fe1ed66d93b9f8a7195050505050505050505050505050505000000000075bcd1555667788",
+    "cookie_hmac_hex": "445b6b48aeff4d10de21a0a31100b9b33063ffd2c7c9ebabc65430b54cad1380"
+  },
+  "transcript": {
+    "placeholder_t0_hex": "52382073657373696f6e207472616e73637269707420763108000102030405060708010211223344d1d5bbe49b1f829a1ebd4af95cbe4fcf5c9c6df261c9cb840475776aaefcd944b405328fab28f9b3a95ef40490d3de8473ccb6872d154e3e6ec3cbc3884d9c2f0000000000000000000000000000000000000000000000000000000000000000e50c239bc204f1341664c9d9c50c6a0d0fff6fc79d9301f1e713aab2e0344b3f00000000000000000000000000000000000000000000000000000000000000006060606060606060606060606060606060606060606060606060606060606060000000000000000000000000000000000000000000000000000000000000000050505050505050505050505050505050",
+    "actual_t0_hex": "52382073657373696f6e207472616e73637269707420763108000102030405060708010211223344d1d5bbe49b1f829a1ebd4af95cbe4fcf5c9c6df261c9cb840475776aaefcd944b405328fab28f9b3a95ef40490d3de8473ccb6872d154e3e6ec3cbc3884d9c2f4ed32f63bf35f0eeefcb25f28a2e1fbdc873ae2835671b0c9460f5f12e4556a8e50c239bc204f1341664c9d9c50c6a0d0fff6fc79d9301f1e713aab2e0344b3fd7b5e81d336e578b13b8d706e82d061e3038c96bce66cdcf50d566b96ddbba106060606060606060606060606060606060606060606060606060606060606060707070707070707070707070707070707070707070707070707070707070707050505050505050505050505050505050",
+    "client_signature_input_hex": "5238204f50454e5f4155544820763152382073657373696f6e207472616e73637269707420763108000102030405060708010211223344d1d5bbe49b1f829a1ebd4af95cbe4fcf5c9c6df261c9cb840475776aaefcd944b405328fab28f9b3a95ef40490d3de8473ccb6872d154e3e6ec3cbc3884d9c2f0000000000000000000000000000000000000000000000000000000000000000e50c239bc204f1341664c9d9c50c6a0d0fff6fc79d9301f1e713aab2e0344b3f00000000000000000000000000000000000000000000000000000000000000006060606060606060606060606060606060606060606060606060606060606060000000000000000000000000000000000000000000000000000000000000000050505050505050505050505050505050",
+    "client_signature_hex": "4edbbcb86a8ffd717abc089e174dd25d44697422e3fc62a3a5e58ccae67407187c9a625518e907120b33e8e25e2dcd0967d3f41c83bb40eebb9db983457ac20f",
+    "server_signature_input_hex": "5238204f50454e5f41434b20763152382073657373696f6e207472616e73637269707420763108000102030405060708010211223344d1d5bbe49b1f829a1ebd4af95cbe4fcf5c9c6df261c9cb840475776aaefcd944b405328fab28f9b3a95ef40490d3de8473ccb6872d154e3e6ec3cbc3884d9c2f4ed32f63bf35f0eeefcb25f28a2e1fbdc873ae2835671b0c9460f5f12e4556a8e50c239bc204f1341664c9d9c50c6a0d0fff6fc79d9301f1e713aab2e0344b3fd7b5e81d336e578b13b8d706e82d061e3038c96bce66cdcf50d566b96ddbba106060606060606060606060606060606060606060606060606060606060606060707070707070707070707070707070707070707070707070707070707070707050505050505050505050505050505050",
+    "server_signature_hex": "a875de5d0c74e9d3e0279494acdfdce1fc07636620363842185a90ee9802580e2d6c0a2b5d42566e901ee0f3d12a42ce5de2e7a0ea733bc4fbc30266f34ec60d",
+    "transcript_hash_hex": "a866b27795c4d8cf35d8e3d0300e99752f2521d6258b02a893d58b7602353755"
+  },
+  "key_schedule": {
+    "hkdf_prk_hex": "6bdd82f7cb341845aaff3a5033e339f754da7ed72a60f5199ca85caaf252ddc9",
+    "c2s_slot0_key_hex": "c67671d5e0a697a6c4f338310ec508733c7de36ef2a51e876a6f424fd57559e0",
+    "s2c_slot0_key_hex": "4a5b4f3661853a36f1dbcab1fde972b799a2eedc4db59d3d0031862dfb517402"
+  },
+  "positive_cases": [
+    {
+      "id": "session-open",
+      "kind": "positive",
+      "payload_hex": "01010000010211223344d1d5bbe49b1f829a1ebd4af95cbe4fcf5c9c6df261c9cb840475776aaefcd944b405328fab28f9b3a95ef40490d3de84e50c239bc204f1341664c9d9c50c6a0d0fff6fc79d9301f1e713aab2e0344b3f6060606060606060606060606060606060606060606060606060606060606060",
+      "exact_size": 122
+    },
+    {
+      "id": "session-verify-cookie",
+      "kind": "positive",
+      "payload_hex": "020100000201112233445c9c6df261c9cb840475776aaefcd944b405328fab28f9b3a95ef40490d3de84a34723ee7079a74e439854884792604d5c4f7eb88dc436fe1ed66d93b9f8a71950505050505050505050505050505050445b6b48aeff4d10de21a0a31100b9b33063ffd2c7c9ebabc65430b54cad1380",
+      "exact_size": 122
+    },
+    {
+      "id": "session-open-auth",
+      "kind": "positive",
+      "payload_hex": "03010000010211223344d1d5bbe49b1f829a1ebd4af95cbe4fcf5c9c6df261c9cb840475776aaefcd944b405328fab28f9b3a95ef40490d3de84e50c239bc204f1341664c9d9c50c6a0d0fff6fc79d9301f1e713aab2e0344b3f606060606060606060606060606060606060606060606060606060606060606050505050505050505050505050505050445b6b48aeff4d10de21a0a31100b9b33063ffd2c7c9ebabc65430b54cad13804edbbcb86a8ffd717abc089e174dd25d44697422e3fc62a3a5e58ccae67407187c9a625518e907120b33e8e25e2dcd0967d3f41c83bb40eebb9db983457ac20f",
+      "exact_size": 234
+    },
+    {
+      "id": "session-open-ack",
+      "kind": "positive",
+      "payload_hex": "0401000002011122334473ccb6872d154e3e6ec3cbc3884d9c2f4ed32f63bf35f0eeefcb25f28a2e1fbdc873ae2835671b0c9460f5f12e4556a8d7b5e81d336e578b13b8d706e82d061e3038c96bce66cdcf50d566b96ddbba107070707070707070707070707070707070707070707070707070707070707070a875de5d0c74e9d3e0279494acdfdce1fc07636620363842185a90ee9802580e2d6c0a2b5d42566e901ee0f3d12a42ce5de2e7a0ea733bc4fbc30266f34ec60d",
+      "exact_size": 186
+    },
+    {
+      "id": "session-accept",
+      "kind": "positive",
+      "exact_size": 120,
+      "protected": {
+        "header_hex": "8000004803400100010203040506070800112233445566778899aabbccddeeffffeeddccbbaa99887766554433221100",
+        "prefix_hex": "05010000",
+        "counter": 1,
+        "aad_hex": "8000004803400100010203040506070800112233445566778899aabbccddeeffffeeddccbbaa99887766554433221100050100000000000000000001",
+        "plaintext_hex": "523820414343455054207631a866b27795c4d8cf35d8e3d0300e99752f2521d6258b02a893d58b7602353755",
+        "ciphertext_and_tag_hex": "c793f20eb184b03d1f2879d2ecfcfb0159f84c5fa01b44ad23770c586e9c568702dd1e5da957b89db474bb9858a5aeecaadd8b6b3ae1b1f0ad0c69dc",
+        "nonce_hex": "000000000000000000000001",
+        "packet_hex": "8000004803400100010203040506070800112233445566778899aabbccddeeffffeeddccbbaa99887766554433221100050100000000000000000001c793f20eb184b03d1f2879d2ecfcfb0159f84c5fa01b44ad23770c586e9c568702dd1e5da957b89db474bb9858a5aeecaadd8b6b3ae1b1f0ad0c69dc"
+      }
+    },
+    {
+      "id": "session-data",
+      "kind": "positive",
+      "exact_size": 98,
+      "protected": {
+        "header_hex": "8000003203400100010203040506070800112233445566778899aabbccddeeffffeeddccbbaa99887766554433221100",
+        "prefix_hex": "06010000",
+        "counter": 2,
+        "aad_hex": "8000003203400100010203040506070800112233445566778899aabbccddeeffffeeddccbbaa99887766554433221100060100000000000000000002",
+        "plaintext_hex": "73796e7468657469632073657373696f6e2064617461",
+        "ciphertext_and_tag_hex": "498be4d65bb64e44721e1cb75971da571aa9e949d0e86afb2974b27514fcb6fd8174bd26a02d",
+        "nonce_hex": "000000000000000000000002",
+        "packet_hex": "8000003203400100010203040506070800112233445566778899aabbccddeeffffeeddccbbaa99887766554433221100060100000000000000000002498be4d65bb64e44721e1cb75971da571aa9e949d0e86afb2974b27514fcb6fd8174bd26a02d"
+      }
+    }
+  ],
+  "negative_cases": [
+    {
+      "id": "wrong-role",
+      "kind": "negative",
+      "expected_error": "ROLE_MISMATCH"
+    },
+    {
+      "id": "wrong-service",
+      "kind": "negative",
+      "expected_error": "SERVICE_MISMATCH"
+    },
+    {
+      "id": "wrong-pin",
+      "kind": "negative",
+      "expected_error": "PIN_MISMATCH"
+    },
+    {
+      "id": "wrong-eid",
+      "kind": "negative",
+      "expected_error": "EID_KEY_MISMATCH"
+    },
+    {
+      "id": "cookie-mutated",
+      "kind": "negative",
+      "expected_error": "COOKIE_INVALID"
+    },
+    {
+      "id": "cookie-binding-mutated",
+      "kind": "negative",
+      "expected_error": "COOKIE_INVALID"
+    },
+    {
+      "id": "cookie-bucket-expired",
+      "kind": "negative",
+      "expected_error": "COOKIE_INVALID"
+    },
+    {
+      "id": "signature-mutated",
+      "kind": "negative",
+      "expected_error": "AUTH_FAILED"
+    },
+    {
+      "id": "transcript-mutated",
+      "kind": "negative",
+      "expected_error": "AUTH_FAILED"
+    },
+    {
+      "id": "x25519-all-zero",
+      "kind": "negative",
+      "expected_error": "AUTH_FAILED"
+    },
+    {
+      "id": "aead-mutated",
+      "kind": "negative",
+      "expected_error": "AUTH_FAILED"
+    },
+    {
+      "id": "aead-header-mutated",
+      "kind": "negative",
+      "expected_error": "AUTH_FAILED"
+    },
+    {
+      "id": "counter-mutated",
+      "kind": "negative",
+      "expected_error": "AUTH_FAILED"
+    },
+    {
+      "id": "counter-zero",
+      "kind": "negative",
+      "expected_error": "COUNTER_RANGE"
+    },
+    {
+      "id": "counter-exhausted",
+      "kind": "negative",
+      "expected_error": "COUNTER_EXHAUSTED"
+    },
+    {
+      "id": "replay-duplicate",
+      "kind": "negative",
+      "expected_error": "REPLAY"
+    },
+    {
+      "id": "replay-too-old",
+      "kind": "negative",
+      "expected_error": "REPLAY"
+    },
+    {
+      "id": "replay-forward-jump",
+      "kind": "negative",
+      "expected_error": "REPLAY"
+    },
+    {
+      "id": "open-truncated",
+      "kind": "negative",
+      "expected_error": "TRUNCATED"
+    },
+    {
+      "id": "open-trailing",
+      "kind": "negative",
+      "expected_error": "TRAILING_BYTES"
+    },
+    {
+      "id": "verify-truncated",
+      "kind": "negative",
+      "expected_error": "TRUNCATED"
+    },
+    {
+      "id": "verify-trailing",
+      "kind": "negative",
+      "expected_error": "TRAILING_BYTES"
+    },
+    {
+      "id": "auth-truncated",
+      "kind": "negative",
+      "expected_error": "TRUNCATED"
+    },
+    {
+      "id": "auth-trailing",
+      "kind": "negative",
+      "expected_error": "TRAILING_BYTES"
+    },
+    {
+      "id": "ack-truncated",
+      "kind": "negative",
+      "expected_error": "TRUNCATED"
+    },
+    {
+      "id": "ack-trailing",
+      "kind": "negative",
+      "expected_error": "TRAILING_BYTES"
+    },
+    {
+      "id": "scid-collision",
+      "kind": "negative",
+      "expected_error": "SCID_COLLISION"
+    },
+    {
+      "id": "capacity",
+      "kind": "negative",
+      "expected_error": "CAPACITY"
+    },
+    {
+      "id": "restart",
+      "kind": "negative",
+      "expected_error": "RESTART_REQUIRED"
+    },
+    {
+      "id": "unexpected-message",
+      "kind": "negative",
+      "expected_error": "UNEXPECTED_MESSAGE"
+    },
+    {
+      "id": "idle-timeout",
+      "kind": "negative",
+      "expected_error": "TIMEOUT",
+      "contract_reference": {
+        "document": "spec/0005-session-security-v0.1.md",
+        "section": "3"
+      }
+    },
+    {
+      "id": "mtu-overflow",
+      "kind": "negative",
+      "expected_error": "BUDGET",
+      "contract_reference": {
+        "document": "spec/0005-session-security-v0.1.md",
+        "section": "3"
+      }
+    },
+    {
+      "id": "binding-invalid",
+      "kind": "negative",
+      "expected_error": "BINDING_INVALID",
+      "contract_reference": {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "1"
+      }
+    },
+    {
+      "id": "missing-config-pin",
+      "kind": "negative",
+      "expected_error": "CONFIG_ERROR",
+      "contract_reference": {
+        "document": "spec/0005-session-security-v0.1.md",
+        "section": "3"
+      }
+    },
+    {
+      "id": "rng-failure",
+      "kind": "negative",
+      "expected_error": "RNG_FAILURE",
+      "contract_reference": {
+        "document": "spec/0005-session-security-v0.1.md",
+        "section": "3"
+      }
+    }
+  ],
+  "replay_sequences": {
+    "window_bits": 1024,
+    "forward_jump_max": 1048576,
+    "accept": [
+      1,
+      1024,
+      1025,
+      1048577
+    ],
+    "duplicate": [
+      1,
+      1
+    ],
+    "too_old": [
+      1025,
+      1
+    ],
+    "too_far": [
+      1,
+      1048578
+    ]
+  },
+  "prevalidation_amplification": {
+    "open_payload_bytes": 122,
+    "verify_cookie_payload_bytes": 122,
+    "open_serialized_r8_bytes": 170,
+    "verify_cookie_serialized_r8_bytes": 170,
+    "rule": "VERIFY_COOKIE serialized R8 response bytes must be less than or equal to triggering OPEN serialized R8 request bytes"
+  },
+  "finite_state_cli_categories": [
+    "AUTH_FAILED",
+    "BINDING_INVALID",
+    "BUDGET",
+    "CAPACITY",
+    "CONFIG_ERROR",
+    "COOKIE_INVALID",
+    "COUNTER_EXHAUSTED",
+    "COUNTER_RANGE",
+    "EID_KEY_MISMATCH",
+    "PIN_MISMATCH",
+    "REPLAY",
+    "RESTART_REQUIRED",
+    "RNG_FAILURE",
+    "ROLE_MISMATCH",
+    "SCID_COLLISION",
+    "SERVICE_MISMATCH",
+    "TIMEOUT",
+    "TRAILING_BYTES",
+    "TRUNCATED",
+    "UNEXPECTED_MESSAGE"
+  ]
+}

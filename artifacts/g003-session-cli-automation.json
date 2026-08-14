@@ -1,0 +1,306 @@
+{
+  "schemaVersion": 1,
+  "surface": "cli",
+  "tool": "tests/session_interop.py",
+  "kind": "G003",
+  "id": "G003-session",
+  "sourceId": "sha256:7d3f38cb954cad2b2bff864ac9cda66f899efe2311902076c35c2cd007d9d048",
+  "toolchain": {
+    "python": "3.14.4"
+  },
+  "environment": {
+    "platform": "linux"
+  },
+  "startedAt": 674855.986219092,
+  "endedAt": 674873.10949937,
+  "actions": [
+    {
+      "type": "custom",
+      "selector": "cli:python-client-rust-server-byte",
+      "target": "cli:python-client-rust-server-byte",
+      "startedAt": 674855.987779613,
+      "endedAt": 674856.534809761,
+      "exitCode": 0,
+      "stdout": "captured_bytes=14",
+      "timestamp": 1
+    },
+    {
+      "type": "custom",
+      "selector": "cli:rust-client-python-server-sample",
+      "target": "cli:rust-client-python-server-sample",
+      "startedAt": 674856.536362417,
+      "endedAt": 674856.792759981,
+      "exitCode": 0,
+      "stdout": "captured_bytes=24",
+      "timestamp": 2
+    },
+    {
+      "type": "custom",
+      "selector": "udp:malformed-before-valid-recovery",
+      "target": "udp:malformed-before-valid-recovery",
+      "startedAt": 674856.794496419,
+      "endedAt": 674857.05953715,
+      "exitCode": 0,
+      "stdout": "captured_bytes=21",
+      "timestamp": 3
+    },
+    {
+      "type": "custom",
+      "selector": "udp:malformed-before-valid-recovery",
+      "target": "udp:malformed-before-valid-recovery",
+      "startedAt": 674857.061233927,
+      "endedAt": 674857.60611653,
+      "exitCode": 0,
+      "stdout": "captured_bytes=14",
+      "timestamp": 4
+    },
+    {
+      "type": "custom",
+      "selector": "udp:python-client-rust-server-adversarial",
+      "target": "udp:python-client-rust-server-adversarial",
+      "startedAt": 674857.608226395,
+      "endedAt": 674858.318510747,
+      "exitCode": 0,
+      "stdout": "captured_bytes=0",
+      "timestamp": 5
+    },
+    {
+      "type": "custom",
+      "selector": "udp:python-client-python-server-adversarial",
+      "target": "udp:python-client-python-server-adversarial",
+      "startedAt": 674858.32182882,
+      "endedAt": 674859.531821509,
+      "exitCode": 0,
+      "stdout": "captured_bytes=0",
+      "timestamp": 6
+    },
+    {
+      "type": "custom",
+      "selector": "cli:rust-server-rejection.wrong-pin",
+      "target": "cli:rust-server-rejection.wrong-pin",
+      "startedAt": 674866.703119685,
+      "endedAt": 674866.703121146,
+      "exitCode": 1,
+      "stdout": "captured_bytes=552",
+      "timestamp": 7
+    },
+    {
+      "type": "custom",
+      "selector": "cli:rust-server-rejection.wrong-service",
+      "target": "cli:rust-server-rejection.wrong-service",
+      "startedAt": 674866.703132303,
+      "endedAt": 674866.703132684,
+      "exitCode": 1,
+      "stdout": "captured_bytes=552",
+      "timestamp": 8
+    },
+    {
+      "type": "custom",
+      "selector": "cli:rust-server-rejection.valid-after-rejection",
+      "target": "cli:rust-server-rejection.valid-after-rejection",
+      "startedAt": 674866.718826169,
+      "endedAt": 674866.718833174,
+      "exitCode": 0,
+      "stdout": "captured_bytes=14",
+      "timestamp": 9
+    },
+    {
+      "type": "custom",
+      "selector": "cli:python-server-rejection.wrong-pin",
+      "target": "cli:python-server-rejection.wrong-pin",
+      "startedAt": 674869.228344242,
+      "endedAt": 674869.228346215,
+      "exitCode": 1,
+      "stdout": "captured_bytes=0",
+      "timestamp": 10
+    },
+    {
+      "type": "custom",
+      "selector": "cli:python-server-rejection.wrong-service",
+      "target": "cli:python-server-rejection.wrong-service",
+      "startedAt": 674869.228357833,
+      "endedAt": 674869.228358303,
+      "exitCode": 1,
+      "stdout": "captured_bytes=0",
+      "timestamp": 11
+    },
+    {
+      "type": "custom",
+      "selector": "cli:python-server-rejection.valid-after-rejection",
+      "target": "cli:python-server-rejection.valid-after-rejection",
+      "startedAt": 674869.484089327,
+      "endedAt": 674869.484095531,
+      "exitCode": 0,
+      "stdout": "captured_bytes=21",
+      "timestamp": 12
+    },
+    {
+      "type": "custom",
+      "selector": "cli:timeout",
+      "target": "cli:timeout",
+      "startedAt": 674869.484360567,
+      "endedAt": 674873.10287881,
+      "exitCode": 1,
+      "stdout": "captured_bytes=552",
+      "timestamp": 13
+    },
+    {
+      "type": "custom",
+      "selector": "cli:public-underlay-refusal",
+      "target": "cli:public-underlay-refusal",
+      "startedAt": 674873.102910412,
+      "endedAt": 674873.106285777,
+      "exitCode": 1,
+      "stdout": "captured_bytes=557",
+      "timestamp": 14
+    },
+    {
+      "type": "custom",
+      "selector": "cli:counter-budget-refusal",
+      "target": "cli:counter-budget-refusal",
+      "startedAt": 674873.106308864,
+      "endedAt": 674873.109443753,
+      "exitCode": 1,
+      "stdout": "captured_bytes=557",
+      "timestamp": 15
+    }
+  ],
+  "assertions": [
+    {
+      "selector": "cli:python-client-rust-server-byte.completion",
+      "status": "passed",
+      "startedAt": 674856.534824424,
+      "endedAt": 674856.534824424,
+      "evidence": "message_length=1",
+      "timestamp": 16
+    },
+    {
+      "selector": "cli:rust-client-python-server-sample.completion",
+      "status": "passed",
+      "startedAt": 674856.79277706,
+      "endedAt": 674856.79277706,
+      "evidence": "message_length=1024",
+      "timestamp": 17
+    },
+    {
+      "selector": "session.malformed-recovery",
+      "status": "passed",
+      "startedAt": 674857.059545743,
+      "endedAt": 674857.059545743,
+      "evidence": "valid session completed after malformed datagrams",
+      "timestamp": 18
+    },
+    {
+      "selector": "session.malformed-recovery",
+      "status": "passed",
+      "startedAt": 674857.606126715,
+      "endedAt": 674857.606126715,
+      "evidence": "valid session completed after malformed datagrams",
+      "timestamp": 19
+    },
+    {
+      "selector": "udp:python-client-rust-server-adversarial.invalid-cookie-silent",
+      "status": "passed",
+      "startedAt": 674858.318525294,
+      "endedAt": 674858.318525294,
+      "evidence": "silent_count=1",
+      "timestamp": 20
+    },
+    {
+      "selector": "udp:python-client-rust-server-adversarial.binding-replay",
+      "status": "passed",
+      "startedAt": 674858.31852748,
+      "endedAt": 674858.31852748,
+      "evidence": "alternate_echo_count=0",
+      "timestamp": 21
+    },
+    {
+      "selector": "udp:python-client-rust-server-adversarial.tamper-recovery",
+      "status": "passed",
+      "startedAt": 674858.318528843,
+      "endedAt": 674858.318528843,
+      "evidence": "echo_count=1 duplicate_echo_count=0",
+      "timestamp": 22
+    },
+    {
+      "selector": "udp:python-client-python-server-adversarial.invalid-cookie-silent",
+      "status": "passed",
+      "startedAt": 674859.531835422,
+      "endedAt": 674859.531835422,
+      "evidence": "silent_count=1",
+      "timestamp": 23
+    },
+    {
+      "selector": "udp:python-client-python-server-adversarial.binding-replay",
+      "status": "passed",
+      "startedAt": 674859.531837732,
+      "endedAt": 674859.531837732,
+      "evidence": "alternate_echo_count=0",
+      "timestamp": 24
+    },
+    {
+      "selector": "udp:python-client-python-server-adversarial.tamper-recovery",
+      "status": "passed",
+      "startedAt": 674859.531839458,
+      "endedAt": 674859.531839458,
+      "evidence": "echo_count=1 duplicate_echo_count=0",
+      "timestamp": 25
+    },
+    {
+      "selector": "cli:rust-server-rejection.rejection-continuity",
+      "status": "passed",
+      "startedAt": 674866.703135617,
+      "endedAt": 674866.703135617,
+      "evidence": "rejections=2 server_live=1",
+      "timestamp": 26
+    },
+    {
+      "selector": "cli:rust-server-rejection.valid-after-rejection",
+      "status": "passed",
+      "startedAt": 674866.718846502,
+      "endedAt": 674866.718846502,
+      "evidence": "completion_count=1",
+      "timestamp": 27
+    },
+    {
+      "selector": "cli:python-server-rejection.rejection-continuity",
+      "status": "passed",
+      "startedAt": 674869.228362172,
+      "endedAt": 674869.228362172,
+      "evidence": "rejections=2 server_live=1",
+      "timestamp": 28
+    },
+    {
+      "selector": "cli:python-server-rejection.valid-after-rejection",
+      "status": "passed",
+      "startedAt": 674869.484108501,
+      "endedAt": 674869.484108501,
+      "evidence": "completion_count=1",
+      "timestamp": 29
+    },
+    {
+      "selector": "cli:timeout",
+      "status": "passed",
+      "startedAt": 674873.102888839,
+      "endedAt": 674873.102888839,
+      "evidence": "nonzero exit",
+      "timestamp": 30
+    },
+    {
+      "selector": "cli:public-underlay-refusal",
+      "status": "passed",
+      "startedAt": 674873.106292503,
+      "endedAt": 674873.106292503,
+      "evidence": "nonzero exit",
+      "timestamp": 31
+    },
+    {
+      "selector": "cli:counter-budget-refusal",
+      "status": "passed",
+      "startedAt": 674873.109449136,
+      "endedAt": 674873.109449136,
+      "evidence": "nonzero exit",
+      "timestamp": 32
+    }
+  ]
+}

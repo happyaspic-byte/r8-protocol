@@ -1,7 +1,9 @@
 # R8 와이어 포맷 v0.1
 
-> 상태: DRAFT — 실험용. 공용 인터넷 표준이 아니며 폐쇄 시험망 전용.
+> 상태: HISTORICAL OFFLINE EVIDENCE ONLY — private closed-lab R8의 활성 와이어 계약이나 구현 대상이 아니다.
 > 명명 규칙과 IANA 관련 주의사항은 `docs/naming-and-legal.md` 참조.
+>
+> The single active wire source of truth is `spec/0004-wire-format-v0.2.md`; frozen companion contracts are `0005-session-security-v0.1.md`, `0006-mobility-v0.1.md`, `0007-native-binding-v0.1.md`, and `0008-redundant-v0.1.md`, with limits in `parameters-v0.1.md`. This document preserves v0.1’s 48-byte emitted-byte evidence only. No active implementation may accept its permissive packet language, and no compatibility parser, negotiation, or shim is defined.
 
 ## 1. 캐리어 바인딩
 
@@ -127,7 +129,8 @@ Client                          Server
 
 v0.1은 단편화를 제공하지 않는다. 시험망 최소 MTU는 1280바이트로 가정한다. 초과 시 송신자가 PACKET_TOO_BIG를 받고 페이로드를 줄여야 한다.
 
-## 9. 버전 규칙
+## 9. Version rules
 
-- 헤더의 Version 필드는 프로토콜 메이저 버전(8)이며, 이 문서의 v0.1은 와이어 포맷 개정 번호다.
-- 와이어 포맷 개정은 이 문서의 번호를 올리고 변경 이력을 남긴다. 호환 불가 변경은 SES CryptoSuites 협상으로 감지한다.
+- Header Version is the protocol major version (8); this document’s v0.1 is a historical wire-format revision.
+- This historical record remains limited to emitted bytes, checksum coverage, field meanings, accepted packet language, and observable parse outcomes of the bound v0.1 source snapshot.
+- The clean v0.2 contract is `spec/0004-wire-format-v0.2.md`; it is the sole active implementation target and does not accept v0.1 packet language.

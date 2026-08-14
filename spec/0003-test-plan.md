@@ -1,36 +1,56 @@
-# R8 검증 계획 (마일스톤)
+# R8 frozen Gate 0–6 verification plan
 
-> 원칙: 테스트 환경은 데모가 아니라 **가설 검증 장치**다. 각 마일스톤은 측정 가능한 질문과 베이스라인을 갖는다.
+> Status: **Gate 0 is complete and checkpointed; strict Gate 1/M0–M1 is durably complete locally, with hosted Actions evidence pending; Gate 2/G003 is locally checkpointed with current Q3 v3 evidence; M3 is implemented with verification candidate pending privileged Q1; M4–M5/Q2 are unexecuted.** R8 is a private, experimental, isolated closed-lab protocol, not an Internet standard or “IPv8”. Native R8 is prohibited on public, third-party, and non-isolated networks. Gate-0 completion freezes contracts only; it is not benchmark or results evidence.
 
-## 검증 질문 (상위 3개)
+## 1. Contract references
 
-- **Q1 (모빌리티)**: 위치(LOC) 전환 시 세션 유지 시간은 TCP 재연결 또는 VIP/ARP 전환 대비 얼마나 빠른가?
-  - 베이스라인: 동일 토폴로지에서 TCP 재연결 시간, GARP 기반 VIP 전환 시간.
-- **Q2 (신뢰성)**: Profile 3 복제 전송은 링크 플랩(1초 주기 down/up) 상황에서 단일 경로 대비 손실률을 얼마나 줄이는가?
-  - 베이스라인: 동일 조건 단일 경로 UDP 손실률.
-- **Q3 (비용)**: EID/SCID 세션 수립의 왕복·암호 연산 비용은 TCP+TLS 1.3 수립 대비 어느 정도인가?
-  - 베이스라인: 동일 호스트 간 TLS 1.3 핸드셰이크 시간.
+- Numeric/resource acceptance resolves only to `spec/parameters-v0.1.md` parameter IDs. Registry enforcement failures use its finite `E-*` categories and fail closed.
+- Security assumptions, exclusions, privilege/topology constraints, telemetry minimization, benchmark residuals, and stop gates are in `docs/threat-model.md`.
+- `spec/0001-wire-format-v0.1.md` is offline historical baseline evidence. Gate 0 classified a change to emitted bytes, checksum coverage, field meaning, accepted packet language, or observable parser outcome as requiring a clean version cutover; it selected the single active `spec/0004-wire-format-v0.2.md`, which is normative for strict codecs and shared vectors.
+- Session security, candidate/mobility, native binding, and redundant-path contracts are respectively `spec/0005-session-security-v0.1.md`, `spec/0006-mobility-v0.1.md`, `spec/0007-native-binding-v0.1.md`, and `spec/0008-redundant-v0.1.md`. Gate 0 was checkpointed complete against its baseline/spec/vector/parameter/threat/preregistration evidence; the checkpoint records the v0.2 selection and no M2–M5 implementation or results.
+- Shared vectors are independent, reviewed fixtures. The corpus has 114 reviewed real fixtures (73 wire and 41 session) and 3 planned later families. Consumers MUST NOT generate their own expected bytes.
 
-## 마일스톤
+## 2. Gate verification matrix
 
-| ID | 내용 | 검증 | 완료 기준 |
+| Gate | Frozen verification work | Required evidence before exit | Status |
 |---|---|---|---|
-| M0 | 와이어 포맷 스펙 확정 | 없음 | `0001` 문서 동결, 두 구현체가 같은 바이트 생성 |
-| M1 | udp-binding + ECHO/DGRAM + Wireshark 디섹터 | 코드 기반 동작 | loopback/netns에서 echo 왕복, Wireshark 필드 해석 |
-| M2 | OPEN/VERIFY_COOKIE/OPEN_ACK/SESSION_ACCEPT + Ed25519 EID + AEAD | Q3 | 핸드셰이크 p50/p99 측정, 위조 OPEN에 무상태 유지 확인 |
-| M3 | EID/LOC 분리 + LOC_UPDATE 모빌리티 | Q1 | netns 두 세그먼트 간 이동 중 ping 연속성, 전환 시간 로그 |
-| M4 | eth-binding(EtherType 0x88B5) + R8 포워더 | 순수 모드 시연 | IPv4/IPv6 비활성 인터페이스에서 echo 왕복 |
-| M5 | 멀티패스 REDUNDANT | Q2 | 링크 플랩 중 손실률 비교 데이터 |
+| 0 | Revalidated the approved baseline commit/tree, blob IDs, path/symbol/defect inventory, and active-CI presence; froze field/offset/length/checksum and role×state×message matrices, trust/canonical transcript/candidate-binding/native-manifest contracts, registry, vectors, and Q1–Q3 preregistrations. | Durable checkpoint evidence crosslinks the baseline/spec/vector/parameter/threat/preregistration artifacts and records the active v0.2 selection. | Complete (checkpointed) |
+| 1 | Strict Python/Rust v0.2 codecs, source fixes, shared positive/negative vectors, properties, fuzz smoke, UDP interop, malformed-before-valid recovery, active least-privilege CI, and dissector parity, all against `spec/0004-wire-format-v0.2.md`. | Local evidence is durably complete; hosted Actions evidence remains pending first push/run. | Complete locally; hosted evidence pending |
+| 2 | Cookie-first pinned-peer sessions under `spec/0005-session-security-v0.1.md`: authorization pins, EID recomputation, transcript, all-zero X25519 rejection, AEAD, SCID/restart/counter/replay rules, capacity behavior, bidirectional protected UDP interop, and Q3 evidence. | Negative-case/resource evidence cites each applicable exact registry ID; clean session verification cohort/checkpoint; Q3 raw/evidence package. | Locally checkpointed with current v3 |
+| 3 | Signed, AEAD-protected LOC updates and shared typed candidate proof under `spec/0006-mobility-v0.1.md`, with exact-binding challenge/response, epoch/rate/capacity rules, and bidirectional UDP interop. | Evidence cites each applicable exact candidate/mobility registry ID, including no promotion before proof and last-binding preservation; Q1 raw/evidence package. | Implemented; verification candidate pending privileged Q1 |
+| 4 | Immutable-manifest native forwarding under `spec/0007-native-binding-v0.1.md`, deterministic route/source/hop/MTU behavior, narrow descriptor launcher, privilege drop, isolated topology checks, and negative startup tests. | Enforceable-check results, descriptor/UID/filter evidence, owned teardown evidence, and physical-isolation attestation for any physical/VLAN run. | Unexecuted |
+| 5 | Authenticated path-two admission under `spec/0008-redundant-v0.1.md` through the candidate mechanism, distinct path key/counter/replay state, redundant delivery/dedup/divergence/queue behavior, Python↔Rust Profile-3 UDP, and Rust AF_PACKET e2e. | Evidence cites each applicable exact path/dedup/queue registry ID, including slot nonreuse and same-ID/different-bytes close; Q2 raw/evidence package. | Unexecuted |
+| 6 | From a clean tagged candidate, execute frozen Q1–Q3, retain every trial/failure, validate schemas, and regenerate analyses solely from committed raw data. | Revision/config/preregistration hashes, CI/artifact IDs, environment/topology records, raw rows, regenerated summaries/plots, limitations, and acceptance mapping. | Unexecuted; no Q1 result or hosted CI yet |
 
-## 환경 규칙
+A gate MUST NOT begin until the preceding gate has its required exit evidence. A failed condition is never accepted by fallback, eviction of established state, fragmentation, weakened authorization, or an unrecorded configuration change.
 
-- 물리 장비 없이 Linux 네트워크 네임스페이스 + veth로 시작한다 (`tools/netns-topo.sh`).
-- VM/물리망으로 옮길 때는 NIC 오프로드(checksum/TSO)를 끈다: `ethtool -K <dev> rx off tx off tso off`.
-- 일부 가상 스위치·보안 스위치는 알 수 없는 EtherType을 차단할 수 있으므로 M4 전에 장비별 통과 여부를 확인한다.
-- 모든 측정은 스크립트로 재현 가능해야 하며 결과는 `results/`에 커밋한다.
+## 3. Required negative and boundary coverage
 
-## 비목표 (v0.1)
+The Gate 1 corpus covers every structural boundary, truncation point, trailing bytes, reserved/unknown value, checksum domain, version, binding budget, and malformed-before-valid sequence defined by active `spec/0004-wire-format-v0.2.md`. It MUST establish exact SES-envelope category parity across Python, Rust, and Lua; vector schema validation plus manifest-hash-to-case bijection; and mandatory executable `tshark` corpus checks for UDP and EtherType. Live UDP tests MUST exercise each applicable `P-UDP-BINDING-BUDGET`/PMTU budget and bounded receive behavior. Clients MUST bind replies to the configured endpoint, reject wrong-endpoint/malformed/stale replies without terminating valid recovery before deadline, and exit nonzero when exchanges fail or are lost. Evidence MUST be redacted and bound to source identity. `spec/0001-wire-format-v0.1.md` remains offline historical evidence for the Gate-0 classification rationale and is not a conformance target. Binding/application boundaries assert `P-SERIALIZED-R8-MAX`, `P-UDP-BINDING-BUDGET`, `P-NATIVE-BINDING-BUDGET`, `P-IPV4-UDP-DEFAULT-BUDGET`, `P-IPV6-UDP-DEFAULT-BUDGET`, and `P-APPLICATION-BUDGET`.
 
-- 커널 통합(AF_INET8) — 성능 필요 시 커널 모듈보다 XDP/eBPF 우선 검토
-- 기존 앱(SSH/Chrome) 네이티브 지원 — 필요하면 localhost 프록시로 우회
-- 공용 인터넷 연결 — 폐쇄망 전용
+Gate 2 negatives cover unknown/unpinned/wrong-role/wrong-service/EID-key mismatch/role-swap/unknown-key-share, all-zero X25519, transcript/tag/associated-data mutation, invalid cookie flood, SCID collision, restart, concurrent send, counter exhaustion, and replay edges. Invalid prevalidation traffic must remain within `P-VERIFY-COOKIE-MAX-RESPONSE`, `P-PREVALIDATION-CUMULATIVE-RATIO`, table, and token-bucket limits and must not allocate a session or perform expensive cryptography.
+
+Gate 3/5 negatives cover candidate binding mismatch, expired challenge, rate/capacity exhaustion, epoch rollback/wrap, path-slot reuse, passive/config-only path admission, replay and delivery-gap edges, dedup expiry, queue overflow, and divergent duplicate bytes. Gate 4 negatives cover every startup/isolation/allowlist/route/source/hop/MTU/filter/privilege failure. Physical isolation is evidenced by attestation, not inferred from software checks.
+
+## 4. Frozen Q1–Q3 preregistrations
+
+The frozen Q1–Q3 preregistrations are `bench/protocols/q1.json`, `bench/protocols/q2.json`, and `bench/protocols/q3.json`; `bench/protocols/manifest.json` records their hashes. Those recorded hashes are Gate-0 freeze evidence and MUST be revalidated before trials. The preregistration JSON files remain immutable contracts with no observed-result fields. Q1 and Q2 have no measured results; Q3's separate frozen result package is recorded below.
+
+| Question | Frozen design |
+|---|---|
+| Q1 mobility | Two separately reported arms: abrupt break (no mechanism has advance notice; event at T) and make-before-break (`P-Q1-MAKE-BEFORE-BREAK-NOTICE`). Compare R8, TCP reconnect, and GARP VIP using the same traffic start, T, application readiness, address family, fixed-rate numbered stream, and timeout. Apply `P-Q1-WARMUPS`, `P-Q1-MEASURED-TRIALS`, and `P-Q1-BLOCK-SIZE`. Measure outage from last pre-T success to the `P-Q1-READINESS-DELIVERIES` threshold, loss/duplicate/reorder, failures, control bytes, and CPU. Report failure rate and only `P-Q1-SUPPORTED-QUANTILES` with block-bootstrap 95% CIs. |
+| Q2 redundancy | For each topology seed, compare REDUNDANT and single-path controls A/B in paired randomized blocks with identical application bytes, rate, MTU, and queue settings. Apply `P-Q2-WARMUPS`, `P-Q2-MEASURED-TRIALS`, and `P-Q2-FLAP-DURATION` after steady state, with no-flap and flap-A/flap-B controls. Record topology evidence, sent/delivered/lost/duplicates/reorder, maximum loss burst, recovery, degraded interval, overhead, and CPU. Report paired differences, failure/loss rates, and only `P-Q2-SUPPORTED-QUANTILES` with block-bootstrap 95% CIs. Degraded periods remain raw data and are excluded only from active-redundancy claims. |
+| Q3 handshake | Compare R8 (cookie plus configured pin verification) with TLS 1.3 full handshake (resumption/0-RTT disabled; preconfigured self-signed certificate/SPKI pin) on equal hosts/interface/MTU/application bytes/process lifecycle/CPU policy. Apply `P-Q3-WARMUPS`, `P-Q3-MEASURED-HANDSHAKES`, and `P-Q3-BLOCK-SIZE`. Start at client userspace connect/send intent; complete at authenticated delivery and response of one application byte. Apply `P-Q3-TIMEOUT`; retain timeouts as raw data/failure rate and right-censor latency. Report failure rate, bytes/packets, CPU, cold-process primary, warm-process separately, and only `P-Q3-SUPPORTED-QUANTILES` with block-bootstrap 95% CIs using `P-Q3-BOOTSTRAP-RESAMPLES` and the fixed preregistered seed. |
+
+Every preregistration records hypotheses, fixed N/warmups, readiness/outage definitions, block/randomization seed, payload/load control, timeout/censoring, estimators/CI, supported quantiles, trust, clocks, environment, and exclusion policy. Primary comparisons equalize application bytes under `P-APPLICATION-BUDGET`; total-wire-byte equalization is only a separately labeled sensitivity run. Preserve timeout/failure rows, reject mixed configurations or unequal event notice, and create a new labeled series for any post-observation parameter/configuration change.
+### Q3 closed-lab result package
+
+The canonical self-generated Q3 result package is `bench/results/q3-closed-lab-v3/run-manifest.json`, `raw.jsonl`, `environment.json`, and `summary.json`. Its run manifest verifies hashes, row counts, and toolchain. It contains 4200 rows: 50 warmups plus 1000 measured handshakes per mechanism in each cold-process and warm-process series, with 0 failures. Cold p50/p90/p99: R8 15.829355/17.953385/20.949715 ms; TLS 49.933337/55.917365/72.900156 ms. Warm p50/p90/p99: R8 5.406970/6.240242/7.430400 ms; TLS 6.594438/7.382747/8.795247 ms. Retained bootstrap confidence intervals are in `summary.json`.
+
+Source identity is `sha256:0cb64705a171f61f1ba36369cb6986cdb6fcb87d31cf88559b34b4b473aa2380`; raw-data SHA-256 is `3e80822319e773a2fc0d2882f364c71a40cef379235c1e68c3bf47d50a3bdd49`; host epoch is `003`. The run uses synthetic pins and host-global loopback counters. Python R8 and OpenSSL TLS have different implementation/process behavior; this result is limited to the measured closed lab and does not generalize to the Internet or an IPv8 standard.
+
+## 5. Observability and evidence handling
+
+Use structured monotonic timestamps at intent, wire I/O, cookie/auth/state/application delivery, candidate/path transitions, and teardown. Emit bounded counters only, including finite error categories and high-water marks. Never log cookies, keys, plaintext, raw pins, or unbounded EID/SCID/LOC/IP/MAC labels. Record CPU/RSS/session/window/queue/kernel counters and telemetry overhead.
+
+Raw sensitive captures remain access-controlled and uncommitted; committed minimized pcaps use synthetic vector identities. Preserve every benchmark trial and failure. A clean-environment replay must regenerate summaries and plots from raw inputs with documented deterministic metadata exclusions. Claims are limited to the measured isolated lab and cite their raw data, CIs, topology/trust evidence, and residual limitations.

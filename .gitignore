@@ -1,6 +1,5 @@
 # rust
 target/
-Cargo.lock  # binaries-only workspace; regenerate per machine
 
 # python
 __pycache__/
@@ -8,3 +7,4 @@ __pycache__/
 
 # local experiment output (share curated results only)
 results/local/
+.gjc/

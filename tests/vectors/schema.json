@@ -1,0 +1,262 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://r8.closed-lab.invalid/contracts/vectors/schema-v1.json",
+  "title": "R8 closed-lab vector manifest contract",
+  "description": "Strict manifest contract for reviewed R8 vectors. R8 is a private experimental closed-lab protocol, not an Internet standard or IPv8.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "$schema",
+    "contract_version",
+    "protocol",
+    "scope",
+    "normative_references",
+    "fixture_status",
+    "fixtures"
+  ],
+  "properties": {
+    "$schema": {
+      "const": "schema.json"
+    },
+    "contract_version": {
+      "const": "r8-vector-manifest-v1"
+    },
+    "protocol": {
+      "const": "R8"
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["deployment", "standardization"],
+      "properties": {
+        "deployment": {"const": "private-experimental-closed-lab"},
+        "standardization": {"const": "not-an-internet-standard"}
+      }
+    },
+    "normative_references": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sections", "parameter_ids"],
+      "properties": {
+        "sections": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/sectionCitation"}
+        },
+        "parameter_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "pattern": "^P-[A-Z0-9-]+$"}
+        }
+      }
+    },
+    "fixture_status": {
+      "enum": ["planned", "mixed", "real-artifacts"]
+    },
+    "fixtures": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/fixture"}
+    }
+  },
+  "$defs": {
+    "sectionCitation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["document", "section"],
+      "properties": {
+        "document": {"type": "string", "minLength": 1},
+        "section": {"type": "string", "minLength": 1}
+      }
+    },
+    "references": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sections", "parameter_ids"],
+      "properties": {
+        "sections": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/sectionCitation"}
+        },
+        "parameter_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "pattern": "^P-[A-Z0-9-]+$"}
+        }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "provenance"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "provenance": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source_revision", "producer"],
+          "properties": {
+            "source_revision": {"type": "string", "minLength": 1},
+            "producer": {"type": "string", "minLength": 1}
+          }
+        }
+      }
+    },
+    "fixture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "status", "kind", "coverage", "normative_references"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+        "status": {"enum": ["planned", "real"]},
+        "kind": {"enum": ["positive-bytes", "negative-error"]},
+        "coverage": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1},
+          "uniqueItems": true
+        },
+        "normative_references": {"$ref": "#/$defs/references"},
+        "expected_bytes": {"type": "string", "pattern": "^(?:[0-9a-f]{2})+$"},
+        "expected_error_category": {
+          "enum": [
+            "TRUNCATED",
+            "TRAILING_BYTES",
+            "PACKET_CAP",
+            "BINDING_BUDGET",
+            "LENGTH_OVERFLOW",
+            "VERSION",
+            "PROFILE",
+            "TRAFFIC_CLASS",
+            "NEXT_HEADER",
+            "HOP_LIMIT",
+            "FLAGS",
+            "PATH_SLOT",
+            "SCID",
+            "NONE_PAYLOAD",
+            "CTL_SHORT",
+            "CTL_TYPE",
+            "CTL_CODE",
+            "CTL_BODY",
+            "CTL_CHECKSUM",
+            "DGRAM_SHORT",
+            "DGRAM_LENGTH",
+            "DGRAM_CHECKSUM",
+            "AUTH_FAILED",
+            "COOKIE_INVALID",
+            "PIN_MISMATCH",
+            "ROLE_MISMATCH",
+            "SERVICE_MISMATCH",
+            "EID_KEY_MISMATCH",
+            "COUNTER_RANGE",
+            "COUNTER_EXHAUSTED",
+            "REPLAY",
+            "CAPACITY",
+            "RESTART_REQUIRED",
+            "UNEXPECTED_MESSAGE",
+            "SCID_COLLISION",
+            "TIMEOUT",
+            "BUDGET",
+            "BINDING_INVALID",
+            "CONFIG_ERROR",
+            "RNG_FAILURE",
+            "E-CANDIDATE",
+            "E-CAPACITY",
+            "E-TIMEOUT",
+            "E-REPLAY"
+          ]
+        },
+        "case_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+          "uniqueItems": true
+        },
+        "artifact": {"$ref": "#/$defs/artifact"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"const": "planned"}}},
+          "then": {"not": {"anyOf": [{"required": ["expected_bytes"]}, {"required": ["expected_error_category"]}, {"required": ["artifact"]}]}}
+        },
+        {
+          "if": {"properties": {"status": {"const": "real"}, "kind": {"const": "positive-bytes"}}, "required": ["status", "kind"]},
+          "then": {"required": ["expected_bytes", "artifact", "case_ids"], "not": {"required": ["expected_error_category"]}}
+        },
+        {
+          "if": {"properties": {"status": {"const": "real"}, "kind": {"const": "negative-error"}}, "required": ["status", "kind"]},
+          "then": {"required": ["expected_error_category", "artifact", "case_ids"], "not": {"required": ["expected_bytes"]}}
+        }
+      ]
+    },
+    "mobilityNegativeCase": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["id", "operation", "input_hex", "setup", "expected_error", "contract_reference", "parameter_id"],
+      "properties": {
+        "operation": {
+          "enum": [
+            "parse_control",
+            "validate_update",
+            "submit_update",
+            "receive_probe",
+            "receive_response",
+            "receive_result",
+            "replay_control",
+            "validate_roles"
+          ]
+        },
+        "input_hex": {"type": "string", "pattern": "^(?:[0-9a-f]{2})+$"},
+        "setup": {
+          "type": "object",
+          "required": ["session", "clock_ms", "current_binding_hex", "candidate_capacity", "proposal_capacity", "result_cache_capacity"],
+          "allOf": [
+            {
+              "if": {"required": ["current_binding_hex"]},
+              "then": {
+                "properties": {
+                  "current_binding_hex": {
+                    "type": "string",
+                    "pattern": "^(?:01(?:04[0-9a-f]{46}|06[0-9a-f]{70})|02[0-9a-f]{20})$"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "expected_error": {"enum": ["E-CANDIDATE", "E-CAPACITY", "E-TIMEOUT", "E-REPLAY"]}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"operation": {"const": "replay_control"}}},
+          "then": {"properties": {"setup": {"required": ["accepted_replay_tokens", "assertions"]}}}
+        },
+        {
+          "if": {"properties": {"operation": {"const": "validate_roles"}}},
+          "then": {"properties": {"setup": {"required": ["roles", "authorization"]}}}
+        },
+        {
+          "if": {"properties": {"operation": {"enum": ["submit_update", "receive_probe", "receive_response", "receive_result"]}}},
+          "then": {"required": ["input_hex", "setup"]}
+        }
+      ]
+    },
+    "mobilityContext": {
+      "type": "object",
+      "required": [
+        "client_eid_hex",
+        "server_eid_hex",
+        "client_public_key_hex",
+        "server_public_key_hex"
+      ],
+      "properties": {
+        "client_eid_hex": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+        "server_eid_hex": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+        "client_public_key_hex": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "server_public_key_hex": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    }
+  }
+}

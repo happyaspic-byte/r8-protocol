@@ -1,0 +1,66 @@
+{
+  "contract_version": "r8-benchmark-preregistration-v1",
+  "protocol_id": "Q2",
+  "status": "preregistered-no-results",
+  "scope": "private-experimental-closed-lab",
+  "additional_properties": false,
+  "normative_references": {
+    "sections": [
+      {"document": "spec/0003-test-plan.md", "section": "4"},
+      {"document": "spec/parameters-v0.1.md", "section": "2"},
+      {"document": "spec/parameters-v0.1.md", "section": "6"}
+    ],
+    "parameter_ids": [
+      "P-APPLICATION-BUDGET",
+      "P-PATH-SLOTS",
+      "P-PER-PATH-QUEUE-PACKETS-MAX"
+    ]
+  },
+  "hypothesis": "Authenticated R8 REDUNDANT delivery is compared fairly with both single-path controls under the same scheduled flap and application load, without claiming inferred physical disjointness.",
+  "conditions": ["no-flap", "flap-A", "flap-B"],
+  "mechanisms": ["R8-REDUNDANT", "R8-single-path-A", "R8-single-path-B"],
+  "pairing": {
+    "paired": true,
+    "pair_key": "topology-seed-and-flap-target",
+    "required_members": ["R8-REDUNDANT", "R8-single-path-A", "R8-single-path-B"],
+    "comparison": "paired differences within the same topology seed and flap target"
+  },
+  "warmups": {"count": 20, "excluded_from_analysis": true, "unit": "trial-per-flap-target"},
+  "measured_trials": {"count": 200, "unit": "paired trial-per-flap-target", "fixed": true},
+  "blocking": {
+    "block_size": 20,
+    "unit": "paired trials",
+    "randomization": "randomize paired mechanism execution order within each topology-seed block",
+    "seed": "r8-q2-block-order-v1",
+    "topology_seed_required": true
+  },
+  "trigger_and_readiness": {
+    "readiness": "steady state before the flap",
+    "trigger": "one precisely scheduled one-second flap after steady state",
+    "flap_targets": ["A", "B"],
+    "no_flap_control": "executed under the same topology and load controls",
+    "recovery": "recorded from the scheduled flap through post-flap delivery recovery"
+  },
+  "controls": {
+    "trust": "the same preconfigured closed-lab trust material and peer authorization policy for all paired members",
+    "load": "identical application bytes, application rate, MTU, and queue settings",
+    "topology": "topology evidence retained for every topology seed",
+    "timeout": "identical per-trial timeout recorded before execution"
+  },
+  "outcomes": ["sent", "delivered", "lost", "duplicates", "reorder", "max-loss-burst", "recovery", "degraded-interval", "overhead", "CPU", "failure"],
+  "timeout_and_censoring": {
+    "timeout_rows_retained": true,
+    "failure_rows_retained": true,
+    "censoring": "timeouts remain raw failures and censored recovery observations; they are not substituted with successful values",
+    "degraded_rule": "periods degraded to one path remain in raw results and are labeled and excluded only from claims of active redundancy",
+    "exclusions": "no post-hoc exclusions"
+  },
+  "analysis": {
+    "estimators": ["paired-difference", "failure-rate", "loss-rate", "empirical-quantiles", "block-bootstrap-95-percent-CI"],
+    "quantiles": ["p50", "p95"],
+    "unsupported_quantiles": ["p99"],
+    "bootstrap": {"resamples": 10000, "seed": "r8-q2-block-bootstrap-v1", "resampling_unit": "paired topology-seed block"},
+    "post_hoc_changes": "require a new labeled series"
+  },
+  "result_fields_prohibited": ["observed_values", "digests", "summary", "confidence_intervals"]
+}

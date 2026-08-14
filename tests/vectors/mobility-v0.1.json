@@ -1,0 +1,1697 @@
+{
+  "contract_version": "r8-mobility-v0.1-vectors-v1",
+  "status": "real-reviewed-synthetic-artifact",
+  "synthetic_only": true,
+  "synthetic_material_notice": "SYNTHETIC-NON-OPERATIONAL: fixed test-only material; never a runtime default or deployable credential.",
+  "baseline": {
+    "commit": "aacadeee2a83b7639225cd11b9c020c69526fa1e",
+    "tree": "94fed3c18bbfb276c9fe5d558277b8afe1d7bca5"
+  },
+  "normative_references": {
+    "sections": [
+      {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "1"
+      },
+      {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "2"
+      },
+      {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "3"
+      },
+      {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "4"
+      }
+    ],
+    "parameter_ids": [
+      "P-LIVE-CANDIDATES-MAX",
+      "P-CANDIDATE-PROPOSAL-SLOTS",
+      "P-CANDIDATE-RESULT-CACHE-SLOTS",
+      "P-CANDIDATE-CHALLENGE-EXPIRY",
+      "P-CANDIDATE-UPDATE-NOT-BEFORE",
+      "P-CANDIDATE-UPDATE-VALID-FOR",
+      "P-CANDIDATE-SECRET-BYTES",
+      "P-OLD-BINDING-GRACE"
+    ]
+  },
+  "context": {
+    "session_version": 1,
+    "profile": 0,
+    "scid": 72623859790382856,
+    "client_eid_hex": "d1d5bbe49b1f829a1ebd4af95cbe4fcf",
+    "server_eid_hex": "73ccb6872d154e3e6ec3cbc3884d9c2f",
+    "client_public_key_hex": "5c9c6df261c9cb840475776aaefcd944b405328fab28f9b3a95ef40490d3de84",
+    "server_public_key_hex": "4ed32f63bf35f0eeefcb25f28a2e1fbdc873ae2835671b0c9460f5f12e4556a8",
+    "old_client_loc_hex": "20010db8000000000000000000000001",
+    "new_loc_hex": "20010db8000000000000000000000002",
+    "candidate_id_hex": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+    "epoch": 2,
+    "not_before_ms": 0,
+    "valid_for_ms": 5000,
+    "slot": 0,
+    "probe_nonce_hex": "b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+    "candidate_secret_hex": "c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3c3",
+    "udp_binding_ipv4_hex": "0104c000020ace480190909090909090909090909090909090",
+    "direction": 1,
+    "policy_id": 16909060,
+    "issuer_expiry_ms": 9000
+  },
+  "positive_cases": [
+    {
+      "id": "mobility-loc-update",
+      "kind": "positive",
+      "plaintext_hex": "52384d3101010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db800000000000000000000000120010db8000000000000000000000002000000000000000200000000000000000000000000001388007d02b88179c4ef718561972f85282a951b99720de45e69790521f8269aa737aae70f94b41f097ae282d7557784dc9069ac79f012b09b5b77b30e5b7a4b17020a",
+      "exact_size": 145,
+      "signature_input_hex": "5238204c4f435f55504441544520763101000102030405060708d1d5bbe49b1f829a1ebd4af95cbe4fcf73ccb6872d154e3e6ec3cbc3884d9c2f20010db800000000000000000000000120010db8000000000000000000000002000000000000000200000000000000000000000000001388a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a100",
+      "signature_hex": "7d02b88179c4ef718561972f85282a951b99720de45e69790521f8269aa737aae70f94b41f097ae282d7557784dc9069ac79f012b09b5b77b30e5b7a4b17020a"
+    },
+    {
+      "id": "mobility-bind-probe",
+      "kind": "positive",
+      "plaintext_hex": "52384d3102010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db8000000000000000000000002000000000000000200b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+      "exact_size": 65
+    },
+    {
+      "id": "mobility-bind-challenge",
+      "kind": "positive",
+      "plaintext_hex": "52384d3103010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db80000000000000000000000020000000000000002000000000000002328246566f694da419a633072eff8b3fcdfd75fe9025f856439708ee5de46ec4233",
+      "exact_size": 89,
+      "token_input_hex": "52382062696e6420763101000102030405060708d1d5bbe49b1f829a1ebd4af95cbe4fcf73ccb6872d154e3e6ec3cbc3884d9c2fa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db80000000000000000000000020104c000020ace48019090909090909090909090909090909001000000000000000200010203040000000000002328",
+      "token_hex": "246566f694da419a633072eff8b3fcdfd75fe9025f856439708ee5de46ec4233"
+    },
+    {
+      "id": "mobility-bind-response",
+      "kind": "positive",
+      "plaintext_hex": "52384d3104010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db80000000000000000000000020000000000000002000000000000002328246566f694da419a633072eff8b3fcdfd75fe9025f856439708ee5de46ec4233",
+      "exact_size": 89,
+      "token_input_hex": "52382062696e6420763101000102030405060708d1d5bbe49b1f829a1ebd4af95cbe4fcf73ccb6872d154e3e6ec3cbc3884d9c2fa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db80000000000000000000000020104c000020ace48019090909090909090909090909090909001000000000000000200010203040000000000002328",
+      "token_hex": "246566f694da419a633072eff8b3fcdfd75fe9025f856439708ee5de46ec4233"
+    },
+    {
+      "id": "mobility-candidate-result-promoted",
+      "kind": "positive",
+      "plaintext_hex": "52384d3105010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a100000000000000020001",
+      "exact_size": 34,
+      "result": "promoted"
+    }
+  ],
+  "negative_cases": [
+    {
+      "id": "mobility-magic",
+      "kind": "negative",
+      "expected_error": "E-CANDIDATE",
+      "contract_reference": {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "2"
+      },
+      "parameter_id": "P-CANDIDATE-PROPOSAL-SLOTS",
+      "operation": "parse_control",
+      "input_hex": "00384d3101010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db800000000000000000000000120010db8000000000000000000000002000000000000000200000000000000000000000000001388007d02b88179c4ef718561972f85282a951b99720de45e69790521f8269aa737aae70f94b41f097ae282d7557784dc9069ac79f012b09b5b77b30e5b7a4b17020a",
+      "setup": {
+        "session": {
+          "session_version": 1,
+          "profile": 0,
+          "scid": 72623859790382856,
+          "caller_replay_token": "txn-0000000000000001"
+        },
+        "clock_ms": 1000,
+        "current_binding_hex": "0104c000020ace480190909090909090909090909090909090",
+        "current_loc_hex": "20010db8000000000000000000000001",
+        "candidate_capacity": 2,
+        "proposal_capacity": 2,
+        "result_cache_capacity": 2,
+        "live_candidates": [],
+        "proposal_cache": [],
+        "result_cache": []
+      }
+    },
+    {
+      "id": "mobility-version",
+      "kind": "negative",
+      "expected_error": "E-CANDIDATE",
+      "contract_reference": {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "2"
+      },
+      "parameter_id": "P-CANDIDATE-PROPOSAL-SLOTS",
+      "operation": "parse_control",
+      "input_hex": "52384d3101020000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db800000000000000000000000120010db8000000000000000000000002000000000000000200000000000000000000000000001388007d02b88179c4ef718561972f85282a951b99720de45e69790521f8269aa737aae70f94b41f097ae282d7557784dc9069ac79f012b09b5b77b30e5b7a4b17020a",
+      "setup": {
+        "session": {
+          "session_version": 1,
+          "profile": 0,
+          "scid": 72623859790382856,
+          "caller_replay_token": "txn-0000000000000001"
+        },
+        "clock_ms": 1000,
+        "current_binding_hex": "0104c000020ace480190909090909090909090909090909090",
+        "current_loc_hex": "20010db8000000000000000000000001",
+        "candidate_capacity": 2,
+        "proposal_capacity": 2,
+        "result_cache_capacity": 2,
+        "live_candidates": [],
+        "proposal_cache": [],
+        "result_cache": []
+      }
+    },
+    {
+      "id": "mobility-flags",
+      "kind": "negative",
+      "expected_error": "E-CANDIDATE",
+      "contract_reference": {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "2"
+      },
+      "parameter_id": "P-CANDIDATE-PROPOSAL-SLOTS",
+      "operation": "parse_control",
+      "input_hex": "52384d3101010100a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db800000000000000000000000120010db8000000000000000000000002000000000000000200000000000000000000000000001388007d02b88179c4ef718561972f85282a951b99720de45e69790521f8269aa737aae70f94b41f097ae282d7557784dc9069ac79f012b09b5b77b30e5b7a4b17020a",
+      "setup": {
+        "session": {
+          "session_version": 1,
+          "profile": 0,
+          "scid": 72623859790382856,
+          "caller_replay_token": "txn-0000000000000001"
+        },
+        "clock_ms": 1000,
+        "current_binding_hex": "0104c000020ace480190909090909090909090909090909090",
+        "current_loc_hex": "20010db8000000000000000000000001",
+        "candidate_capacity": 2,
+        "proposal_capacity": 2,
+        "result_cache_capacity": 2,
+        "live_candidates": [],
+        "proposal_cache": [],
+        "result_cache": []
+      }
+    },
+    {
+      "id": "mobility-loc-update-length",
+      "kind": "negative",
+      "expected_error": "E-CANDIDATE",
+      "contract_reference": {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "2"
+      },
+      "parameter_id": "P-CANDIDATE-PROPOSAL-SLOTS",
+      "operation": "parse_control",
+      "input_hex": "52384d3101010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db800000000000000000000000120010db8000000000000000000000002000000000000000200000000000000000000000000001388007d02b88179c4ef718561972f85282a951b99720de45e69790521f8269aa737aae70f94b41f097ae282d7557784dc9069ac79f012b09b5b77b30e5b7a4b1702",
+      "setup": {
+        "session": {
+          "session_version": 1,
+          "profile": 0,
+          "scid": 72623859790382856,
+          "caller_replay_token": "txn-0000000000000001"
+        },
+        "clock_ms": 1000,
+        "current_binding_hex": "0104c000020ace480190909090909090909090909090909090",
+        "current_loc_hex": "20010db8000000000000000000000001",
+        "candidate_capacity": 2,
+        "proposal_capacity": 2,
+        "result_cache_capacity": 2,
+        "live_candidates": [],
+        "proposal_cache": [],
+        "result_cache": []
+      }
+    },
+    {
+      "id": "mobility-loc-update-trailing",
+      "kind": "negative",
+      "expected_error": "E-CANDIDATE",
+      "contract_reference": {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "2"
+      },
+      "parameter_id": "P-CANDIDATE-PROPOSAL-SLOTS",
+      "operation": "parse_control",
+      "input_hex": "52384d3101010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db800000000000000000000000120010db8000000000000000000000002000000000000000200000000000000000000000000001388007d02b88179c4ef718561972f85282a951b99720de45e69790521f8269aa737aae70f94b41f097ae282d7557784dc9069ac79f012b09b5b77b30e5b7a4b17020a00",
+      "setup": {
+        "session": {
+          "session_version": 1,
+          "profile": 0,
+          "scid": 72623859790382856,
+          "caller_replay_token": "txn-0000000000000001"
+        },
+        "clock_ms": 1000,
+        "current_binding_hex": "0104c000020ace480190909090909090909090909090909090",
+        "current_loc_hex": "20010db8000000000000000000000001",
+        "candidate_capacity": 2,
+        "proposal_capacity": 2,
+        "result_cache_capacity": 2,
+        "live_candidates": [],
+        "proposal_cache": [],
+        "result_cache": []
+      }
+    },
+    {
+      "id": "mobility-probe-length",
+      "kind": "negative",
+      "expected_error": "E-CANDIDATE",
+      "contract_reference": {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "2"
+      },
+      "parameter_id": "P-CANDIDATE-PROPOSAL-SLOTS",
+      "operation": "parse_control",
+      "input_hex": "52384d3102010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db8000000000000000000000002000000000000000200b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+      "setup": {
+        "session": {
+          "session_version": 1,
+          "profile": 0,
+          "scid": 72623859790382856,
+          "caller_replay_token": "txn-0000000000000001"
+        },
+        "clock_ms": 1000,
+        "current_binding_hex": "0104c000020ace480190909090909090909090909090909090",
+        "current_loc_hex": "20010db8000000000000000000000001",
+        "candidate_capacity": 2,
+        "proposal_capacity": 2,
+        "result_cache_capacity": 2,
+        "live_candidates": [],
+        "proposal_cache": [],
+        "result_cache": []
+      }
+    },
+    {
+      "id": "mobility-probe-trailing",
+      "kind": "negative",
+      "expected_error": "E-CANDIDATE",
+      "contract_reference": {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "2"
+      },
+      "parameter_id": "P-CANDIDATE-PROPOSAL-SLOTS",
+      "operation": "parse_control",
+      "input_hex": "52384d3102010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db8000000000000000000000002000000000000000200b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b200",
+      "setup": {
+        "session": {
+          "session_version": 1,
+          "profile": 0,
+          "scid": 72623859790382856,
+          "caller_replay_token": "txn-0000000000000001"
+        },
+        "clock_ms": 1000,
+        "current_binding_hex": "0104c000020ace480190909090909090909090909090909090",
+        "current_loc_hex": "20010db8000000000000000000000001",
+        "candidate_capacity": 2,
+        "proposal_capacity": 2,
+        "result_cache_capacity": 2,
+        "live_candidates": [],
+        "proposal_cache": [],
+        "result_cache": []
+      }
+    },
+    {
+      "id": "mobility-challenge-length",
+      "kind": "negative",
+      "expected_error": "E-CANDIDATE",
+      "contract_reference": {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "2"
+      },
+      "parameter_id": "P-CANDIDATE-PROPOSAL-SLOTS",
+      "operation": "parse_control",
+      "input_hex": "52384d3103010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db80000000000000000000000020000000000000002000000000000002328246566f694da419a633072eff8b3fcdfd75fe9025f856439708ee5de46ec42",
+      "setup": {
+        "session": {
+          "session_version": 1,
+          "profile": 0,
+          "scid": 72623859790382856,
+          "caller_replay_token": "txn-0000000000000001"
+        },
+        "clock_ms": 1000,
+        "current_binding_hex": "0104c000020ace480190909090909090909090909090909090",
+        "current_loc_hex": "20010db8000000000000000000000001",
+        "candidate_capacity": 2,
+        "proposal_capacity": 2,
+        "result_cache_capacity": 2,
+        "live_candidates": [],
+        "proposal_cache": [],
+        "result_cache": []
+      }
+    },
+    {
+      "id": "mobility-challenge-trailing",
+      "kind": "negative",
+      "expected_error": "E-CANDIDATE",
+      "contract_reference": {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "2"
+      },
+      "parameter_id": "P-CANDIDATE-PROPOSAL-SLOTS",
+      "operation": "parse_control",
+      "input_hex": "52384d3103010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db80000000000000000000000020000000000000002000000000000002328246566f694da419a633072eff8b3fcdfd75fe9025f856439708ee5de46ec423300",
+      "setup": {
+        "session": {
+          "session_version": 1,
+          "profile": 0,
+          "scid": 72623859790382856,
+          "caller_replay_token": "txn-0000000000000001"
+        },
+        "clock_ms": 1000,
+        "current_binding_hex": "0104c000020ace480190909090909090909090909090909090",
+        "current_loc_hex": "20010db8000000000000000000000001",
+        "candidate_capacity": 2,
+        "proposal_capacity": 2,
+        "result_cache_capacity": 2,
+        "live_candidates": [],
+        "proposal_cache": [],
+        "result_cache": []
+      }
+    },
+    {
+      "id": "mobility-response-length",
+      "kind": "negative",
+      "expected_error": "E-CANDIDATE",
+      "contract_reference": {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "2"
+      },
+      "parameter_id": "P-CANDIDATE-PROPOSAL-SLOTS",
+      "operation": "parse_control",
+      "input_hex": "52384d3104010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db80000000000000000000000020000000000000002000000000000002328246566f694da419a633072eff8b3fcdfd75fe9025f856439708ee5de46ec42",
+      "setup": {
+        "session": {
+          "session_version": 1,
+          "profile": 0,
+          "scid": 72623859790382856,
+          "caller_replay_token": "txn-0000000000000001"
+        },
+        "clock_ms": 1000,
+        "current_binding_hex": "0104c000020ace480190909090909090909090909090909090",
+        "current_loc_hex": "20010db8000000000000000000000001",
+        "candidate_capacity": 2,
+        "proposal_capacity": 2,
+        "result_cache_capacity": 2,
+        "live_candidates": [],
+        "proposal_cache": [],
+        "result_cache": []
+      }
+    },
+    {
+      "id": "mobility-response-trailing",
+      "kind": "negative",
+      "expected_error": "E-CANDIDATE",
+      "contract_reference": {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "2"
+      },
+      "parameter_id": "P-CANDIDATE-PROPOSAL-SLOTS",
+      "operation": "parse_control",
+      "input_hex": "52384d3104010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db80000000000000000000000020000000000000002000000000000002328246566f694da419a633072eff8b3fcdfd75fe9025f856439708ee5de46ec423300",
+      "setup": {
+        "session": {
+          "session_version": 1,
+          "profile": 0,
+          "scid": 72623859790382856,
+          "caller_replay_token": "txn-0000000000000001"
+        },
+        "clock_ms": 1000,
+        "current_binding_hex": "0104c000020ace480190909090909090909090909090909090",
+        "current_loc_hex": "20010db8000000000000000000000001",
+        "candidate_capacity": 2,
+        "proposal_capacity": 2,
+        "result_cache_capacity": 2,
+        "live_candidates": [],
+        "proposal_cache": [],
+        "result_cache": []
+      }
+    },
+    {
+      "id": "mobility-result-length",
+      "kind": "negative",
+      "expected_error": "E-CANDIDATE",
+      "contract_reference": {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "2"
+      },
+      "parameter_id": "P-CANDIDATE-PROPOSAL-SLOTS",
+      "operation": "parse_control",
+      "input_hex": "52384d3105010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1000000000000000200",
+      "setup": {
+        "session": {
+          "session_version": 1,
+          "profile": 0,
+          "scid": 72623859790382856,
+          "caller_replay_token": "txn-0000000000000001"
+        },
+        "clock_ms": 1000,
+        "current_binding_hex": "0104c000020ace480190909090909090909090909090909090",
+        "current_loc_hex": "20010db8000000000000000000000001",
+        "candidate_capacity": 2,
+        "proposal_capacity": 2,
+        "result_cache_capacity": 2,
+        "live_candidates": [],
+        "proposal_cache": [],
+        "result_cache": []
+      }
+    },
+    {
+      "id": "mobility-result-trailing",
+      "kind": "negative",
+      "expected_error": "E-CANDIDATE",
+      "contract_reference": {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "2"
+      },
+      "parameter_id": "P-CANDIDATE-PROPOSAL-SLOTS",
+      "operation": "parse_control",
+      "input_hex": "52384d3105010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a10000000000000002000100",
+      "setup": {
+        "session": {
+          "session_version": 1,
+          "profile": 0,
+          "scid": 72623859790382856,
+          "caller_replay_token": "txn-0000000000000001"
+        },
+        "clock_ms": 1000,
+        "current_binding_hex": "0104c000020ace480190909090909090909090909090909090",
+        "current_loc_hex": "20010db8000000000000000000000001",
+        "candidate_capacity": 2,
+        "proposal_capacity": 2,
+        "result_cache_capacity": 2,
+        "live_candidates": [],
+        "proposal_cache": [],
+        "result_cache": []
+      }
+    },
+    {
+      "id": "mobility-zero-candidate-id",
+      "kind": "negative",
+      "expected_error": "E-CANDIDATE",
+      "contract_reference": {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "2"
+      },
+      "parameter_id": "P-CANDIDATE-PROPOSAL-SLOTS",
+      "operation": "validate_update",
+      "input_hex": "52384d31010100000000000000000000000000000000000020010db800000000000000000000000120010db8000000000000000000000002000000000000000200000000000000000000000000001388007d02b88179c4ef718561972f85282a951b99720de45e69790521f8269aa737aae70f94b41f097ae282d7557784dc9069ac79f012b09b5b77b30e5b7a4b17020a",
+      "setup": {
+        "session": {
+          "session_version": 1,
+          "profile": 0,
+          "scid": 72623859790382856,
+          "caller_replay_token": "txn-0000000000000001"
+        },
+        "clock_ms": 1000,
+        "current_binding_hex": "0104c000020ace480190909090909090909090909090909090",
+        "current_loc_hex": "20010db8000000000000000000000001",
+        "candidate_capacity": 2,
+        "proposal_capacity": 2,
+        "result_cache_capacity": 2,
+        "live_candidates": [],
+        "proposal_cache": [],
+        "result_cache": []
+      }
+    },
+    {
+      "id": "mobility-old-loc",
+      "kind": "negative",
+      "expected_error": "E-CANDIDATE",
+      "contract_reference": {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "2"
+      },
+      "parameter_id": "P-CANDIDATE-PROPOSAL-SLOTS",
+      "operation": "validate_update",
+      "input_hex": "52384d3101010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1ffffffffffffffffffffffffffffffff20010db8000000000000000000000002000000000000000200000000000000000000000000001388007d02b88179c4ef718561972f85282a951b99720de45e69790521f8269aa737aae70f94b41f097ae282d7557784dc9069ac79f012b09b5b77b30e5b7a4b17020a",
+      "setup": {
+        "session": {
+          "session_version": 1,
+          "profile": 0,
+          "scid": 72623859790382856,
+          "caller_replay_token": "txn-0000000000000001"
+        },
+        "clock_ms": 1000,
+        "current_binding_hex": "0104c000020ace480190909090909090909090909090909090",
+        "current_loc_hex": "20010db8000000000000000000000001",
+        "candidate_capacity": 2,
+        "proposal_capacity": 2,
+        "result_cache_capacity": 2,
+        "live_candidates": [],
+        "proposal_cache": [],
+        "result_cache": []
+      }
+    },
+    {
+      "id": "mobility-epoch",
+      "kind": "negative",
+      "expected_error": "E-CANDIDATE",
+      "contract_reference": {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "2"
+      },
+      "parameter_id": "P-CANDIDATE-PROPOSAL-SLOTS",
+      "operation": "validate_update",
+      "input_hex": "52384d3101010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db800000000000000000000000120010db8000000000000000000000002000000000000000100000000000000000000000000001388007d02b88179c4ef718561972f85282a951b99720de45e69790521f8269aa737aae70f94b41f097ae282d7557784dc9069ac79f012b09b5b77b30e5b7a4b17020a",
+      "setup": {
+        "session": {
+          "session_version": 1,
+          "profile": 0,
+          "scid": 72623859790382856,
+          "caller_replay_token": "txn-0000000000000001"
+        },
+        "clock_ms": 1000,
+        "current_binding_hex": "0104c000020ace480190909090909090909090909090909090",
+        "current_loc_hex": "20010db8000000000000000000000001",
+        "candidate_capacity": 2,
+        "proposal_capacity": 2,
+        "result_cache_capacity": 2,
+        "live_candidates": [],
+        "proposal_cache": [],
+        "result_cache": []
+      }
+    },
+    {
+      "id": "mobility-not-before",
+      "kind": "negative",
+      "expected_error": "E-CANDIDATE",
+      "contract_reference": {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "2"
+      },
+      "parameter_id": "P-CANDIDATE-PROPOSAL-SLOTS",
+      "operation": "validate_update",
+      "input_hex": "52384d3101010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db800000000000000000000000120010db8000000000000000000000002000000000000000200000000000000010000000000001388007d02b88179c4ef718561972f85282a951b99720de45e69790521f8269aa737aae70f94b41f097ae282d7557784dc9069ac79f012b09b5b77b30e5b7a4b17020a",
+      "setup": {
+        "session": {
+          "session_version": 1,
+          "profile": 0,
+          "scid": 72623859790382856,
+          "caller_replay_token": "txn-0000000000000001"
+        },
+        "clock_ms": 1000,
+        "current_binding_hex": "0104c000020ace480190909090909090909090909090909090",
+        "current_loc_hex": "20010db8000000000000000000000001",
+        "candidate_capacity": 2,
+        "proposal_capacity": 2,
+        "result_cache_capacity": 2,
+        "live_candidates": [],
+        "proposal_cache": [],
+        "result_cache": []
+      }
+    },
+    {
+      "id": "mobility-valid-for",
+      "kind": "negative",
+      "expected_error": "E-CANDIDATE",
+      "contract_reference": {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "2"
+      },
+      "parameter_id": "P-CANDIDATE-PROPOSAL-SLOTS",
+      "operation": "validate_update",
+      "input_hex": "52384d3101010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db800000000000000000000000120010db8000000000000000000000002000000000000000200000000000000000000000000001387007d02b88179c4ef718561972f85282a951b99720de45e69790521f8269aa737aae70f94b41f097ae282d7557784dc9069ac79f012b09b5b77b30e5b7a4b17020a",
+      "setup": {
+        "session": {
+          "session_version": 1,
+          "profile": 0,
+          "scid": 72623859790382856,
+          "caller_replay_token": "txn-0000000000000001"
+        },
+        "clock_ms": 1000,
+        "current_binding_hex": "0104c000020ace480190909090909090909090909090909090",
+        "current_loc_hex": "20010db8000000000000000000000001",
+        "candidate_capacity": 2,
+        "proposal_capacity": 2,
+        "result_cache_capacity": 2,
+        "live_candidates": [],
+        "proposal_cache": [],
+        "result_cache": []
+      }
+    },
+    {
+      "id": "mobility-slot",
+      "kind": "negative",
+      "expected_error": "E-CANDIDATE",
+      "contract_reference": {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "2"
+      },
+      "parameter_id": "P-CANDIDATE-PROPOSAL-SLOTS",
+      "operation": "validate_update",
+      "input_hex": "52384d3101010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db800000000000000000000000120010db8000000000000000000000002000000000000000200000000000000000000000000001388007d02b88179c4ef018561972f85282a951b99720de45e69790521f8269aa737aae70f94b41f097ae282d7557784dc9069ac79f012b09b5b77b30e5b7a4b17020a",
+      "setup": {
+        "session": {
+          "session_version": 1,
+          "profile": 0,
+          "scid": 72623859790382856,
+          "caller_replay_token": "txn-0000000000000001"
+        },
+        "clock_ms": 1000,
+        "current_binding_hex": "0104c000020ace480190909090909090909090909090909090",
+        "current_loc_hex": "20010db8000000000000000000000001",
+        "candidate_capacity": 2,
+        "proposal_capacity": 2,
+        "result_cache_capacity": 2,
+        "live_candidates": [],
+        "proposal_cache": [],
+        "result_cache": []
+      }
+    },
+    {
+      "id": "mobility-signature",
+      "kind": "negative",
+      "expected_error": "E-CANDIDATE",
+      "contract_reference": {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "2"
+      },
+      "parameter_id": "P-CANDIDATE-PROPOSAL-SLOTS",
+      "operation": "validate_update",
+      "input_hex": "52384d3101010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db800000000000000000000000120010db8000000000000000000000002000000000000000200000000000000000000000000001388007d02b88179c4ef718461972f85282a951b99720de45e69790521f8269aa737aae70f94b41f097ae282d7557784dc9069ac79f012b09b5b77b30e5b7a4b17020a",
+      "setup": {
+        "session": {
+          "session_version": 1,
+          "profile": 0,
+          "scid": 72623859790382856,
+          "caller_replay_token": "txn-0000000000000001"
+        },
+        "clock_ms": 1000,
+        "current_binding_hex": "0104c000020ace480190909090909090909090909090909090",
+        "current_loc_hex": "20010db8000000000000000000000001",
+        "candidate_capacity": 2,
+        "proposal_capacity": 2,
+        "result_cache_capacity": 2,
+        "live_candidates": [],
+        "proposal_cache": [],
+        "result_cache": []
+      }
+    },
+    {
+      "id": "mobility-rate-limit",
+      "kind": "negative",
+      "expected_error": "E-CANDIDATE",
+      "contract_reference": {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "3"
+      },
+      "parameter_id": "P-CANDIDATE-PROPOSAL-SLOTS",
+      "operation": "submit_update",
+      "input_hex": "52384d3101010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db800000000000000000000000120010db8000000000000000000000002000000000000000200000000000000000000000000001388007d02b88179c4ef718561972f85282a951b99720de45e69790521f8269aa737aae70f94b41f097ae282d7557784dc9069ac79f012b09b5b77b30e5b7a4b17020a",
+      "setup": {
+        "session": {
+          "session_version": 1,
+          "profile": 0,
+          "scid": 72623859790382856,
+          "caller_replay_token": "txn-0000000000000001"
+        },
+        "clock_ms": 1000,
+        "current_binding_hex": "0104c000020ace480190909090909090909090909090909090",
+        "current_loc_hex": "20010db8000000000000000000000001",
+        "candidate_capacity": 2,
+        "proposal_capacity": 2,
+        "result_cache_capacity": 2,
+        "live_candidates": [],
+        "proposal_cache": [],
+        "result_cache": [],
+        "proposal_bucket": {
+          "tokens": 0,
+          "last_refill_ms": 1000
+        }
+      }
+    },
+    {
+      "id": "mobility-proposal-capacity",
+      "kind": "negative",
+      "expected_error": "E-CAPACITY",
+      "contract_reference": {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "3"
+      },
+      "parameter_id": "P-LIVE-CANDIDATES-MAX",
+      "operation": "submit_update",
+      "input_hex": "52384d3101010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db800000000000000000000000120010db8000000000000000000000002000000000000000200000000000000000000000000001388007d02b88179c4ef718561972f85282a951b99720de45e69790521f8269aa737aae70f94b41f097ae282d7557784dc9069ac79f012b09b5b77b30e5b7a4b17020a",
+      "setup": {
+        "session": {
+          "session_version": 1,
+          "profile": 0,
+          "scid": 72623859790382856,
+          "caller_replay_token": "txn-0000000000000001"
+        },
+        "clock_ms": 1000,
+        "current_binding_hex": "0104c000020ace480190909090909090909090909090909090",
+        "current_loc_hex": "20010db8000000000000000000000001",
+        "candidate_capacity": 2,
+        "proposal_capacity": 2,
+        "result_cache_capacity": 2,
+        "live_candidates": [],
+        "proposal_cache": [
+          {
+            "candidate_id_hex": "01010101010101010101010101010101"
+          },
+          {
+            "candidate_id_hex": "02020202020202020202020202020202"
+          }
+        ],
+        "result_cache": []
+      }
+    },
+    {
+      "id": "mobility-result-capacity",
+      "kind": "negative",
+      "expected_error": "E-CAPACITY",
+      "contract_reference": {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "3"
+      },
+      "parameter_id": "P-LIVE-CANDIDATES-MAX",
+      "operation": "receive_result",
+      "input_hex": "52384d3105010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a100000000000000020001",
+      "setup": {
+        "session": {
+          "session_version": 1,
+          "profile": 0,
+          "scid": 72623859790382856,
+          "caller_replay_token": "txn-0000000000000001"
+        },
+        "clock_ms": 1000,
+        "current_binding_hex": "0104c000020ace480190909090909090909090909090909090",
+        "current_loc_hex": "20010db8000000000000000000000001",
+        "candidate_capacity": 2,
+        "proposal_capacity": 2,
+        "result_cache_capacity": 2,
+        "live_candidates": [
+          {
+            "candidate_id_hex": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "loc_hex": "20010db8000000000000000000000002",
+            "epoch": 2,
+            "slot": 0,
+            "state": "PROVEN",
+            "binding_hex": "0104c000020ace480190909090909090909090909090909090",
+            "local_mover": true,
+            "awaiting_result": true
+          }
+        ],
+        "proposal_cache": [],
+        "result_cache": [
+          {
+            "candidate_id_hex": "01010101010101010101010101010101",
+            "epoch": 1,
+            "slot": 0,
+            "result": "promoted",
+            "expiry_ms": 31000
+          },
+          {
+            "candidate_id_hex": "02020202020202020202020202020202",
+            "epoch": 1,
+            "slot": 0,
+            "result": "rejected",
+            "expiry_ms": 31000
+          }
+        ],
+        "roles": {
+          "sender": 1,
+          "receiver": 2
+        },
+        "manager_policy_id": 16909060,
+        "manager_direction": 1
+      }
+    },
+    {
+      "id": "mobility-unknown-probe",
+      "kind": "negative",
+      "expected_error": "E-CANDIDATE",
+      "contract_reference": {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "3"
+      },
+      "parameter_id": "P-CANDIDATE-PROPOSAL-SLOTS",
+      "operation": "receive_probe",
+      "input_hex": "52384d3102010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db8000000000000000000000002000000000000000200b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+      "setup": {
+        "session": {
+          "session_version": 1,
+          "profile": 0,
+          "scid": 72623859790382856,
+          "caller_replay_token": "txn-0000000000000001"
+        },
+        "clock_ms": 1000,
+        "current_binding_hex": "0104c000020ace480190909090909090909090909090909090",
+        "current_loc_hex": "20010db8000000000000000000000001",
+        "candidate_capacity": 2,
+        "proposal_capacity": 2,
+        "result_cache_capacity": 2,
+        "live_candidates": [],
+        "proposal_cache": [],
+        "result_cache": [],
+        "observed_binding_hex": "0104c000020ace480190909090909090909090909090909090"
+      }
+    },
+    {
+      "id": "mobility-mismatched-probe",
+      "kind": "negative",
+      "expected_error": "E-CANDIDATE",
+      "contract_reference": {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "3"
+      },
+      "parameter_id": "P-CANDIDATE-PROPOSAL-SLOTS",
+      "operation": "receive_probe",
+      "input_hex": "52384d3102010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db8000000000000000000000002000000000000000200b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+      "setup": {
+        "session": {
+          "session_version": 1,
+          "profile": 0,
+          "scid": 72623859790382856,
+          "caller_replay_token": "txn-0000000000000001"
+        },
+        "clock_ms": 1000,
+        "current_binding_hex": "0104c000020ace480190909090909090909090909090909090",
+        "current_loc_hex": "20010db8000000000000000000000001",
+        "candidate_capacity": 2,
+        "proposal_capacity": 2,
+        "result_cache_capacity": 2,
+        "live_candidates": [],
+        "proposal_cache": [
+          {
+            "candidate_id_hex": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "loc_hex": "20010db80000000000000000000000ff",
+            "epoch": 2,
+            "slot": 0
+          }
+        ],
+        "result_cache": [],
+        "roles": {
+          "sender": 1,
+          "receiver": 2
+        },
+        "manager_policy_id": 16909060,
+        "manager_direction": 1,
+        "observed_binding_hex": "0104c000020ace480190909090909090909090909090909090"
+      }
+    },
+    {
+      "id": "mobility-typed-binding-mismatch",
+      "kind": "negative",
+      "expected_error": "E-CANDIDATE",
+      "contract_reference": {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "3"
+      },
+      "parameter_id": "P-CANDIDATE-PROPOSAL-SLOTS",
+      "operation": "receive_response",
+      "input_hex": "52384d3104010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db80000000000000000000000020000000000000002000000000000002328246566f694da419a633072eff8b3fcdfd75fe9025f856439708ee5de46ec4233",
+      "setup": {
+        "session": {
+          "session_version": 1,
+          "profile": 0,
+          "scid": 72623859790382856,
+          "caller_replay_token": "txn-0000000000000001"
+        },
+        "clock_ms": 1000,
+        "current_binding_hex": "0104c000020ace480190909090909090909090909090909090",
+        "current_loc_hex": "20010db8000000000000000000000001",
+        "candidate_capacity": 2,
+        "proposal_capacity": 2,
+        "result_cache_capacity": 2,
+        "live_candidates": [
+          {
+            "candidate_id_hex": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "loc_hex": "20010db8000000000000000000000002",
+            "epoch": 2,
+            "slot": 0,
+            "state": "CHALLENGED",
+            "binding_hex": "0104c000020ace480190909090909090909090909090909090",
+            "token_policy_id": 16909060,
+            "token_direction": 1,
+            "challenge_expiry_ms": 9000
+          }
+        ],
+        "proposal_cache": [],
+        "result_cache": [],
+        "issuer_clock_ms": 8000,
+        "challenge_expiry_ms": 9000,
+        "observed_binding_hex": "0104c000020ace480190909090909090909090909090909090"
+      }
+    },
+    {
+      "id": "mobility-token",
+      "kind": "negative",
+      "expected_error": "E-CANDIDATE",
+      "contract_reference": {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "3"
+      },
+      "parameter_id": "P-CANDIDATE-PROPOSAL-SLOTS",
+      "operation": "receive_response",
+      "input_hex": "52384d3104010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db80000000000000000000000020000000000000002000000000000002328256566f694da419a633072eff8b3fcdfd75fe9025f856439708ee5de46ec4233",
+      "setup": {
+        "session": {
+          "session_version": 1,
+          "profile": 0,
+          "scid": 72623859790382856,
+          "caller_replay_token": "txn-0000000000000001"
+        },
+        "clock_ms": 1000,
+        "current_binding_hex": "0104c000020ace480190909090909090909090909090909090",
+        "current_loc_hex": "20010db8000000000000000000000001",
+        "candidate_capacity": 2,
+        "proposal_capacity": 2,
+        "result_cache_capacity": 2,
+        "live_candidates": [
+          {
+            "candidate_id_hex": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "loc_hex": "20010db8000000000000000000000002",
+            "epoch": 2,
+            "slot": 0,
+            "state": "CHALLENGED",
+            "binding_hex": "0104c000020ace480190909090909090909090909090909090",
+            "token_policy_id": 16909060,
+            "token_direction": 1,
+            "challenge_expiry_ms": 9000
+          }
+        ],
+        "proposal_cache": [],
+        "result_cache": [],
+        "issuer_clock_ms": 8000,
+        "challenge_expiry_ms": 9000,
+        "observed_binding_hex": "0104c000020ace480190909090909090909090909090909090"
+      }
+    },
+    {
+      "id": "mobility-token-input",
+      "kind": "negative",
+      "expected_error": "E-CANDIDATE",
+      "contract_reference": {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "3"
+      },
+      "parameter_id": "P-CANDIDATE-PROPOSAL-SLOTS",
+      "operation": "receive_response",
+      "input_hex": "52384d3104010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db80000000000000000000000020000000000000002000000000000002328246566f694da419a633072eff8b3fcdfd75fe9025f856439708ee5de46ec4233",
+      "setup": {
+        "session": {
+          "session_version": 1,
+          "profile": 0,
+          "scid": 72623859790382856,
+          "caller_replay_token": "txn-0000000000000001"
+        },
+        "clock_ms": 1000,
+        "current_binding_hex": "0104c000020ace480190909090909090909090909090909090",
+        "current_loc_hex": "20010db8000000000000000000000001",
+        "candidate_capacity": 2,
+        "proposal_capacity": 2,
+        "result_cache_capacity": 2,
+        "live_candidates": [
+          {
+            "candidate_id_hex": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "loc_hex": "20010db8000000000000000000000002",
+            "epoch": 2,
+            "slot": 0,
+            "state": "CHALLENGED",
+            "binding_hex": "0104c000020ace480190909090909090909090909090909090",
+            "token_policy_id": 16909060,
+            "token_direction": 1,
+            "challenge_expiry_ms": 9000
+          }
+        ],
+        "proposal_cache": [],
+        "result_cache": [],
+        "issuer_clock_ms": 8000,
+        "challenge_expiry_ms": 9000,
+        "policy_id": 16909060,
+        "direction": 1,
+        "observed_binding_hex": "0104c000020ace480190909090909090909090909090909090"
+      }
+    },
+    {
+      "id": "mobility-direction",
+      "kind": "negative",
+      "expected_error": "E-CANDIDATE",
+      "contract_reference": {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "3"
+      },
+      "parameter_id": "P-CANDIDATE-PROPOSAL-SLOTS",
+      "operation": "validate_roles",
+      "input_hex": "52384d3101010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db800000000000000000000000120010db8000000000000000000000002000000000000000200000000000000000000000000001388007d02b88179c4ef718561972f85282a951b99720de45e69790521f8269aa737aae70f94b41f097ae282d7557784dc9069ac79f012b09b5b77b30e5b7a4b17020a",
+      "setup": {
+        "session": {
+          "session_version": 1,
+          "profile": 0,
+          "scid": 72623859790382856,
+          "caller_replay_token": "txn-0000000000000001"
+        },
+        "clock_ms": 1000,
+        "current_binding_hex": "0104c000020ace480190909090909090909090909090909090",
+        "current_loc_hex": "20010db8000000000000000000000001",
+        "candidate_capacity": 2,
+        "proposal_capacity": 2,
+        "result_cache_capacity": 2,
+        "live_candidates": [],
+        "proposal_cache": [],
+        "result_cache": [],
+        "roles": {
+          "sender": 3,
+          "receiver": 2
+        },
+        "manager_policy_id": 16909060,
+        "manager_direction": 1,
+        "authorization": {
+          "configured_sender_role": 1,
+          "configured_receiver_role": 2
+        }
+      }
+    },
+    {
+      "id": "mobility-policy",
+      "kind": "negative",
+      "expected_error": "E-CANDIDATE",
+      "contract_reference": {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "3"
+      },
+      "parameter_id": "P-CANDIDATE-PROPOSAL-SLOTS",
+      "operation": "receive_response",
+      "input_hex": "52384d3104010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db80000000000000000000000020000000000000002000000000000002328246566f694da419a633072eff8b3fcdfd75fe9025f856439708ee5de46ec4233",
+      "setup": {
+        "session": {
+          "session_version": 1,
+          "profile": 0,
+          "scid": 72623859790382856,
+          "caller_replay_token": "txn-0000000000000001"
+        },
+        "clock_ms": 1000,
+        "current_binding_hex": "0104c000020ace480190909090909090909090909090909090",
+        "current_loc_hex": "20010db8000000000000000000000001",
+        "candidate_capacity": 2,
+        "proposal_capacity": 2,
+        "result_cache_capacity": 2,
+        "live_candidates": [
+          {
+            "candidate_id_hex": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "loc_hex": "20010db8000000000000000000000002",
+            "epoch": 2,
+            "slot": 0,
+            "state": "CHALLENGED",
+            "binding_hex": "0104c000020ace480190909090909090909090909090909090",
+            "token_policy_id": 16909060,
+            "token_direction": 1,
+            "challenge_expiry_ms": 9000
+          }
+        ],
+        "proposal_cache": [],
+        "result_cache": [],
+        "roles": {
+          "sender": 1,
+          "receiver": 2
+        },
+        "manager_policy_id": 16909061,
+        "manager_direction": 1,
+        "issuer_clock_ms": 8000,
+        "challenge_expiry_ms": 9000,
+        "token_policy_id": 16909060,
+        "observed_binding_hex": "0104c000020ace480190909090909090909090909090909090"
+      }
+    },
+    {
+      "id": "mobility-expiry",
+      "kind": "negative",
+      "expected_error": "E-CANDIDATE",
+      "contract_reference": {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "3"
+      },
+      "parameter_id": "P-CANDIDATE-PROPOSAL-SLOTS",
+      "operation": "receive_response",
+      "input_hex": "52384d3104010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db80000000000000000000000020000000000000002000000000000002328246566f694da419a633072eff8b3fcdfd75fe9025f856439708ee5de46ec4233",
+      "setup": {
+        "session": {
+          "session_version": 1,
+          "profile": 0,
+          "scid": 72623859790382856,
+          "caller_replay_token": "txn-0000000000000001"
+        },
+        "clock_ms": 1000,
+        "current_binding_hex": "0104c000020ace480190909090909090909090909090909090",
+        "current_loc_hex": "20010db8000000000000000000000001",
+        "candidate_capacity": 2,
+        "proposal_capacity": 2,
+        "result_cache_capacity": 2,
+        "live_candidates": [
+          {
+            "candidate_id_hex": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "loc_hex": "20010db8000000000000000000000002",
+            "epoch": 2,
+            "slot": 0,
+            "state": "CHALLENGED",
+            "binding_hex": "0104c000020ace480190909090909090909090909090909090",
+            "token_policy_id": 16909060,
+            "token_direction": 1,
+            "challenge_expiry_ms": 9000
+          }
+        ],
+        "proposal_cache": [],
+        "result_cache": [],
+        "issuer_clock_ms": 8000,
+        "challenge_expiry_ms": 9000,
+        "policy_id": 16909060,
+        "direction": 1,
+        "observed_binding_hex": "0104c000020ace480190909090909090909090909090909090"
+      }
+    },
+    {
+      "id": "mobility-expired-response",
+      "kind": "negative",
+      "expected_error": "E-TIMEOUT",
+      "contract_reference": {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "3"
+      },
+      "parameter_id": "P-CANDIDATE-CHALLENGE-EXPIRY",
+      "operation": "receive_response",
+      "input_hex": "52384d3104010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db80000000000000000000000020000000000000002000000000000002328246566f694da419a633072eff8b3fcdfd75fe9025f856439708ee5de46ec4233",
+      "setup": {
+        "session": {
+          "session_version": 1,
+          "profile": 0,
+          "scid": 72623859790382856,
+          "caller_replay_token": "txn-0000000000000001"
+        },
+        "clock_ms": 9000,
+        "current_binding_hex": "0104c000020ace480190909090909090909090909090909090",
+        "current_loc_hex": "20010db8000000000000000000000001",
+        "candidate_capacity": 2,
+        "proposal_capacity": 2,
+        "result_cache_capacity": 2,
+        "live_candidates": [
+          {
+            "candidate_id_hex": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "loc_hex": "20010db8000000000000000000000002",
+            "epoch": 2,
+            "slot": 0,
+            "state": "CHALLENGED",
+            "binding_hex": "0104c000020ace480190909090909090909090909090909090",
+            "token_policy_id": 16909060,
+            "token_direction": 1,
+            "challenge_expiry_ms": 9000
+          }
+        ],
+        "proposal_cache": [],
+        "result_cache": [],
+        "roles": {
+          "sender": 1,
+          "receiver": 2
+        },
+        "manager_policy_id": 16909060,
+        "manager_direction": 1,
+        "issuer_clock_ms": 9000,
+        "challenge_expiry_ms": 9000,
+        "observed_binding_hex": "0104c000020ace480190909090909090909090909090909090"
+      }
+    },
+    {
+      "id": "mobility-wrong-binding-response",
+      "kind": "negative",
+      "expected_error": "E-CANDIDATE",
+      "contract_reference": {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "3"
+      },
+      "parameter_id": "P-CANDIDATE-PROPOSAL-SLOTS",
+      "operation": "receive_response",
+      "input_hex": "52384d3104010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db80000000000000000000000020000000000000002000000000000002328246566f694da419a633072eff8b3fcdfd75fe9025f856439708ee5de46ec4233",
+      "setup": {
+        "session": {
+          "session_version": 1,
+          "profile": 0,
+          "scid": 72623859790382856,
+          "caller_replay_token": "txn-0000000000000001"
+        },
+        "clock_ms": 1000,
+        "current_binding_hex": "0104c000020ace480190909090909090909090909090909090",
+        "current_loc_hex": "20010db8000000000000000000000001",
+        "candidate_capacity": 2,
+        "proposal_capacity": 2,
+        "result_cache_capacity": 2,
+        "live_candidates": [
+          {
+            "candidate_id_hex": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "loc_hex": "20010db8000000000000000000000002",
+            "epoch": 2,
+            "slot": 0,
+            "state": "CHALLENGED",
+            "binding_hex": "0104c000020ace480190909090909090909090909090909090",
+            "token_policy_id": 16909060,
+            "token_direction": 1,
+            "challenge_expiry_ms": 9000
+          }
+        ],
+        "proposal_cache": [],
+        "result_cache": [],
+        "issuer_clock_ms": 8000,
+        "challenge_expiry_ms": 9000,
+        "observed_binding_hex": "0104c000020ace480190909090909090909090909090909090"
+      }
+    },
+    {
+      "id": "mobility-result-enum",
+      "kind": "negative",
+      "expected_error": "E-CANDIDATE",
+      "contract_reference": {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "3"
+      },
+      "parameter_id": "P-CANDIDATE-PROPOSAL-SLOTS",
+      "operation": "receive_result",
+      "input_hex": "52384d3105010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a100000000000000020009",
+      "setup": {
+        "session": {
+          "session_version": 1,
+          "profile": 0,
+          "scid": 72623859790382856,
+          "caller_replay_token": "txn-0000000000000001"
+        },
+        "clock_ms": 1000,
+        "current_binding_hex": "0104c000020ace480190909090909090909090909090909090",
+        "current_loc_hex": "20010db8000000000000000000000001",
+        "candidate_capacity": 2,
+        "proposal_capacity": 2,
+        "result_cache_capacity": 2,
+        "live_candidates": [],
+        "proposal_cache": [],
+        "result_cache": []
+      }
+    },
+    {
+      "id": "mobility-result-state",
+      "kind": "negative",
+      "expected_error": "E-CANDIDATE",
+      "contract_reference": {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "3"
+      },
+      "parameter_id": "P-CANDIDATE-PROPOSAL-SLOTS",
+      "operation": "receive_result",
+      "input_hex": "52384d3105010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a100000000000000020001",
+      "setup": {
+        "session": {
+          "session_version": 1,
+          "profile": 0,
+          "scid": 72623859790382856,
+          "caller_replay_token": "txn-0000000000000001"
+        },
+        "clock_ms": 1000,
+        "current_binding_hex": "0104c000020ace480190909090909090909090909090909090",
+        "current_loc_hex": "20010db8000000000000000000000001",
+        "candidate_capacity": 2,
+        "proposal_capacity": 2,
+        "result_cache_capacity": 2,
+        "live_candidates": [],
+        "proposal_cache": [],
+        "result_cache": []
+      }
+    },
+    {
+      "id": "mobility-result-cache",
+      "kind": "negative",
+      "expected_error": "E-CANDIDATE",
+      "contract_reference": {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "3"
+      },
+      "parameter_id": "P-CANDIDATE-PROPOSAL-SLOTS",
+      "operation": "receive_result",
+      "input_hex": "52384d3105010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a100000000000000020001",
+      "setup": {
+        "session": {
+          "session_version": 1,
+          "profile": 0,
+          "scid": 72623859790382856,
+          "caller_replay_token": "txn-0000000000000001"
+        },
+        "clock_ms": 1000,
+        "current_binding_hex": "0104c000020ace480190909090909090909090909090909090",
+        "current_loc_hex": "20010db8000000000000000000000001",
+        "candidate_capacity": 2,
+        "proposal_capacity": 2,
+        "result_cache_capacity": 0,
+        "live_candidates": [
+          {
+            "candidate_id_hex": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "state": "PROVEN",
+            "binding_hex": "0104c000020ace480190909090909090909090909090909090"
+          }
+        ],
+        "proposal_cache": [],
+        "result_cache": []
+      }
+    },
+    {
+      "id": "mobility-duplicate-idempotency",
+      "kind": "negative",
+      "expected_error": "E-CANDIDATE",
+      "contract_reference": {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "3"
+      },
+      "parameter_id": "P-CANDIDATE-PROPOSAL-SLOTS",
+      "operation": "submit_update",
+      "input_hex": "52384d3101010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db800000000000000000000000120010db8000000000000000000000002000000000000000200000000000000000000000000001388007d02b88179c4ef718561972f85282a951b99720de45e69790521f8269aa737aae70f94b41f097ae282d7557784dc9069ac79f012b09b5b77b30e5b7a4b17020a",
+      "setup": {
+        "session": {
+          "session_version": 1,
+          "profile": 0,
+          "scid": 72623859790382856,
+          "caller_replay_token": "txn-0000000000000001"
+        },
+        "clock_ms": 1000,
+        "current_binding_hex": "0104c000020ace480190909090909090909090909090909090",
+        "current_loc_hex": "20010db8000000000000000000000001",
+        "candidate_capacity": 2,
+        "proposal_capacity": 2,
+        "result_cache_capacity": 2,
+        "live_candidates": [],
+        "proposal_cache": [
+          {
+            "candidate_id_hex": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "canonical_input_hex": "52384d3101010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db800000000000000000000000120010db8000000000000000000000003000000000000000300000000000000000000000000001388007b539214128c05595cddd0ee805cde1ba658ddd647319d086121a3962ae64ade4d18aada039c7f007187972cdb6de701a5e96b44a704401e223d8e38b21eec02",
+            "receipt_expiry_ms": 6000,
+            "state": "CACHED"
+          }
+        ],
+        "result_cache": [],
+        "roles": {
+          "sender": 1,
+          "receiver": 2
+        },
+        "manager_policy_id": 16909060,
+        "manager_direction": 1,
+        "proposal_bucket": {
+          "tokens": 2,
+          "last_refill_ms": 1000
+        },
+        "retry": {
+          "same_candidate_id": true,
+          "byte_identical": false,
+          "prior_input_hex": "52384d3101010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db800000000000000000000000120010db8000000000000000000000003000000000000000300000000000000000000000000001388007b539214128c05595cddd0ee805cde1ba658ddd647319d086121a3962ae64ade4d18aada039c7f007187972cdb6de701a5e96b44a704401e223d8e38b21eec02",
+          "submitted_input_hex": "52384d3101010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db800000000000000000000000120010db8000000000000000000000002000000000000000200000000000000000000000000001388007d02b88179c4ef718561972f85282a951b99720de45e69790521f8269aa737aae70f94b41f097ae282d7557784dc9069ac79f012b09b5b77b30e5b7a4b17020a",
+          "prior_new_loc_hex": "20010db8000000000000000000000003",
+          "prior_epoch": 3,
+          "submitted_new_loc_hex": "20010db8000000000000000000000002",
+          "submitted_epoch": 2
+        }
+      },
+      "prior_signature_input_hex": "5238204c4f435f55504441544520763101000102030405060708d1d5bbe49b1f829a1ebd4af95cbe4fcf73ccb6872d154e3e6ec3cbc3884d9c2f20010db800000000000000000000000120010db8000000000000000000000003000000000000000300000000000000000000000000001388a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a100",
+      "prior_signature_hex": "7b539214128c05595cddd0ee805cde1ba658ddd647319d086121a3962ae64ade4d18aada039c7f007187972cdb6de701a5e96b44a704401e223d8e38b21eec02"
+    },
+    {
+      "id": "mobility-cohort-tie",
+      "kind": "negative",
+      "expected_error": "E-CANDIDATE",
+      "contract_reference": {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "3"
+      },
+      "parameter_id": "P-CANDIDATE-PROPOSAL-SLOTS",
+      "operation": "submit_update",
+      "input_hex": "52384d3101010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db800000000000000000000000120010db8000000000000000000000002000000000000000200000000000000000000000000001388007d02b88179c4ef718561972f85282a951b99720de45e69790521f8269aa737aae70f94b41f097ae282d7557784dc9069ac79f012b09b5b77b30e5b7a4b17020a",
+      "setup": {
+        "session": {
+          "session_version": 1,
+          "profile": 0,
+          "scid": 72623859790382856,
+          "caller_replay_token": "txn-0000000000000001"
+        },
+        "clock_ms": 1000,
+        "current_binding_hex": "0104c000020ace480190909090909090909090909090909090",
+        "current_loc_hex": "20010db8000000000000000000000001",
+        "candidate_capacity": 2,
+        "proposal_capacity": 2,
+        "result_cache_capacity": 2,
+        "live_candidates": [],
+        "proposal_cache": [],
+        "result_cache": [],
+        "roles": {
+          "sender": 1,
+          "receiver": 2
+        },
+        "manager_policy_id": 16909060,
+        "manager_direction": 1,
+        "committed_epoch": 2,
+        "cohort": {
+          "epoch": 2,
+          "frozen": true,
+          "committed": true,
+          "members": [
+            "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+          ],
+          "commit_ms": 1000
+        },
+        "late_update": {
+          "epoch": 2,
+          "candidate_id_hex": "00000000000000000000000000000001"
+        }
+      }
+    },
+    {
+      "id": "mobility-cohort-higher-epoch",
+      "kind": "negative",
+      "expected_error": "E-CANDIDATE",
+      "contract_reference": {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "3"
+      },
+      "parameter_id": "P-CANDIDATE-PROPOSAL-SLOTS",
+      "operation": "submit_update",
+      "input_hex": "52384d3101010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db800000000000000000000000120010db8000000000000000000000002000000000000000200000000000000000000000000001388007d02b88179c4ef718561972f85282a951b99720de45e69790521f8269aa737aae70f94b41f097ae282d7557784dc9069ac79f012b09b5b77b30e5b7a4b17020a",
+      "setup": {
+        "session": {
+          "session_version": 1,
+          "profile": 0,
+          "scid": 72623859790382856,
+          "caller_replay_token": "txn-0000000000000001"
+        },
+        "clock_ms": 1000,
+        "current_binding_hex": "0104c000020ace480190909090909090909090909090909090",
+        "current_loc_hex": "20010db8000000000000000000000001",
+        "candidate_capacity": 2,
+        "proposal_capacity": 2,
+        "result_cache_capacity": 2,
+        "live_candidates": [],
+        "proposal_cache": [],
+        "result_cache": [],
+        "roles": {
+          "sender": 1,
+          "receiver": 2
+        },
+        "manager_policy_id": 16909060,
+        "manager_direction": 1,
+        "committed_epoch": 3,
+        "cohort": {
+          "epoch": 3,
+          "frozen": true,
+          "committed": true,
+          "members": [
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          ],
+          "commit_ms": 1000
+        },
+        "stale_update": {
+          "epoch": 2,
+          "candidate_id_hex": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+        }
+      }
+    },
+    {
+      "id": "mobility-third-binding",
+      "kind": "negative",
+      "expected_error": "E-CAPACITY",
+      "contract_reference": {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "3"
+      },
+      "parameter_id": "P-LIVE-CANDIDATES-MAX",
+      "operation": "receive_probe",
+      "input_hex": "52384d3102010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db8000000000000000000000002000000000000000200b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+      "setup": {
+        "session": {
+          "session_version": 1,
+          "profile": 0,
+          "scid": 72623859790382856,
+          "caller_replay_token": "txn-0000000000000001"
+        },
+        "clock_ms": 1000,
+        "current_binding_hex": "0104c000020ace480190909090909090909090909090909090",
+        "current_loc_hex": "20010db8000000000000000000000001",
+        "candidate_capacity": 2,
+        "proposal_capacity": 2,
+        "result_cache_capacity": 2,
+        "live_candidates": [
+          {
+            "candidate_id_hex": "01010101010101010101010101010101",
+            "state": "PROMOTED",
+            "binding_hex": "0104c000020ace480190909090909090909090909090909090"
+          },
+          {
+            "candidate_id_hex": "02020202020202020202020202020202",
+            "state": "PROVEN",
+            "binding_hex": "0104c000020bce480191919191919191919191919191919191"
+          }
+        ],
+        "proposal_cache": [
+          {
+            "candidate_id_hex": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "loc_hex": "20010db8000000000000000000000002",
+            "epoch": 2,
+            "slot": 0
+          }
+        ],
+        "result_cache": [],
+        "roles": {
+          "sender": 1,
+          "receiver": 2
+        },
+        "manager_policy_id": 16909060,
+        "manager_direction": 1,
+        "validated_bindings": 2,
+        "observed_binding_hex": "0104c000020cce480192929292929292929292929292929292"
+      }
+    },
+    {
+      "id": "mobility-failed-last-binding-continuity",
+      "kind": "negative",
+      "expected_error": "E-CANDIDATE",
+      "contract_reference": {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "3"
+      },
+      "parameter_id": "P-CANDIDATE-PROPOSAL-SLOTS",
+      "operation": "submit_update",
+      "input_hex": "52384d3101010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db800000000000000000000000120010db8000000000000000000000002000000000000000200000000000000000000000000001388007d02b88179c4ef718561972f85282a951b99720de45e69790521f8269aa737aae70f94b41f097ae282d7557784dc9069ac79f012b09b5b77b30e5b7a4b17020a",
+      "setup": {
+        "session": {
+          "session_version": 1,
+          "profile": 0,
+          "scid": 72623859790382856,
+          "caller_replay_token": "txn-0000000000000001"
+        },
+        "clock_ms": 1000,
+        "current_binding_hex": "0104c000020ace480190909090909090909090909090909090",
+        "current_loc_hex": "20010db8000000000000000000000001",
+        "candidate_capacity": 2,
+        "proposal_capacity": 2,
+        "result_cache_capacity": 2,
+        "live_candidates": [
+          {
+            "candidate_id_hex": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "state": "FAILED",
+            "binding_hex": "0104c000020bce480191919191919191919191919191919191"
+          }
+        ],
+        "proposal_cache": [],
+        "result_cache": [],
+        "roles": {
+          "sender": 1,
+          "receiver": 2
+        },
+        "manager_policy_id": 16909060,
+        "manager_direction": 1,
+        "assertions": {
+          "current_binding_unchanged": true,
+          "expected_current_binding_hex": "0104c000020ace480190909090909090909090909090909090",
+          "replay_token_unchanged": "txn-0000000000000001"
+        },
+        "same_id_retry": {
+          "candidate_id_hex": "a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "byte_identical": false,
+          "submitted_input_hex": "52384d3101010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db800000000000000000000000120010db8000000000000000000000002000000000000000200000000000000000000000000001388007d02b88179c4ef718561972f85282a951b99720de45e69790521f8269aa737aae70f94b41f097ae282d7557784dc9069ac79f012b09b5b77b30e5b7a4b17020a",
+          "prior_input_hex": "52384d3101010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db800000000000000000000000120010db8000000000000000000000003000000000000000300000000000000000000000000001388007b539214128c05595cddd0ee805cde1ba658ddd647319d086121a3962ae64ade4d18aada039c7f007187972cdb6de701a5e96b44a704401e223d8e38b21eec02"
+        }
+      }
+    },
+    {
+      "id": "mobility-replay-continuity",
+      "kind": "negative",
+      "expected_error": "E-REPLAY",
+      "contract_reference": {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "3"
+      },
+      "parameter_id": "P-CANDIDATE-PROPOSAL-SLOTS",
+      "operation": "replay_control",
+      "input_hex": "52384d3101010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db800000000000000000000000120010db8000000000000000000000002000000000000000200000000000000000000000000001388007d02b88179c4ef718561972f85282a951b99720de45e69790521f8269aa737aae70f94b41f097ae282d7557784dc9069ac79f012b09b5b77b30e5b7a4b17020a",
+      "setup": {
+        "session": {
+          "session_version": 1,
+          "profile": 0,
+          "scid": 72623859790382856,
+          "caller_replay_token": "txn-0000000000000001"
+        },
+        "clock_ms": 1000,
+        "current_binding_hex": "0104c000020ace480190909090909090909090909090909090",
+        "current_loc_hex": "20010db8000000000000000000000001",
+        "candidate_capacity": 2,
+        "proposal_capacity": 2,
+        "result_cache_capacity": 2,
+        "live_candidates": [],
+        "proposal_cache": [],
+        "result_cache": [],
+        "roles": {
+          "sender": 1,
+          "receiver": 2
+        },
+        "manager_policy_id": 16909060,
+        "manager_direction": 1,
+        "caller_replay_token": "txn-0000000000000001",
+        "accepted_replay_tokens": [
+          "txn-0000000000000001"
+        ],
+        "assertions": {
+          "replay_state_unchanged": true,
+          "reused_transaction_token": "txn-0000000000000001"
+        }
+      }
+    },
+    {
+      "id": "mobility-restart-old-control",
+      "kind": "negative",
+      "expected_error": "E-CANDIDATE",
+      "contract_reference": {
+        "document": "spec/0006-mobility-v0.1.md",
+        "section": "3"
+      },
+      "parameter_id": "P-CANDIDATE-PROPOSAL-SLOTS",
+      "operation": "submit_update",
+      "input_hex": "52384d3101010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db800000000000000000000000120010db8000000000000000000000002000000000000000200000000000000000000000000001388007d02b88179c4ef718561972f85282a951b99720de45e69790521f8269aa737aae70f94b41f097ae282d7557784dc9069ac79f012b09b5b77b30e5b7a4b17020a",
+      "setup": {
+        "session": {
+          "session_version": 1,
+          "profile": 0,
+          "scid": 72623859790382856,
+          "caller_replay_token": "txn-0000000000000001"
+        },
+        "clock_ms": 1000,
+        "current_binding_hex": "0104c000020ace480190909090909090909090909090909090",
+        "current_loc_hex": "20010db8000000000000000000000001",
+        "candidate_capacity": 2,
+        "proposal_capacity": 2,
+        "result_cache_capacity": 2,
+        "live_candidates": [],
+        "proposal_cache": [],
+        "result_cache": [],
+        "roles": {
+          "sender": 1,
+          "receiver": 2
+        },
+        "manager_policy_id": 16909060,
+        "manager_direction": 1,
+        "restarted": true,
+        "session_generation": 2,
+        "old_control_session_generation": 1,
+        "candidate_secret_erased": true,
+        "requires_fresh_handshake": true,
+        "old_control_input_hex": "52384d3101010000a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a120010db800000000000000000000000120010db8000000000000000000000002000000000000000200000000000000000000000000001388007d02b88179c4ef718561972f85282a951b99720de45e69790521f8269aa737aae70f94b41f097ae282d7557784dc9069ac79f012b09b5b77b30e5b7a4b17020a"
+      }
+    }
+  ],
+  "promotion_result": "promoted",
+  "challenge_response_token_identical": "246566f694da419a633072eff8b3fcdfd75fe9025f856439708ee5de46ec4233",
+  "binding_encoding_contract": {
+    "udp_bytes": 25,
+    "native_bytes": 11,
+    "udp_layout": "type:u8,address_family:u8,remote_ip:4,remote_port:u16,local_selector_kind:u8,local_selector:16"
+  }
+}

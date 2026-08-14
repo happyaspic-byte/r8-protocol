@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-python@0a5c61591373683505ea898e09a3ea4f39ef2b9c
+        with:
+          python-version: "3.12"
+      - name: Install pinned tshark and Q1 prerequisites
+        run: |
+          sudo apt-get update
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install --yes tshark=4.6.4-1 iproute2 arping
+          tshark --version | grep -F "TShark (Wireshark) 4.6.4"
+      - name: Install development requirements
+        run: python3 -m pip install --requirement requirements-dev.txt
+      - name: Python, vector, schema, digest, and mandatory dissector tests
+        env:
+          R8_REQUIRE_TSHARK: "1"
+        run: python3 -m unittest discover -s tests -p 'test_*.py'
+      - name: Session fuzz smoke
+        run: python3 tests/fuzz_session.py
+      - name: Mobility fuzz smoke
+        run: python3 tests/fuzz_mobility.py
+      - name: Privileged Q1 closed-lab smoke
+        run: |
+          sudo -E env PATH="$PATH" python3 bench/q1.py run --smoke --output "$RUNNER_TEMP/q1-smoke" --source-identity "git:${GITHUB_SHA}" --host-epoch ci-q1-smoke
+          sudo -E env PATH="$PATH" python3 bench/q1.py regenerate --output "$RUNNER_TEMP/q1-smoke"
+          sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/q1-smoke"
+      - name: Validate Q1 smoke rows
+        run: |
+          python3 -c 'import json, os, pathlib; output = pathlib.Path(os.environ["RUNNER_TEMP"]) / "q1-smoke"; rows = json.loads((output / "raw.json").read_text()); smoke = json.loads((output / "smoke_non_result.json").read_text()); assert len(rows) == 6 and smoke is True; assert all(row["setup_status"] == "complete" and row["failure"] is False and row["readiness_ns"] is not None and row["sent_payloads"] > 0 and row["received_payloads"] > 0 and set(row["interface_counter_by_ordinal"]) == {"pre", "post"} and row["interface_counter_by_ordinal"]["pre"] and row["interface_counter_by_ordinal"]["post"] for row in rows)'
+      - name: Q3 closed-lab smoke
+        run: |
+          python3 bench/q3.py run --smoke --output "$RUNNER_TEMP/q3-smoke" --source-identity ci-smoke-non-result --host-epoch ci-non-result
+          python3 bench/q3.py regenerate --output "$RUNNER_TEMP/q3-smoke"
+      - name: Validate Q3 smoke raw rows
+        run: |
+          python3 -c 'import json, os, pathlib; rows = [json.loads(line) for line in (pathlib.Path(os.environ["RUNNER_TEMP"]) / "q3-smoke" / "raw.jsonl").read_text().splitlines()]; assert len(rows) == 8; assert all(row["status"] == "success" and row["smoke_non_result"] is True and row["source_identity"] == "ci-smoke-non-result" and row["host_epoch"] == "ci-non-result" for row in rows)'
+
+  fuzz-smoke:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-python@0a5c61591373683505ea898e09a3ea4f39ef2b9c
+        with:
+          python-version: "3.12"
+      - name: Install development requirements
+        run: python3 -m pip install --requirement requirements-dev.txt
+      - name: Parser fuzz smoke
+        run: python3 tests/fuzz_reference.py
+
+  rust:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/cache@0c45773b623bea8c8e75f6c82b208c3cf94ea4f9
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            ~/.cargo/git/checkouts
+          key: cargo-${{ runner.os }}-${{ hashFiles('rust/Cargo.lock') }}
+          restore-keys: cargo-${{ runner.os }}-
+      - name: Rust formatting
+        working-directory: rust
+        run: cargo fmt --all --check
+      - name: Rust lint
+        working-directory: rust
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Rust workspace tests
+        working-directory: rust
+        run: cargo test --workspace --locked
+      - name: Build r8-session
+        working-directory: rust
+        run: cargo build -p r8-session --locked
+      - name: Build r8-mobility
+        working-directory: rust
+        run: cargo build -p r8-mobility --locked
+
+  interop:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-python@0a5c61591373683505ea898e09a3ea4f39ef2b9c
+        with:
+          python-version: "3.12"
+      - name: Install development requirements
+        run: python3 -m pip install --requirement requirements-dev.txt
+      - name: Build session and mobility interoperability binaries
+        working-directory: rust
+        run: cargo build -p r8-session -p r8-mobility --locked
+      - name: Python and Rust UDP interoperability
+        run: python3 tests/interop.py --build
+      - name: Python and Rust session interoperability
+        run: python3 tests/session_interop.py --build
+      - name: Python and Rust mobility interoperability
+        run: python3 tests/mobility_interop.py

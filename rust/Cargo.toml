@@ -4,6 +4,8 @@ members = [
     "crates/r8-proto",
     "crates/r8d",
     "crates/r8ping",
+    "crates/r8-session",
+    "crates/r8-mobility",
 ]
 
 [workspace.package]

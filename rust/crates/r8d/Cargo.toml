@@ -7,4 +7,5 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+libc = "0.2"
 r8-proto = { path = "../r8-proto" }

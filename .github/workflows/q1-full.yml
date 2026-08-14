@@ -1,0 +1,62 @@
+name: Q1 Full
+
+on:
+  workflow_dispatch:
+    inputs:
+      host_epoch:
+        description: Opaque host-epoch label for this closed-lab run
+        required: true
+        type: string
+      source_identity:
+        description: Optional opaque source identity; defaults to the triggering commit identity
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: q1-full-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  q1-full:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-python@0a5c61591373683505ea898e09a3ea4f39ef2b9c
+        with:
+          python-version: "3.12"
+      - name: Install Q1 prerequisites
+        run: |
+          sudo apt-get update
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install --yes iproute2 arping
+          python3 -m pip install --requirement requirements-dev.txt
+      - name: Build native r8move
+        working-directory: rust
+        run: cargo build -p r8-mobility --locked
+      - name: Q1 preflight
+        run: sudo -E env PATH="$PATH" python3 bench/q1.py preflight > "$RUNNER_TEMP/q1-preflight.json"
+      - name: Execute full closed-lab Q1 package
+        env:
+          SOURCE_IDENTITY: ${{ inputs.source_identity || format('git:{0}', github.sha) }}
+          HOST_EPOCH: ${{ inputs.host_epoch }}
+        run: |
+          sudo -E env PATH="$PATH" python3 bench/q1.py run --output "$RUNNER_TEMP/q1-full" --source-identity "$SOURCE_IDENTITY" --host-epoch "$HOST_EPOCH"
+          sudo -E env PATH="$PATH" python3 bench/q1.py regenerate --output "$RUNNER_TEMP/q1-full"
+          sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/q1-full"
+      - name: Validate full Q1 package
+        env:
+          HOST_EPOCH: ${{ inputs.host_epoch }}
+        run: |
+          python3 -c 'import hashlib, json, os, pathlib, runpy; output = pathlib.Path(os.environ["RUNNER_TEMP"]) / "q1-full"; contract = runpy.run_path("bench/q1.py"); manifest = json.loads((output / "manifest.json").read_text()); rows = json.loads((output / "raw.json").read_text()); summary = json.loads((output / "summary.json").read_text()); planned = {item["trial_id"]: item for item in contract["schedule"]()}; required = set(contract["RAW_FIELDS"]); assert len(rows) == 1320 and manifest["row_count"] == 1320 and manifest["host_epoch"] == os.environ["HOST_EPOCH"] and set(row["trial_id"] for row in rows) == set(planned); assert all(required <= set(row) and row["setup_status"] in {"complete", "failed"} for row in rows); assert all((row["mechanism"], row["arm"]) == (planned[row["trial_id"]]["mechanism"], planned[row["trial_id"]]["arm"]) for row in rows); pairs = {(item["mechanism"], item["arm"]) for item in planned.values()}; assert len(pairs) == 6 and all(sum((item["mechanism"], item["arm"]) == pair and item["exclusion_reason"] == "warmup" for item in planned.values()) == 20 and sum((item["mechanism"], item["arm"]) == pair and item["exclusion_reason"] is None for item in planned.values()) == 200 for pair in pairs); assert len({row["block_id"] for row in rows}) == 66; assert len(summary) == 6 and all({"setup_failure_count", "failure_rate", "measured_trial_count"} <= set(item) for item in summary); assert all(hashlib.sha256((output / name).read_bytes()).hexdigest() == digest for name, digest in manifest["files"].items()); assert "p99" not in json.dumps(summary).lower()'
+      - name: Upload Q1 package
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: q1-full-${{ github.run_id }}
+          path: ${{ runner.temp }}/q1-full
+          if-no-files-found: error
+          retention-days: 30

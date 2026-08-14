@@ -1,0 +1,154 @@
+{
+  "schemaVersion": 1,
+  "kind": "api-package-test-report",
+  "surface": "api-package",
+  "status": "passed",
+  "sourceId": "sha256:7d3f38cb954cad2b2bff864ac9cda66f899efe2311902076c35c2cd007d9d048",
+  "generatedAt": 1786697267.8840492,
+  "environment": {
+    "platform": "linux",
+    "machine": "x86_64",
+    "python": "3.14.4",
+    "rust": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "tshark": "TShark (Wireshark) 4.6.4."
+  },
+  "commands": [
+    {
+      "argv": [
+        "python3",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tests",
+        "-p",
+        "test_*.py"
+      ],
+      "exitCode": 0,
+      "durationMs": 72889.111,
+      "stdout": "[r8ref] dgram outbound length=57\n[drop] TRUNCATED length=1\n[echo] outbound length=56\nR8-ECHO invalid-or-timeout sequence=1\n1 sent, 0 received, 100% loss, 0 invalid\n",
+      "stderr": ".....................................................\n----------------------------------------------------------------------\nRan 53 tests in 72.363s\n\nOK\n"
+    },
+    {
+      "argv": [
+        "python3",
+        "tests/fuzz_reference.py"
+      ],
+      "exitCode": 0,
+      "durationMs": 138.524,
+      "stdout": "reference fuzz smoke OK\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "python3",
+        "tests/fuzz_session.py"
+      ],
+      "exitCode": 0,
+      "durationMs": 187.71,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "cargo",
+        "fmt",
+        "--manifest-path",
+        "rust/Cargo.toml",
+        "--all",
+        "--check"
+      ],
+      "exitCode": 0,
+      "durationMs": 245.024,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "cargo",
+        "clippy",
+        "--manifest-path",
+        "rust/Cargo.toml",
+        "--workspace",
+        "--all-targets",
+        "--locked",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exitCode": 0,
+      "durationMs": 295.062,
+      "stdout": "",
+      "stderr": "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.16s\n"
+    },
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--manifest-path",
+        "rust/Cargo.toml",
+        "--workspace",
+        "--locked"
+      ],
+      "exitCode": 0,
+      "durationMs": 1008.184,
+      "stdout": "\nrunning 4 tests\ntest tests::profile_three_session_data_allows_primary_and_redundant_pairs_only ... ok\ntest tests::ses_validation_uses_contract_precedence ... ok\ntest tests::unknown_next_header_preempts_all_other_header_conflicts ... ok\ntest tests::builders_encode_computed_zero_as_ffff_and_parsers_accept_it ... ok\n\ntest result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.43s\n\n\nrunning 3 tests\ntest budget_boundaries_and_overflow_are_fail_closed ... ok\ntest reviewed_corpus_is_accepted_or_rejected_by_exact_category ... ok\ntest deterministic_mutations_never_panic ... ok\n\ntest result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s\n\n\nrunning 1 test\ntest limiter_tests::full_source_registry_replaces_oldest_then_lexicographic_source ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 7 tests\ntest tests::bounded_receive_constant ... ok\ntest tests::expiry_cleanup_retain_only_live_bindings ... ok\ntest tests::redacted_usage ... ok\ntest tests::send_result_classifier_is_not_a_budget_alias ... ok\ntest tests::strict_hex_and_underlay ... ok\ntest tests::source_hash_is_keyed_and_peer_decision_requires_exact_binding ... ok\ntest tests::selector_is_stable_and_binding_tracks_remote_endpoint ... ok\n\ntest result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 7 tests\ntest typed_udp_binding_rejects_noncanonical_forms ... ok\ntest all_six_canonical_messages_and_protected_payloads_decode ... ok\ntest client_handshake_deadline_is_exact_and_retries_do_not_extend_it ... ok\ntest finite_negative_fixture_categories_have_concrete_operations ... ok\ntest corpus_crypto_is_byte_identical ... ok\ntest deterministic_client_server_cookie_handshake_reaches_authenticated_accept ... ok\ntest prevalidation_limiter_enforces_ratio_and_source_bounds ... ok\n\ntest result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s\n\n\nrunning 3 tests\ntest tests::injected_send_results_preserve_budget_and_short_write_contracts ... ok\ntest tests::only_emsgsize_is_a_budget_send_error ... ok\ntest tests::send_count_requires_the_complete_datagram ... ok\n\ntest result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 3 tests\ntest tests::injected_send_results_preserve_budget_and_short_write_contracts ... ok\ntest tests::only_emsgsize_is_a_budget_send_error ... ok\ntest tests::send_count_requires_the_complete_datagram ... ok\n\ntest result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n\nrunning 0 tests\n\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s\n\n",
+      "stderr": "    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.15s\n     Running unittests src/lib.rs (rust/target/debug/deps/r8_proto-d65b3d9d76a1dbca)\n     Running tests/vectors.rs (rust/target/debug/deps/vectors-f5c0b475c7189fec)\n     Running unittests src/lib.rs (rust/target/debug/deps/r8_session-d3e4611329597196)\n     Running unittests src/main.rs (rust/target/debug/deps/r8session-7bdc6231057bd3f1)\n     Running tests/vectors.rs (rust/target/debug/deps/vectors-a95b0d53370a3c77)\n     Running unittests src/main.rs (rust/target/debug/deps/r8d-5c82396fda41ab9e)\n     Running unittests src/main.rs (rust/target/debug/deps/r8ping-8069cd614d756d5f)\n   Doc-tests r8_proto\n   Doc-tests r8_session\n"
+    },
+    {
+      "argv": [
+        "python3",
+        "tests/interop.py",
+        "--build"
+      ],
+      "exitCode": 0,
+      "durationMs": 1966.806,
+      "stdout": "interop passed: bidirectional ECHO/DGRAM and malformed recovery\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "python3",
+        "tests/session_interop.py",
+        "--build"
+      ],
+      "exitCode": 0,
+      "durationMs": 17599.666,
+      "stdout": "session interop passed: bidirectional sessions and malformed recovery\n",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "python3",
+        "bench/q3.py",
+        "regenerate",
+        "--output",
+        "bench/results/q3-closed-lab-v2"
+      ],
+      "exitCode": 0,
+      "durationMs": 33404.13,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "exitCode": 0,
+      "durationMs": 8.845,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "invariants": [
+    "53 Python tests include 114-real-fixture/schema/dissector/session/Q3 contracts",
+    "Python and Rust session fuzz/unit/vector tests pass with finite errors and maintained crypto",
+    "Rust workspace fmt, clippy -D warnings, tests, and r8session build pass",
+    "M1 and M2 bidirectional Python/Rust live interop survive malformed and adversarial traffic",
+    "Q3 v2 retains 4200 raw rows, fixed warmups/trials, zero failures, and self-verifying digests",
+    "git diff --check passes"
+  ],
+  "blockers": []
+}

@@ -1,6 +1,8 @@
 # R8 아키텍처 개요
 
-> 이 문서는 R8의 설계 사상을 요약한다. 와이어 포맷은 `0001-wire-format-v0.1.md`가 유일한 기준(source of truth)이다.
+> 이 문서는 R8의 설계 사상을 요약한다. 활성 와이어 형식의 유일한 기준(source of truth)은 `0004-wire-format-v0.2.md`다. `0001-wire-format-v0.1.md`는 오프라인 historical emitted-byte evidence일 뿐 활성 파서 또는 구현 대상이 아니다.
+>
+> Gate-0 provenance is frozen in `0000-baseline.md`; packet and binding limits are in `parameters-v0.1.md`. The active contract set additionally comprises `0005-session-security-v0.1.md`, `0006-mobility-v0.1.md`, `0007-native-binding-v0.1.md`, and `0008-redundant-v0.1.md`. R8 remains private, experimental, and closed-lab only; it is not standardized IPv8.
 
 ## 1. 문제 정의
 
@@ -37,6 +39,7 @@ R8은 이 문제를 네트워크 계층에서 다루는 실험적 설계다. 선
 - 세션 수립 시에만 공개키 연산, 데이터 패킷에는 대칭 AEAD.
 - 알고리즘은 협상 대상이며 고정하지 않는다. PQ 하이브리드(예: X25519+ML-KEM)를 기본 후보로 둔다.
 - 출발지 인증이 대역폭 고갈형 DDoS를 막지는 못한다는 한계를 인정한다.
+> The frozen session-security, mobility, native-binding, and redundant contracts define implementation requirements for the unexecuted M2–M5 work. This architecture summary neither defines their wire contract nor claims their implementation or CI completion.
 
 ## 5. 이동성과 멀티패스
 
