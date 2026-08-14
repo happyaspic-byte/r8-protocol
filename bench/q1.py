@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Frozen Q1 v2 runner.  It deliberately has no unprivileged/simulated mode."""
+"""Frozen Q1 v3 runner.  It deliberately has no unprivileged/simulated mode."""
 import argparse, hashlib, ipaddress, json, os, platform, random, shutil, subprocess, sys, tempfile, time
 from pathlib import Path
 
@@ -10,7 +10,8 @@ ARMS = ("abrupt-break", "make-before-break")
 PAIR_ORDER = tuple((m, a) for m in MECHANISMS for a in ARMS)
 WARMUPS, MEASURED, BLOCK_SIZE, RESAMPLES = 20, 200, 20, 10000
 ORDER_SEED, BOOTSTRAP_SEED = "r8-q1-block-order-v2", "r8-q1-block-bootstrap-v2"
-RAW_FIELDS = ("protocol_id", "contract_version", "trial_id", "block_id", "host_epoch", "mechanism", "arm", "randomization_position", "setup_status", "exclusion_reason", "t_minus_3_ns", "activation_ns", "cutover_ns", "observation_end_ns", "readiness_ns", "censored", "failure", "sent_payloads", "received_payloads", "lost_payloads", "duplicate_payloads", "reordered_payloads", "outage_ns", "interface_counter_by_ordinal", "process_user_cpu_ns", "process_system_cpu_ns", "configuration_sha256")
+RAW_FIELDS = ("protocol_id", "contract_version", "trial_id", "block_id", "host_epoch", "mechanism", "arm", "randomization_position", "setup_status", "exclusion_reason", "error_category", "t_minus_3_ns", "activation_ns", "cutover_ns", "observation_end_ns", "readiness_ns", "censored", "failure", "sent_payloads", "received_payloads", "lost_payloads", "duplicate_payloads", "reordered_payloads", "outage_ns", "interface_counter_by_ordinal", "process_user_cpu_ns", "process_system_cpu_ns", "configuration_sha256")
+ERROR_CATEGORIES = frozenset(("namespace_create", "forwarding_config", "veth_create", "namespace_move", "bridge_create", "address_config", "link_activate", "route_config", "counter_read", "endpoint_setup", "endpoint_exit", "timeline", "authenticated_events", "worker_internal", "worker_timeout", "worker_exit", "worker_output"))
 SOURCE_FILES = (ROOT / "reference/r8ref.py", ROOT / "reference/r8session.py", ROOT / "reference/r8mobility.py", ROOT / "reference/r8move.py", ROOT / "bench/q1.py", PROTOCOL, ROOT / "tests/mobility_netns.py", ROOT / "requirements-dev.txt")
 
 def sha(path): return hashlib.sha256(Path(path).read_bytes()).hexdigest()
@@ -22,7 +23,7 @@ def contract():
     entry = next((x for x in manifest["preregistrations"] if x["protocol_id"] == "Q1"), None)
     if not entry or entry["sha256"] != sha(PROTOCOL) or entry["contract_version"] != data["contract_version"]:
         raise RuntimeError("Q1 preregistration/manifest hash mismatch")
-    if data["contract_version"] != "r8-benchmark-preregistration-v2": raise RuntimeError("wrong Q1 contract")
+    if data["contract_version"] != "r8-benchmark-preregistration-v3": raise RuntimeError("wrong Q1 contract")
     return data
 
 def schedule(smoke=False):
@@ -75,7 +76,7 @@ def summary(rows, configuration_sha256):
         for key in ("failure_rate","outage_p50_ns","outage_p95_ns"):
             values=[x[key] for x in samples if x[key] is not None]
             ci[key]=[percentile(values,.025),percentile(values,.975)] if values else None
-        answer.append({"protocol_id":"Q1","contract_version":"r8-benchmark-preregistration-v2","mechanism":mechanism,"arm":arm,"measured_trial_count":len(measured),"setup_failure_count":sum(r["setup_status"] == "failed" for r in measured),**point,"block_bootstrap_95_percent_ci":ci,"configuration_sha256":configuration_sha256})
+        answer.append({"protocol_id":"Q1","contract_version":"r8-benchmark-preregistration-v3","mechanism":mechanism,"arm":arm,"measured_trial_count":len(measured),"setup_failure_count":sum(r["setup_status"] == "failed" for r in measured),**point,"block_bootstrap_95_percent_ci":ci,"configuration_sha256":configuration_sha256})
     return answer
 
 
@@ -83,19 +84,28 @@ def invoke_worker(plan, config_sha):
     command = [sys.executable, str(ROOT / "tests/mobility_netns.py"), "worker", "--mechanism", plan["mechanism"], "--arm", plan["arm"]]
     try:
         run = subprocess.run(command, text=True, capture_output=True, timeout=15, check=False)
-        payload = json.loads(run.stdout) if run.returncode == 0 else {"setup_status":"failed", "failure":True, "error_category":"worker_exit"}
-    except subprocess.TimeoutExpired: payload = {"setup_status":"complete", "failure":True, "censored":True, "error_category":"timeout"}
-    except (json.JSONDecodeError, OSError): payload = {"setup_status":"failed", "failure":True, "error_category":"worker_output"}
+        payload = json.loads(run.stdout) if run.returncode == 0 else {"setup_status":"failed", "failure":True, "censored":True, "error_category":"worker_exit"}
+    except subprocess.TimeoutExpired:
+        payload = {"setup_status":"failed", "failure":True, "censored":True, "error_category":"worker_timeout"}
+    except (json.JSONDecodeError, OSError):
+        payload = {"setup_status":"failed", "failure":True, "censored":True, "error_category":"worker_output"}
     row = {k: None for k in RAW_FIELDS}
-    row.update({"protocol_id":"Q1", "contract_version":"r8-benchmark-preregistration-v2", "host_epoch":None,
-      "setup_status":"complete", "exclusion_reason":plan["exclusion_reason"], "censored":True, "failure":True,
+    row.update({"protocol_id":"Q1", "contract_version":"r8-benchmark-preregistration-v3", "host_epoch":None,
+      "setup_status":"complete", "exclusion_reason":plan["exclusion_reason"], "error_category":None, "censored":True, "failure":True,
       "sent_payloads":0,"received_payloads":0,"lost_payloads":0,"duplicate_payloads":0,"reordered_payloads":0,"outage_ns":None,
       "interface_counter_by_ordinal":{}, "process_user_cpu_ns":0,"process_system_cpu_ns":0,"configuration_sha256":config_sha})
     row.update({k:v for k,v in payload.items() if k in row})
     row["_command_sha256"] = payload.get("command_sha256")
-    if row["setup_status"] == "failed": row["exclusion_reason"] = "setup_failure"
     row.update({k:v for k,v in plan.items() if k in row})
-    if row["setup_status"] == "failed": row["exclusion_reason"] = "setup_failure"
+    if row["error_category"] not in ERROR_CATEGORIES and row["error_category"] is not None:
+        row["error_category"] = "worker_output"
+    if row["setup_status"] == "failed":
+        row["exclusion_reason"] = "setup_failure"
+        if row["error_category"] is None: row["error_category"] = "worker_output"
+    elif row["failure"] and row["error_category"] is None:
+        row["error_category"] = "authenticated_events"
+    elif not row["failure"]:
+        row["error_category"] = None
     return row
 
 def source_digest():

@@ -31,10 +31,26 @@ MECHANISMS = ("R8-cookie-pinned-full-handshake", "TLS-1.3-full-handshake")
 WARMUPS, MEASURED, BLOCK_SIZE, TIMEOUT = 50, 1000, 20, 5.0
 ORDER_SEED, BOOTSTRAP_SEED = "r8-q3-block-order-v1", "r8-q3-block-bootstrap-v1"
 R8_BINDING_BUDGET = 1252
+SOURCE_INPUTS = {
+    "bench/fixtures/q3-cert.pem": CERT,
+    "bench/fixtures/q3-key.pem": KEY,
+    "bench/protocols/q3.json": PROTOCOL,
+    "bench/q3.py": Path(__file__).resolve(),
+    "reference/r8session.py": ROOT / "reference/r8session.py",
+    "requirements-dev.txt": ROOT / "requirements-dev.txt",
+}
 
 
 def digest(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+def source_hashes():
+    return {path: digest(source) for path, source in sorted(SOURCE_INPUTS.items())}
+
+
+def source_identity():
+    encoded = json.dumps(source_hashes(), sort_keys=True, separators=(",", ":")).encode()
+    return "sha256:" + hashlib.sha256(encoded).hexdigest()
+
 
 
 def net():
@@ -231,13 +247,18 @@ def provenance():
     }
 
 
-def environment(source_identity):
+def environment(source_label):
+    sources = source_hashes()
     return {
-        "source_identity": source_identity,
-        "protocol_sha256": digest(PROTOCOL),
-        "fixture_certificate_sha256": digest(CERT),
+        "source_identity": source_label,
+        "implementation_source_identity": source_identity(),
+        "implementation_sources": sources,
+        "protocol_sha256": sources["bench/protocols/q3.json"],
+        "fixture_certificate_sha256": sources["bench/fixtures/q3-cert.pem"],
+        "fixture_key_sha256": sources["bench/fixtures/q3-key.pem"],
         "fixture_spki_sha256": spki_pin(),
-        "reference_sha256": digest(ROOT / "reference/r8session.py"),
+        "reference_sha256": sources["reference/r8session.py"],
+        "requirements_dev_sha256": sources["requirements-dev.txt"],
         "loopback_interface": "lo",
         "loopback_mtu": int(Path("/sys/class/net/lo/mtu").read_text()),
         "cpu_policy": "process CPU clock; no affinity or governor modification",
@@ -264,6 +285,8 @@ def manifest(args, rows, directory):
         "schema": "q3-run-manifest-v1",
         "status": "smoke-non-result" if args.smoke else "completed",
         "source_identity": args.source_identity,
+        "implementation_source_identity": source_identity(),
+        "implementation_sources": source_hashes(),
         "host_epoch": args.host_epoch,
         "group_counts": group_counts,
         "row_count": len(rows),
@@ -279,6 +302,8 @@ def manifest(args, rows, directory):
     }
 
 def run(args):
+    if not args.smoke and args.source_identity != source_identity():
+        raise ValueError("full run source identity must match current Q3 implementation")
     per_mechanism_count = 2 if args.smoke else WARMUPS + MEASURED
     destination = Path(args.output)
     if destination.exists(): raise FileExistsError("output directory already exists")
@@ -308,9 +333,24 @@ def regenerate(args):
         if manifest_data["sha256"].get(name) != digest(directory / name):
             raise ValueError("manifest hash verification failed: " + name)
     saved = json.loads((directory / "environment.json").read_text())
-    current = environment(saved["source_identity"])
-    for key in ("protocol_sha256", "fixture_certificate_sha256", "fixture_spki_sha256", "reference_sha256"):
-        if saved[key] != current[key]:
+    current_sources = source_hashes()
+    current_identity = source_identity()
+    for recorded in (saved, manifest_data):
+        if recorded.get("implementation_sources") != current_sources:
+            raise ValueError("source/toolchain hash verification failed")
+        if recorded.get("implementation_source_identity") != current_identity:
+            raise ValueError("implementation source identity verification failed")
+    if manifest_data.get("toolchain_provenance", {}).get("requirements_dev_sha256") != current_sources["requirements-dev.txt"]:
+        raise ValueError("requirements toolchain hash verification failed")
+    for key, expected in (
+        ("protocol_sha256", current_sources["bench/protocols/q3.json"]),
+        ("fixture_certificate_sha256", current_sources["bench/fixtures/q3-cert.pem"]),
+        ("fixture_key_sha256", current_sources["bench/fixtures/q3-key.pem"]),
+        ("fixture_spki_sha256", spki_pin()),
+        ("reference_sha256", current_sources["reference/r8session.py"]),
+        ("requirements_dev_sha256", current_sources["requirements-dev.txt"]),
+    ):
+        if saved.get(key) != expected:
             raise ValueError("hash verification failed: " + key)
     rows = [json.loads(line) for line in (directory / "raw.jsonl").read_text().splitlines()]
     rendered = json.dumps(summary(rows), sort_keys=True, indent=2) + "\n"

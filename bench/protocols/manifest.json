@@ -11,15 +11,23 @@
     {
       "protocol_id": "Q1",
       "path": "bench/protocols/q1.json",
-      "contract_version": "r8-benchmark-preregistration-v2",
-      "size_bytes": 11003,
-      "sha256": "9c652576d52f16f32a93436c147886d9e4ce68566d83e7a307a4f8d0e8f26f8c",
+      "contract_version": "r8-benchmark-preregistration-v3",
+      "size_bytes": 12132,
+      "sha256": "6e9be491541be2f0fa9a8f58f6c3b9978153898e8675800e26feff0c64a533f6",
       "status": "frozen-preregistered-no-results",
       "superseded": [
         {
           "contract_version": "r8-benchmark-preregistration-v1",
           "sha256": "a63788866da7a7b0cfbb8af0b07f96a0ddc041b2926d04debe8ee48e83cd5960",
           "status": "superseded-no-results"
+        },
+        {
+          "contract_version": "r8-benchmark-preregistration-v2",
+          "sha256": "9c652576d52f16f32a93436c147886d9e4ce68566d83e7a307a4f8d0e8f26f8c",
+          "status": "retained-setup-failure-only",
+          "application_observations": "none",
+          "reason": "All 1320 retained rows were setup failures before application traffic; gateway/source-policy routes preceded link activation and implementation omitted gateway/onlink semantics.",
+          "retained_package_path": "bench/results/q1-setup-failure-v2"
         }
       ]
     },

@@ -7,6 +7,12 @@ sys.path.insert(0,str(ROOT / "reference"))
 from r8session import Identity
 PAYLOAD_SIZE=64; RATE_NS=10_000_000; PORTS={"TCP-reconnect":(53101,53102),"GARP-VIP":(53103,53103),"R8":(53104,53104)}
 COUNTERS=("rx_bytes","tx_bytes","rx_packets","tx_packets","rx_dropped","tx_dropped","rx_errors","tx_errors")
+class StageError(RuntimeError):
+ def __init__(self,category): self.category=category
+def _stage(category,operation):
+ try: return operation()
+ except StageError: raise
+ except Exception as error: raise StageError(category) from error
 class Commands:
  def __init__(self,run=subprocess.run,popen=subprocess.Popen): self.run,self.popen,self.owned,self.transcript=run,popen,[],[]
  def call(self,*a,check=True): self.transcript.append(tuple(a)); return self.run(a,check=check,text=True,capture_output=True)
@@ -22,24 +28,14 @@ def _n(x,s): return x+"-"+s
 def topology(commands=None,suffix=None):
  c=commands or Commands(); s=suffix or uuid.uuid4().hex[:10]; client,server,router=(_n(x,s) for x in ("r8q1-client","r8q1-server","r8q1-router")); n={"cr0":"qc"+s[:8],"cr1":"qr"+s[:8],"si0":"qso"+s[:7],"rb0":"qbo"+s[:7],"si1":"qsn"+s[:7],"rb1":"qbn"+s[:7]}
  try:
-  for x in (client,server,router): c.netns(x)
-  c.inside(router,"sysctl","-w","net.ipv4.ip_forward=1")
-  for a,b in ((n["cr0"],n["cr1"]),(n["si0"],n["rb0"]),(n["si1"],n["rb1"])): c.call("ip","link","add",a,"type","veth","peer","name",b)
-  c.call("ip","link","set",n["cr0"],"netns",client); c.call("ip","link","set",n["cr1"],"netns",router)
-  for x in ("rb0","rb1"): c.call("ip","link","set",n[x],"netns",router)
-  for x in ("si0","si1"): c.call("ip","link","set",n[x],"netns",server)
-  c.inside(router,"ip","link","add","brq1","type","bridge")
-  for x in (n["rb0"],n["rb1"]): c.inside(router,"ip","link","set",x,"master","brq1")
-  c.inside(client,"ip","addr","add","10.88.0.2/24","dev",n["cr0"]); c.inside(router,"ip","addr","add","10.88.0.1/24","dev",n["cr1"]); c.inside(router,"ip","addr","add","10.88.1.1/24","dev","brq1")
-  c.inside(server,"ip","addr","add","10.88.1.2/24","dev",n["si0"]); c.inside(server,"ip","addr","add","10.88.1.3/24","dev",n["si1"]); c.inside(server,"ip","addr","add","10.88.1.100/32","dev",n["si0"])
-  c.inside(client,"ip","route","add","default","via","10.88.0.1"); c.inside(server,"ip","route","add","10.88.0.0/24","via","10.88.1.1")
-  c.inside(server,"ip","route","add","10.88.0.0/24","dev",n["si0"],"table","101"); c.inside(server,"ip","rule","add","from","10.88.1.2/32","table","101")
-  c.inside(server,"ip","route","add","10.88.0.0/24","dev",n["si1"],"table","102"); c.inside(server,"ip","rule","add","from","10.88.1.3/32","table","102")
-  c.inside(server,"ip","route","add","10.88.0.0/24","dev",n["si0"],"table","103"); c.inside(server,"ip","rule","add","from","10.88.1.100/32","table","103")
-  for ns,devs in ((client,(n["cr0"],)),(router,(n["cr1"],n["rb0"],n["rb1"],"brq1")),(server,(n["si0"],))):
-   c.inside(ns,"ip","link","set","lo","up")
-   for d in devs: c.inside(ns,"ip","link","set",d,"up")
-  # Candidate server interface is intentionally left administratively down until arm-defined activation.
+  _stage("namespace_create",lambda:[c.netns(x) for x in (client,server,router)])
+  _stage("forwarding_config",lambda:c.inside(router,"sysctl","-w","net.ipv4.ip_forward=1"))
+  _stage("veth_create",lambda:[c.call("ip","link","add",a,"type","veth","peer","name",b) for a,b in ((n["cr0"],n["cr1"]),(n["si0"],n["rb0"]),(n["si1"],n["rb1"]))])
+  _stage("namespace_move",lambda:([c.call("ip","link","set",n["cr0"],"netns",client),c.call("ip","link","set",n["cr1"],"netns",router)]+[c.call("ip","link","set",n[x],"netns",router) for x in ("rb0","rb1")]+[c.call("ip","link","set",n[x],"netns",server) for x in ("si0","si1")]))
+  _stage("bridge_create",lambda:(c.inside(router,"ip","link","add","brq1","type","bridge"),[c.inside(router,"ip","link","set",n[x],"master","brq1") for x in ("rb0","rb1")]))
+  _stage("address_config",lambda:([c.inside(client,"ip","addr","add","10.88.0.2/24","dev",n["cr0"]),c.inside(router,"ip","addr","add","10.88.0.1/24","dev",n["cr1"]),c.inside(router,"ip","addr","add","10.88.1.1/24","dev","brq1"),c.inside(server,"ip","addr","add","10.88.1.2/24","dev",n["si0"]),c.inside(server,"ip","addr","add","10.88.1.3/24","dev",n["si1"]),c.inside(server,"ip","addr","add","10.88.1.100/32","dev",n["si0"])]))
+  _stage("link_activate",lambda:([c.inside(ns,"ip","link","set","lo","up") for ns in (client,server,router)]+[c.inside(client,"ip","link","set",n["cr0"],"up")]+[c.inside(router,"ip","link","set",d,"up") for d in (n["cr1"],n["rb0"],n["rb1"],"brq1")]+[c.inside(server,"ip","link","set",n["si0"],"up")]))
+  _stage("route_config",lambda:([c.inside(client,"ip","route","add","default","via","10.88.0.1","dev",n["cr0"]),c.inside(server,"ip","route","add","10.88.0.0/24","via","10.88.1.1","dev",n["si0"]),c.inside(server,"ip","route","add","10.88.0.0/24","via","10.88.1.1","dev",n["si0"],"table","101"),c.inside(server,"ip","rule","add","from","10.88.1.2/32","table","101"),c.inside(server,"ip","route","add","10.88.0.0/24","via","10.88.1.1","dev",n["si1"],"onlink","table","102"),c.inside(server,"ip","rule","add","from","10.88.1.3/32","table","102"),c.inside(server,"ip","route","add","10.88.0.0/24","via","10.88.1.1","dev",n["si0"],"table","103"),c.inside(server,"ip","rule","add","from","10.88.1.100/32","table","103")]))
   return c,{"client":client,"server":server,"router":router,"names":n}
  except Exception: c.cleanup(); raise
 def counters(ns,devs,c):
@@ -48,7 +44,7 @@ def counters(ns,devs,c):
   out[str(i)]={}
   for f in COUNTERS:
    try: out[str(i)][f]=int(c.inside(ns,"cat",f"/sys/class/net/{d}/statistics/{f}").stdout.strip())
-   except Exception as error: raise RuntimeError("counter_failure") from error
+   except Exception as error: raise StageError("counter_read") from error
  return out
 def _recv_exact(s,n):
  b=b""
@@ -114,46 +110,56 @@ def actions(c,t,mech,arm,cut):
  n=t["names"]; s=t["server"]
  if arm=="make-before-break":
   while time.monotonic_ns()<cut-2_000_000_000: time.sleep(.001)
-  c.inside(s,"ip","link","set",n["si1"],"up")
+  _stage("link_activate",lambda:c.inside(s,"ip","link","set",n["si1"],"up"))
  while time.monotonic_ns()<cut: time.sleep(.0005)
- if arm=="abrupt-break": c.inside(s,"ip","link","set",n["si1"],"up")
- if mech=="TCP-reconnect": c.inside(s,"ip","link","set",n["si0"],"down")
+ if arm=="abrupt-break": _stage("link_activate",lambda:c.inside(s,"ip","link","set",n["si1"],"up"))
+ if mech=="TCP-reconnect": _stage("link_activate",lambda:c.inside(s,"ip","link","set",n["si0"],"down"))
  elif mech=="GARP-VIP":
-  c.inside(s,"ip","addr","del","10.88.1.100/32","dev",n["si0"]); c.inside(s,"ip","addr","add","10.88.1.100/32","dev",n["si1"])
-  c.inside(s,"ip","route","replace","10.88.0.0/24","dev",n["si1"],"table","103")
-  for _ in range(3): c.inside(s,"arping","-U","-I",n["si1"],"10.88.1.100"); time.sleep(.1)
+  _stage("address_config",lambda:(c.inside(s,"ip","addr","del","10.88.1.100/32","dev",n["si0"]),c.inside(s,"ip","addr","add","10.88.1.100/32","dev",n["si1"])))
+  _stage("route_config",lambda:c.inside(s,"ip","route","replace","10.88.0.0/24","via","10.88.1.1","dev",n["si1"],"onlink","table","103"))
+  _stage("link_activate",lambda:([c.inside(s,"arping","-U","-I",n["si1"],"10.88.1.100") if i == 2 else (c.inside(s,"arping","-U","-I",n["si1"],"10.88.1.100"),time.sleep(.1)) for i in range(3)]))
  else:
-  if arm=="abrupt-break": c.inside(s,"ip","link","set",n["si0"],"down")
+  if arm=="abrupt-break": _stage("link_activate",lambda:c.inside(s,"ip","link","set",n["si0"],"down"))
 def _r8(command,seed,peer,address,peer_address,new_address,bind,extra):
  return [sys.executable,str(ROOT/"reference/r8move.py"),command,"--local-seed-hex",seed.hex(),"--peer-public-key-hex",peer.hex(),"--service-context","1","--server-context-id","1","--address",address,"--peer-address",peer_address,"--new-address",new_address,"--bind",bind,"--allow-isolated-underlay","--binding-budget","1252","--timeout","12","--deterministic-scid","1","--deterministic-candidate-hex","01"*16,"--deterministic-secret-hex","02"*32]+extra
 def _r8events(fd):
  os.lseek(fd,0,os.SEEK_SET); raw=os.read(fd,1<<20)
- if len(raw)%16: raise RuntimeError("bad authenticated event")
+ if len(raw)%16: raise StageError("authenticated_events")
  return {"scheduled":list(range(800)),"sent":list(range(800)),"received":[(stamp,seq) for seq,stamp in struct.iter_unpack("!QQ",raw)]}
 def worker(mechanism,arm,commands=None):
- c=commands or Commands(); t=None; children=[]; event=None; start=cut=end=activation=None; cpu=resource.getrusage(resource.RUSAGE_SELF); child_cpu=resource.getrusage(resource.RUSAGE_CHILDREN)
+ c=commands or Commands(); t=None; children=[]; event=None; start=cut=end=activation=None; cpu=resource.getrusage(resource.RUSAGE_SELF); child_cpu=resource.getrusage(resource.RUSAGE_CHILDREN); category=None
  try:
   c,t=topology(c)
   with tempfile.TemporaryDirectory() as d:
-   start=time.monotonic_ns()+500_000_000; cut=start+3_000_000_000; end=cut+5_000_000_000; activation=cut-2_000_000_000 if arm=="make-before-break" else cut; pre=counters(t["server"],(t["names"]["si0"],t["names"]["si1"]),c)
+   start=time.monotonic_ns()+500_000_000; cut=start+3_000_000_000; end=cut+5_000_000_000; activation=cut-2_000_000_000 if arm=="make-before-break" else cut
+   if cut-start != 3_000_000_000 or end-cut != 5_000_000_000: raise StageError("timeline")
+   pre=counters(t["server"],(t["names"]["si0"],t["names"]["si1"]),c)
    if mechanism=="R8":
     stable=hashlib.sha256(b"q1-r8-stable").digest(); moving=hashlib.sha256(b"q1-r8-moving").digest(); event=os.open(str(Path(d)/"events.bin"),os.O_CREAT|os.O_RDWR,0o600)
     common=["--stream-rate","100","--stream-start-ns",str(start),"--stream-cutover-ns",str(cut),"--stream-end-ns",str(end)]
-    server=c.spawn(t["client"],*_r8("serve",stable,Identity.from_seed(moving).public,"::2","::1","::3","10.88.0.2:53104",common+["--max-sessions","1","--expected-post-move","1"]),pass_fds=(event,)); children.append(server)
-    client=c.spawn(t["server"],*_r8("connect",moving,Identity.from_seed(stable).public,"::1","::2","::3","10.88.1.2:0",common+["--peer","10.88.0.2:53104","--candidate-bind","10.88.1.3:0","--mode","abrupt" if arm=="abrupt-break" else "mbb","--events-fd",str(event)]),pass_fds=(event,)); children.append(client)
-    actions(c,t,mechanism,arm,cut); client.wait(timeout=15); server.wait(timeout=15); event_data=_r8events(event)
+    server=_stage("endpoint_setup",lambda:c.spawn(t["client"],*_r8("serve",stable,Identity.from_seed(moving).public,"::2","::1","::3","10.88.0.2:53104",common+["--max-sessions","1","--expected-post-move","1"]),pass_fds=(event,))); children.append(server)
+    client=_stage("endpoint_setup",lambda:c.spawn(t["server"],*_r8("connect",moving,Identity.from_seed(stable).public,"::1","::2","::3","10.88.1.2:0",common+["--peer","10.88.0.2:53104","--candidate-bind","10.88.1.3:0","--mode","abrupt" if arm=="abrupt-break" else "mbb","--events-fd",str(event)]),pass_fds=(event,))); children.append(client)
+    actions(c,t,mechanism,arm,cut)
+    _stage("endpoint_exit",lambda:(client.wait(timeout=15),server.wait(timeout=15)))
+    event_data=_stage("authenticated_events",lambda:_r8events(event))
    else:
-    ready,stop,events=(str(Path(d)/x) for x in ("ready","stop","events")); server=c.spawn(t["server"],sys.executable,str(Path(__file__).resolve()),"endpoint-server","--mechanism",mechanism,"--ready",ready,"--stop",stop); children.append(server)
+    ready,stop,events=(str(Path(d)/x) for x in ("ready","stop","events")); server=_stage("endpoint_setup",lambda:c.spawn(t["server"],sys.executable,str(Path(__file__).resolve()),"endpoint-server","--mechanism",mechanism,"--ready",ready,"--stop",stop)); children.append(server)
     deadline=time.monotonic()+2
     while not Path(ready).exists() and time.monotonic()<deadline: time.sleep(.01)
-    if not Path(ready).exists(): raise RuntimeError("endpoint_setup")
-    client=c.spawn(t["client"],sys.executable,str(Path(__file__).resolve()),"endpoint-client","--mechanism",mechanism,"--start",str(start),"--cut",str(cut),"--end",str(end),"--events",events); children.append(client)
-    actions(c,t,mechanism,arm,cut); client.wait(timeout=15); Path(stop).touch(); server.wait(timeout=3); event_data=json.loads(Path(events).read_text())
-   if len(event_data["scheduled"]) != 800 or event_data["scheduled"] != list(range(800)) or any(p.returncode for p in children): raise RuntimeError("endpoint_failure")
+    if not Path(ready).exists(): raise StageError("endpoint_setup")
+    client=_stage("endpoint_setup",lambda:c.spawn(t["client"],sys.executable,str(Path(__file__).resolve()),"endpoint-client","--mechanism",mechanism,"--start",str(start),"--cut",str(cut),"--end",str(end),"--events",events)); children.append(client)
+    actions(c,t,mechanism,arm,cut)
+    _stage("endpoint_exit",lambda:client.wait(timeout=15)); Path(stop).touch(); _stage("endpoint_exit",lambda:server.wait(timeout=3))
+    event_data=_stage("authenticated_events",lambda:json.loads(Path(events).read_text()))
+   if len(event_data.get("scheduled",())) != 800 or event_data["scheduled"] != list(range(800)): raise StageError("timeline")
+   if any(p.returncode != 0 for p in children): raise StageError("endpoint_exit")
    result=metrics(event_data,cut,end)
-   if not event_data["received"]: raise RuntimeError("no_live_delivery")
-   result.update({"setup_status":"complete","t_minus_3_ns":start,"activation_ns":activation,"cutover_ns":cut,"observation_end_ns":end,"interface_counter_by_ordinal":{"pre":pre,"post":counters(t["server"],(t["names"]["si0"],t["names"]["si1"]),c)}})
- except Exception: result={"setup_status":"failed","failure":True,"censored":True,"t_minus_3_ns":start,"activation_ns":activation,"cutover_ns":cut,"observation_end_ns":end,"sent_payloads":0,"received_payloads":0,"lost_payloads":800,"duplicate_payloads":0,"reordered_payloads":0,"outage_ns":None,"interface_counter_by_ordinal":{}}
+   if result["failure"]: category="authenticated_events"
+   result.update({"setup_status":"complete","error_category":category,"t_minus_3_ns":start,"activation_ns":activation,"cutover_ns":cut,"observation_end_ns":end,"interface_counter_by_ordinal":{"pre":pre,"post":counters(t["server"],(t["names"]["si0"],t["names"]["si1"]),c)}})
+ except StageError as error:
+  category=error.category; result={"setup_status":"failed","error_category":category,"failure":True,"censored":True,"t_minus_3_ns":start,"activation_ns":activation,"cutover_ns":cut,"observation_end_ns":end,"sent_payloads":0,"received_payloads":0,"lost_payloads":800,"duplicate_payloads":0,"reordered_payloads":0,"outage_ns":None,"interface_counter_by_ordinal":{}}
+ except Exception:
+  result={"setup_status":"failed","error_category":"worker_internal","failure":True,"censored":True,"t_minus_3_ns":start,"activation_ns":activation,"cutover_ns":cut,"observation_end_ns":end,"sent_payloads":0,"received_payloads":0,"lost_payloads":800,"duplicate_payloads":0,"reordered_payloads":0,"outage_ns":None,"interface_counter_by_ordinal":{}}
  finally:
   for p in children:
    if getattr(p,"poll",lambda: 0)() is None: p.kill()

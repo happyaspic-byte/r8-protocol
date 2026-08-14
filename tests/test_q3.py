@@ -24,6 +24,32 @@ class Q3Tests(unittest.TestCase):
         self.assertEqual(cert.public_key().__class__.__name__, "Ed25519PublicKey")
         actual = cert.public_key().public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
         self.assertEqual(q3.spki_pin(), hashlib.sha256(actual).hexdigest())
+    def test_source_identity_is_canonical_and_deterministic(self):
+        sources = q3.source_hashes()
+        expected = "sha256:" + hashlib.sha256(
+            json.dumps(sources, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        self.assertEqual(q3.source_identity(), expected)
+        self.assertEqual(q3.source_identity(), q3.source_identity())
+        self.assertEqual(set(sources), {
+            "bench/fixtures/q3-cert.pem",
+            "bench/fixtures/q3-key.pem",
+            "bench/protocols/q3.json",
+            "bench/q3.py",
+            "reference/r8session.py",
+            "requirements-dev.txt",
+        })
+
+    def test_full_run_rejects_wrong_source_identity(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            args = type("Args", (), {
+                "output": str(Path(temporary) / "result"),
+                "source_identity": "sha256:" + "0" * 64,
+                "host_epoch": "epoch-A",
+                "smoke": False,
+            })()
+            with self.assertRaises(ValueError):
+                q3.run(args)
 
     def test_smoke_workers_execute_real_loopback(self):
         for mechanism in q3.MECHANISMS:
@@ -126,6 +152,7 @@ class Q3Tests(unittest.TestCase):
             self.assertEqual(manifest["status"], "smoke-non-result")
             self.assertEqual(manifest["row_count"], 8)
             self.assertEqual(len(manifest["group_counts"]), 4)
+            self.assertEqual(manifest["source_identity"], "source-A")
             for group in manifest["group_counts"]:
                 self.assertEqual((group["warmups"], group["measured"], group["rows"]), (2, 0, 2))
             for name, expected in manifest["sha256"].items():
@@ -133,6 +160,8 @@ class Q3Tests(unittest.TestCase):
             environment = json.loads((destination / "environment.json").read_text())
             self.assertIn("cryptography", environment["toolchain"])
             self.assertEqual(set(environment["os"]), {"platform", "kernel", "arch"})
+            self.assertEqual(environment["implementation_source_identity"], q3.source_identity())
+            self.assertEqual(environment["implementation_sources"], q3.source_hashes())
             before_manifest = (destination / "run-manifest.json").read_bytes()
             q3.regenerate(type("Args", (), {"output": str(destination)})())
             self.assertEqual((destination / "run-manifest.json").read_bytes(), before_manifest)
@@ -141,8 +170,19 @@ class Q3Tests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 q3.regenerate(type("Args", (), {"output": str(destination)})())
             (destination / "raw.jsonl").write_text(raw)
-            environment_text = (destination / "environment.json").read_text()
-            (destination / "environment.json").write_text("{}\n")
-            with self.assertRaises(ValueError):
-                q3.regenerate(type("Args", (), {"output": str(destination)})())
-            (destination / "environment.json").write_text(environment_text)
+            environment_path = destination / "environment.json"
+            environment_text = environment_path.read_text()
+            manifest_path = destination / "run-manifest.json"
+            manifest_text = manifest_path.read_text()
+            for source in ("requirements-dev.txt", "reference/r8session.py"):
+                tampered = json.loads(environment_text)
+                tampered["implementation_sources"][source] = "0" * 64
+                environment_path.write_text(json.dumps(tampered, sort_keys=True, indent=2) + "\n")
+                changed_manifest = json.loads(manifest_text)
+                changed_manifest["sha256"]["environment.json"] = q3.digest(environment_path)
+                manifest_path.write_text(json.dumps(changed_manifest, sort_keys=True, indent=2) + "\n")
+                with self.subTest(source=source):
+                    with self.assertRaises(ValueError):
+                        q3.regenerate(type("Args", (), {"output": str(destination)})())
+                environment_path.write_text(environment_text)
+                manifest_path.write_text(manifest_text)

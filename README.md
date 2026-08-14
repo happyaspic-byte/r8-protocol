@@ -67,10 +67,11 @@ python3 tests/interop.py --build
 python3 tests/session_interop.py --build
 python3 tests/mobility_interop.py --build
 
-# Q3: smoke into a new directory, regenerate frozen evidence, or run a new full frozen series
-python3 bench/q3.py run --smoke --output /tmp/r8-q3-smoke --source-identity sha256:0cb64705a171f61f1ba36369cb6986cdb6fcb87d31cf88559b34b4b473aa2380 --host-epoch local-smoke
-python3 bench/q3.py regenerate --output bench/results/q3-closed-lab-v3
-python3 bench/q3.py run --output /tmp/r8-q3-full --source-identity sha256:0cb64705a171f61f1ba36369cb6986cdb6fcb87d31cf88559b34b4b473aa2380 --host-epoch closed-lab-v3
+# Q3: compute the current implementation identity, smoke into a new directory, regenerate frozen evidence, or run a new full frozen series
+python3 -c 'import runpy; print(runpy.run_path("bench/q3.py")["source_identity"]())'
+python3 bench/q3.py run --smoke --output /tmp/r8-q3-smoke --source-identity smoke-label --host-epoch local-smoke
+python3 bench/q3.py regenerate --output bench/results/q3-closed-lab-v4
+python3 bench/q3.py run --output /tmp/r8-q3-full --source-identity sha256:94ef91922006fa2ecac7e0d1a29e5c20f4a8daa9d1fc14e8cae1b8fc14e35aca --host-epoch closed-lab-epoch-005
 ```
 
 `spec/0001-wire-format-v0.1.md` remains offline provenance for historical emitted bytes only; it has no active parser, service, or compatibility path.
@@ -83,17 +84,21 @@ python3 bench/q3.py run --output /tmp/r8-q3-full --source-identity sha256:0cb647
 |---|---|---|
 | Gate 0 | provenance / wire-change / budget / machine-contract baseline | ✅ durably checkpointed |
 | Gate 1 / M0–M1 | strict v0.2 Python/Rust wire implementation and UDP interop | ✅ durably complete locally; hosted GitHub Actions evidence pending first push/run |
-| Gate 2 / G003 | pinned cookie-first sessions and Q3 evidence | locally checkpointed with current v3; hosted CI evidence pending first push/run |
+| Gate 2 / G003 | pinned cookie-first sessions and Q3 evidence | locally checkpointed with current v4; hosted run `31796956484` has Rust/fuzz/interop green, while repaired Python jsonschema pin and whole CI/Q1 v3 smoke await rerun |
 | M3 / Q1 | mobility implementation | implemented; verification candidate pending privileged Q1 |
 | M4–M5 / Q2 | native binding, REDUNDANT, and registered measurement protocol | ⬜ unexecuted |
 
 ### Q3 closed-lab result
 
-The canonical self-generated result package is `bench/results/q3-closed-lab-v3/run-manifest.json`, `raw.jsonl`, `environment.json`, and `summary.json`. Its run manifest verifies hashes, row counts, and toolchain. It contains 4200 rows: 50 warmups plus 1000 measured handshakes per mechanism in each cold-process and warm-process series, with 0 failures. Cold p50/p90/p99 are R8 15.829355/17.953385/20.949715 ms versus TLS 49.933337/55.917365/72.900156 ms; warm values are R8 5.406970/6.240242/7.430400 ms versus TLS 6.594438/7.382747/8.795247 ms. Retained bootstrap confidence intervals are in `summary.json`.
+The canonical self-generated result package is `bench/results/q3-closed-lab-v4/run-manifest.json`, `raw.jsonl`, `environment.json`, and `summary.json`. Its run manifest verifies hashes, row counts, toolchain, and exact implementation inputs. It contains 4200 rows: 50 warmups plus 1000 measured handshakes per mechanism in each cold-process and warm-process series, with 0 failures. Cold p50/p90/p99 are R8 16.014413/19.037471/22.987121 ms versus TLS 50.560727/58.319026/75.903778 ms; warm values are R8 6.174286/7.825702/9.911064 ms versus TLS 7.589604/9.381159/12.898597 ms. Retained bootstrap confidence intervals are in `summary.json`.
 
-The package source identity is `sha256:0cb64705a171f61f1ba36369cb6986cdb6fcb87d31cf88559b34b4b473aa2380`; raw-data SHA-256 is `3e80822319e773a2fc0d2882f364c71a40cef379235c1e68c3bf47d50a3bdd49`; host epoch is `closed-lab-epoch-003`. It uses synthetic pins and host-global loopback counters. The comparison is Python R8 versus OpenSSL TLS implementations with different process behavior; it is an isolated closed-lab observation, not an Internet or IPv8-standard claim.
+The implementation/source identity is `sha256:94ef91922006fa2ecac7e0d1a29e5c20f4a8daa9d1fc14e8cae1b8fc14e35aca`; raw-data SHA-256 is `70543cba7990a542e5241cb5876f4c671779923599cd40d4a83efac6771606bc`; host epoch is `closed-lab-epoch-005`. It uses synthetic pins and host-global loopback counters. v3 remains historical; v4 supersedes it as canonical because v4 binds the exact implementation inputs and `requirements-dev.txt`. The comparison is Python R8 versus OpenSSL TLS implementations with different process behavior; it is an isolated closed-lab observation, not an Internet or IPv8-standard claim.
 
-No Q1 result or hosted CI run is claimed here. M3 is implemented, with its verification candidate pending privileged Q1; M4–M5 and Q2 remain unexecuted.
+Hosted run `31796956484` has Rust, fuzz, and interop checks green. Its Python failure was a missing `jsonschema` pin, now repaired; whole CI and Q1 v3 smoke remain pending rerun. Q1 v2 is retained setup-only non-result evidence, Q1 v3 retry is preregistered, and no Q1 result or hosted CI completion is claimed. M3 remains a verification candidate pending privileged Q1; M4–M5 and Q2 remain unexecuted.
+
+### Q1 retained failed setup evidence
+
+Hosted run `31796070637` is retained at `bench/results/q1-setup-failure-v2/` as failed topology-setup evidence, not a Q1 result and not canonical performance evidence. No root cause is inferred beyond topology setup failure pending v3 repair verification.
 
 ## 설계 한계 (스스로 밝히는 것)
 

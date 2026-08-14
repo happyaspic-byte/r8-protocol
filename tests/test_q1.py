@@ -17,6 +17,9 @@ class Q1Tests(unittest.TestCase):
    selected=[x for x in rows if (x["mechanism"],x["arm"])==pair]; self.assertEqual((len(selected),sum(x["exclusion_reason"]=="warmup" for x in selected)),(220,20))
   self.assertEqual(rows,q1.schedule())
  def test_smoke(self): self.assertTrue(all(x["exclusion_reason"]=="smoke_non_result" for x in q1.schedule(True)))
+ def test_v2_randomization_seeds_are_frozen(self):
+  self.assertEqual((q1.ORDER_SEED,q1.BOOTSTRAP_SEED),("r8-q1-block-order-v2","r8-q1-block-bootstrap-v2"))
+  self.assertIn("worker_internal",q1.ERROR_CATEGORIES)
  def test_preflight_uid_refusal(self):
   old=q1.os.geteuid; q1.os.geteuid=lambda:1000
   try:
@@ -35,15 +38,22 @@ class Q1Tests(unittest.TestCase):
   attempts=[0]
   def failing(args,**kw):
    calls.append(tuple(args)); attempts[0]+=1
-   if attempts[0] > 1: raise subprocess.CalledProcessError(1,args)
+   if attempts[0] > 3: raise subprocess.CalledProcessError(1,args)
    return subprocess.CompletedProcess(args,0,"","")
   result=net.worker("R8","abrupt-break",net.Commands(run=failing))
-  self.assertEqual(result["setup_status"],"failed"); self.assertEqual(result["lost_payloads"],800); self.assertIn("command_sha256",result)
+  self.assertEqual(result["setup_status"],"failed"); self.assertEqual(result["error_category"],"forwarding_config"); self.assertEqual(result["lost_payloads"],800); self.assertIn("command_sha256",result)
   self.assertTrue(any(a[:3]==("ip","netns","add") for a in calls))
   self.assertTrue(any(a[:3]==("ip","netns","del") for a in calls))
   class Bad:
    def inside(self,*args): return subprocess.CompletedProcess(args,0,"not-a-number","")
   with self.assertRaises(RuntimeError): net.counters("server",("dev",),Bad())
+ def test_unexpected_worker_error_maps_to_worker_internal(self):
+  old=net.topology
+  net.topology=lambda commands=None: (_ for _ in ()).throw(ValueError())
+  try:
+   result=net.worker("R8","abrupt-break")
+  finally: net.topology=old
+  self.assertEqual(result["error_category"],"worker_internal")
  def test_topology_ownership_routes_and_candidate_down(self):
   calls=[]
   def run(args,**kw): calls.append(tuple(args)); return subprocess.CompletedProcess(args,0,"0\n","")
@@ -51,10 +61,15 @@ class Q1Tests(unittest.TestCase):
   adds=[x[3] for x in calls if x[:3]==("ip","netns","add")]; dels=[x[3] for x in calls if x[:3]==("ip","netns","del")]
   self.assertEqual(dels,list(reversed(adds))); self.assertFalse(any("flush" in x for a in calls for x in a if isinstance(x,str)))
   self.assertFalse(any(a[-2:]==(t["names"]["si1"],"up") for a in calls))
+  routes=[i for i,a in enumerate(calls) if "route" in a]
+  links=[i for i,a in enumerate(calls) if a[-2:] in {(t["names"]["cr0"],"up"),(t["names"]["si0"],"up")} or "brq1" in a and a[-1:] == ("up",)]
+  self.assertLess(max(links),min(routes))
   policy=[a for a in calls if "table" in a]
   self.assertEqual(sum("101" in a for a in policy),2)
   self.assertEqual(sum("102" in a for a in policy),2)
   self.assertEqual(sum("103" in a for a in policy),2)
+  candidate=next(a for a in policy if "102" in a and "route" in a)
+  self.assertEqual(candidate[candidate.index("via")+1],"10.88.1.1"); self.assertIn("onlink",candidate)
  def test_only_garp_replaces_vip_policy_route(self):
   calls=[]
   def run(args,**kw): calls.append(tuple(args)); return subprocess.CompletedProcess(args,0,"","")
@@ -65,10 +80,20 @@ class Q1Tests(unittest.TestCase):
    net.actions(c,topology,"GARP-VIP","abrupt-break",10)
    garp_replaces=[a for a in calls if "route" in a and "replace" in a]
    self.assertEqual(len(garp_replaces),1)
-   self.assertIn("103",garp_replaces[0])
+   self.assertIn("103",garp_replaces[0]); self.assertIn("onlink",garp_replaces[0]); self.assertIn("via",garp_replaces[0])
    calls.clear(); net.actions(c,topology,"R8","abrupt-break",10); net.actions(c,topology,"TCP-reconnect","abrupt-break",10)
    self.assertFalse(any("route" in a and "replace" in a for a in calls))
   finally: net.time.monotonic_ns,net.time.sleep=old_clock,old_sleep
+ def test_garp_emits_three_spaced_unsolicited_announcements(self):
+  calls=[]; sleeps=[]
+  def run(args,**kw): calls.append(tuple(args)); return subprocess.CompletedProcess(args,0,"","")
+  c=net.Commands(run=run); topology={"server":"s","names":{"si0":"old","si1":"new"}}
+  old_clock,old_sleep=net.time.monotonic_ns,net.time.sleep
+  net.time.monotonic_ns=lambda:10; net.time.sleep=lambda delay:sleeps.append(delay)
+  try: net.actions(c,topology,"GARP-VIP","abrupt-break",10)
+  finally: net.time.monotonic_ns,net.time.sleep=old_clock,old_sleep
+  self.assertEqual(len([a for a in calls if "arping" in a and "-U" in a]),3)
+  self.assertEqual(sleeps,[.1,.1])
  def test_endpoint_dispatch(self):
   calls=[]
   class Proc:
@@ -110,7 +135,7 @@ class Q1Tests(unittest.TestCase):
  def test_smoke_package_and_regeneration_bindings(self):
   original_preflight,original_invoke=q1.preflight,q1.invoke_worker
   def complete(plan,config):
-   return {"protocol_id":"Q1","contract_version":"r8-benchmark-preregistration-v2","trial_id":plan["trial_id"],"block_id":plan["block_id"],"mechanism":plan["mechanism"],"arm":plan["arm"],"setup_status":"complete","t_minus_3_ns":1,"activation_ns":2,"cutover_ns":3,"observation_end_ns":4,"readiness_ns":4,"censored":False,"failure":False,"sent_payloads":800,"received_payloads":800,"lost_payloads":0,"duplicate_payloads":0,"reordered_payloads":0,"outage_ns":1,"interface_counter_by_ordinal":{"pre":{},"post":{}},"process_user_cpu_ns":1,"process_system_cpu_ns":1,"configuration_sha256":config,"_command_sha256":"a"*64}
+   return {"protocol_id":"Q1","contract_version":"r8-benchmark-preregistration-v3","trial_id":plan["trial_id"],"block_id":plan["block_id"],"mechanism":plan["mechanism"],"arm":plan["arm"],"setup_status":"complete","error_category":None,"t_minus_3_ns":1,"activation_ns":2,"cutover_ns":3,"observation_end_ns":4,"readiness_ns":4,"censored":False,"failure":False,"sent_payloads":800,"received_payloads":800,"lost_payloads":0,"duplicate_payloads":0,"reordered_payloads":0,"outage_ns":1,"interface_counter_by_ordinal":{"pre":{},"post":{}},"process_user_cpu_ns":1,"process_system_cpu_ns":1,"configuration_sha256":config,"_command_sha256":"a"*64}
   q1.preflight=lambda:{"capabilities":["CAP_NET_ADMIN","CAP_NET_RAW"],"required_binaries":["ip","tc","arping"]}
   q1.invoke_worker=complete
   try:
@@ -132,4 +157,27 @@ class Q1Tests(unittest.TestCase):
      (damaged/component).write_text("{}")
      with self.assertRaises(RuntimeError): q1.regenerate(damaged)
   finally: q1.preflight,q1.invoke_worker=original_preflight,original_invoke
+ def test_retained_v2_setup_failure_package_is_not_a_v3_result(self):
+  package=ROOT/"bench/results/q1-setup-failure-v2"
+  required={"environment.json","topology.json","raw.json","summary.json","smoke_non_result.json","preflight.json","manifest.json"}
+  self.assertEqual({path.name for path in package.iterdir()},required)
+  manifest=json.loads((package/"manifest.json").read_text())
+  self.assertEqual(manifest["row_count"],1320)
+  self.assertTrue(manifest["source_identity"].startswith("git:c8e"))
+  self.assertEqual(manifest["host_epoch"],"closed-lab-epoch-004")
+  for name,digest in manifest["files"].items(): self.assertEqual(q1.sha(package/name),digest)
+  raw=json.loads((package/"raw.json").read_text())
+  self.assertEqual(len(raw),1320)
+  self.assertTrue(all(row["contract_version"]=="r8-benchmark-preregistration-v2" and row["setup_status"]=="failed" for row in raw))
+  summary=json.loads((package/"summary.json").read_text())
+  self.assertEqual(len(summary),6)
+  for entry in summary:
+   self.assertEqual(entry["contract_version"],"r8-benchmark-preregistration-v2")
+   self.assertEqual(entry["setup_failure_count"],200)
+   self.assertIsNone(entry["failure_rate"])
+   self.assertIsNone(entry["outage_p50_ns"])
+   self.assertIsNone(entry["outage_p95_ns"])
+   self.assertTrue(all(value is None for value in entry["block_bootstrap_95_percent_ci"].values()))
+  self.assertFalse(json.loads((package/"smoke_non_result.json").read_text()))
+  self.assertNotEqual(q1.contract()["contract_version"],raw[0]["contract_version"])
 if __name__=="__main__": unittest.main()

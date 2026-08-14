@@ -43,7 +43,15 @@ jobs:
           sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/q1-smoke"
       - name: Validate Q1 smoke rows
         run: |
-          python3 -c 'import json, os, pathlib; output = pathlib.Path(os.environ["RUNNER_TEMP"]) / "q1-smoke"; rows = json.loads((output / "raw.json").read_text()); smoke = json.loads((output / "smoke_non_result.json").read_text()); assert len(rows) == 6 and smoke is True; assert all(row["setup_status"] == "complete" and row["failure"] is False and row["readiness_ns"] is not None and row["sent_payloads"] > 0 and row["received_payloads"] > 0 and set(row["interface_counter_by_ordinal"]) == {"pre", "post"} and row["interface_counter_by_ordinal"]["pre"] and row["interface_counter_by_ordinal"]["post"] for row in rows)'
+          python3 -c 'import json, os, pathlib; output = pathlib.Path(os.environ["RUNNER_TEMP"]) / "q1-smoke"; rows = json.loads((output / "raw.json").read_text()); smoke = json.loads((output / "smoke_non_result.json").read_text()); assert len(rows) == 6 and smoke is True; assert all(row["setup_status"] == "complete" and row["error_category"] is None and row["failure"] is False and row["readiness_ns"] is not None and row["sent_payloads"] == 800 and row["received_payloads"] > 0 and set(row["interface_counter_by_ordinal"]) == {"pre", "post"} and row["interface_counter_by_ordinal"]["pre"] and row["interface_counter_by_ordinal"]["post"] for row in rows)'
+      - name: Upload Q1 smoke package
+        if: always()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        with:
+          name: q1-smoke-${{ github.run_id }}
+          path: ${{ runner.temp }}/q1-smoke
+          if-no-files-found: warn
+          retention-days: 7
       - name: Q3 closed-lab smoke
         run: |
           python3 bench/q3.py run --smoke --output "$RUNNER_TEMP/q3-smoke" --source-identity ci-smoke-non-result --host-epoch ci-non-result

@@ -1,12 +1,16 @@
 {
-  "contract_version": "r8-benchmark-preregistration-v2",
+  "contract_version": "r8-benchmark-preregistration-v3",
   "protocol_id": "Q1",
   "status": "preregistered-no-results",
   "scope": "private-experimental-closed-lab",
   "additional_properties": false,
-  "pre_observation_repair": {
-    "supersedes_sha256": "a63788866da7a7b0cfbb8af0b07f96a0ddc041b2926d04debe8ee48e83cd5960",
-    "reason": "Q1 v1 contained no observations and left topology, timing, actions, collection, and analysis inputs under-specified; v2 freezes them before trials."
+  "supersession": {
+    "supersedes_contract_version": "r8-benchmark-preregistration-v2",
+    "supersedes_sha256": "9c652576d52f16f32a93436c147886d9e4ce68566d83e7a307a4f8d0e8f26f8c",
+    "status": "retained-setup-failure-only",
+    "application_observations": "none",
+    "reason": "Hosted run 31796070637 retained all 1320 rows, each a setup failure before application traffic, because gateway and source-policy routes were installed before link activation and gateway/onlink semantics were omitted in implementation.",
+    "retained_package_path": "bench/results/q1-setup-failure-v2"
   },
   "normative_references": {
     "sections": [
@@ -29,7 +33,8 @@
   "topology": {
     "network": "IPv4-only isolated Linux namespaces on one host. Base namespace names are r8q1-client, r8q1-server, and r8q1-router; an operational random suffix is permitted only after each base name.",
     "links_and_addresses": "client/router veth is 10.88.0.2/24 on client and 10.88.0.1/24 on router. Router server-side bridge is 10.88.1.1/24. Server old and candidate interfaces are separate veths with 10.88.1.2/24 and 10.88.1.3/24 respectively. VIP is 10.88.1.100/32.",
-    "routing": "client has static default route via 10.88.0.1; server source-policy rules and routes are installed before trials: source 10.88.1.2/32 to 10.88.0.0/24 uses table 101 via 10.88.1.1 dev old, and source 10.88.1.3/32 to 10.88.0.0/24 uses table 102 via 10.88.1.1 dev candidate. VIP source uses table 103, initially routing 10.88.0.0/24 via 10.88.1.1 dev old. These rules make bound TCP and R8 carriers use their actual interface while both are up. IPv4 forwarding is enabled only inside r8q1-router; no namespace has an outside route; no dynamic routing is permitted.",
+    "routing": "Client has a static default route via 10.88.0.1. Server main route to 10.88.0.0/24 and source-policy table 101 and table 103 routes to 10.88.0.0/24 go via 10.88.1.1 dev old. Source 10.88.1.2/32 uses table 101. Source 10.88.1.3/32 uses table 102 via 10.88.1.1 dev candidate onlink. VIP source uses table 103, initially via 10.88.1.1 dev old. These rules make bound TCP and R8 carriers use their actual interface while both are up. IPv4 forwarding is enabled only inside r8q1-router; no namespace has an outside route; no dynamic routing is permitted.",
+    "setup_order": ["namespace setup", "veth setup", "bridge setup", "address setup", "bring loopbacks up", "bring client link up", "bring router links and bridge up", "bring old server link up", "leave candidate server link down", "install routes and source-policy rules"],
     "dns": "disabled; every endpoint is a numeric IPv4 address",
     "privileges": "runner MUST start as root and retain CAP_NET_ADMIN and CAP_NET_RAW; missing privilege is setup failure and the run fails, never skips",
     "neighbor_cache": "no neighbor-cache flush is permitted",
@@ -67,14 +72,14 @@
       "advance_notice": "none for every mechanism",
       "R8": "old and candidate carriers use the fixed server addresses and UDP port 53104; one process and session retain state. At T, bring the candidate interface up and administratively bring the old interface down before one authenticated LOC_UPDATE and the sole candidate probe/challenge/response proof; no fallback is permitted.",
       "TCP-reconnect": "the established stream initially uses numeric 10.88.1.2:53101. At T, make the new listener and interface usable, administratively bring the old server interface down, and reconnect every 10 ms without DNS to the preconfigured numeric target 10.88.1.3:53102.",
-      "GARP-VIP": "the stream initially connects to 10.88.1.100:53103 on the old interface. At T, make the new interface usable and atomically remove then add the VIP; as part of that atomic move, execute exactly one `ip route replace table 103 10.88.0.0/24 via 10.88.1.1 dev candidate`, then send exactly three `arping -U` replies 100 ms apart. The listener is wildcard-bound within the isolated server namespace; no neighbor flush is permitted. No R8 or TCP route changes occur at cutover."
+      "GARP-VIP": "the stream initially connects to 10.88.1.100:53103 on the old interface. At T, make the new interface usable and atomically remove then add the VIP; as part of that atomic move, execute exactly one `ip route replace table 103 10.88.0.0/24 via 10.88.1.1 dev candidate onlink`, then send exactly three `arping -U` replies 100 ms apart. The listener is wildcard-bound within the isolated server namespace; no neighbor flush is permitted. No R8 or TCP route changes occur at cutover."
     },
     "make-before-break": {
       "advance_notice": "T-2 seconds for every mechanism",
       "activation": "at T-2 seconds activate the new carrier, listener/interface, or VIP interface respectively; do not cut over traffic",
       "R8": "old and candidate carriers use the fixed server addresses and UDP port 53104; one process and session retain state. Bring the candidate interface up at T-2 seconds; at or after T perform one authenticated LOC_UPDATE and the sole candidate proof, retain the old carrier until proof, then make it grace-only and administratively down after grace. No fallback is permitted.",
       "TCP-reconnect": "the established stream initially uses numeric 10.88.1.2:53101. At T-2 seconds make the new listener and interface usable; at T administratively bring the old server interface down and reconnect every 10 ms without DNS to numeric 10.88.1.3:53102.",
-      "GARP-VIP": "the stream initially connects to 10.88.1.100:53103 on the old interface. Bring the new interface up at T-2 seconds; at T atomically remove then add the VIP and, as part of that atomic move, execute exactly one `ip route replace table 103 10.88.0.0/24 via 10.88.1.1 dev candidate`, then send exactly three `arping -U` replies 100 ms apart. The listener is wildcard-bound within the isolated server namespace; no neighbor flush is permitted. No R8 or TCP route changes occur at cutover."
+      "GARP-VIP": "the stream initially connects to 10.88.1.100:53103 on the old interface. Bring the new interface up at T-2 seconds; at T atomically remove then add the VIP and, as part of that atomic move, execute exactly one `ip route replace table 103 10.88.0.0/24 via 10.88.1.1 dev candidate onlink`, then send exactly three `arping -U` replies 100 ms apart. The listener is wildcard-bound within the isolated server namespace; no neighbor flush is permitted. No R8 or TCP route changes occur at cutover."
     }
   },
   "equalization": {
@@ -93,7 +98,14 @@
     "interface_counters": "record pre-trial and T+5-second per-interface rx_bytes, tx_bytes, rx_packets, tx_packets, rx_dropped, tx_dropped, rx_errors, and tx_errors; output identifies interfaces only by ordinal and count",
     "process_cpu": "record process user_cpu_ns and system_cpu_ns over T-3 seconds through T+5 seconds",
     "identifier_redaction": "results and telemetry record configuration_sha256 only and MUST NOT record raw IP address, port, argv, LOC, namespace name, interface name, veth name, VIP, route, or command.",
-    "raw_row_fields": ["protocol_id", "contract_version", "trial_id", "block_id", "host_epoch", "mechanism", "arm", "randomization_position", "setup_status", "exclusion_reason", "t_minus_3_ns", "activation_ns", "cutover_ns", "observation_end_ns", "readiness_ns", "censored", "failure", "sent_payloads", "received_payloads", "lost_payloads", "duplicate_payloads", "reordered_payloads", "outage_ns", "interface_counter_by_ordinal", "process_user_cpu_ns", "process_system_cpu_ns", "configuration_sha256"],
+    "raw_row_fields": ["protocol_id", "contract_version", "trial_id", "block_id", "host_epoch", "mechanism", "arm", "randomization_position", "setup_status", "error_category", "exclusion_reason", "t_minus_3_ns", "activation_ns", "cutover_ns", "observation_end_ns", "readiness_ns", "censored", "failure", "sent_payloads", "received_payloads", "lost_payloads", "duplicate_payloads", "reordered_payloads", "outage_ns", "interface_counter_by_ordinal", "process_user_cpu_ns", "process_system_cpu_ns", "configuration_sha256"],
+    "error_category": {
+      "required": true,
+      "success_value": null,
+      "setup_failure_value": "the actual setup-stage category",
+      "outcome_failure_value": "the applicable finite redacted category",
+      "enum": ["namespace_create", "forwarding_config", "veth_create", "namespace_move", "bridge_create", "address_config", "link_activate", "route_config", "counter_read", "endpoint_setup", "endpoint_exit", "timeline", "authenticated_events", "worker_timeout", "worker_exit", "worker_output", "worker_internal"]
+    },
     "environment_fields": ["kernel_release", "distribution", "cpu_model", "cpu_governor", "nic_driver", "topology_sha256", "command_sha256", "binary_sha256", "configuration_sha256", "capabilities", "clock_source", "namespace_count", "interface_count", "non_loopback_interface_count", "veth_pair_count"],
     "topology_fields": ["address_family", "topology_sha256", "command_sha256", "configuration_sha256", "namespace_count", "interface_count", "non_loopback_interface_count", "veth_pair_count", "dns_disabled", "neighbor_flush_prohibited"],
     "summary_fields": ["protocol_id", "contract_version", "mechanism", "arm", "measured_trial_count", "setup_failure_count", "failure_rate", "outage_p50_ns", "outage_p95_ns", "block_bootstrap_95_percent_ci", "configuration_sha256"]
