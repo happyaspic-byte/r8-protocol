@@ -70,6 +70,13 @@ def binding_outcome(case: dict, carrier: str) -> str | None:
     length = len(bytes.fromhex(case["packet_hex"]))
     limit = {"udp4": 1252, "udp6": 1232, "native": 1280}[carrier]
     return "accept" if length <= limit else "BINDING_BUDGET"
+def tshark_diagnostic(result: subprocess.CompletedProcess[str]) -> str:
+    diagnostic = f"tshark exited {result.returncode}; stderr={result.stderr[-4096:]!r}"
+    if len(result.stdout) <= 4096:
+        diagnostic += f"; stdout={result.stdout!r}"
+    return diagnostic
+
+
 
 
 class TsharkCorpusTests(unittest.TestCase):
@@ -82,7 +89,9 @@ class TsharkCorpusTests(unittest.TestCase):
             if required:
                 raise AssertionError("R8_REQUIRE_TSHARK=1 but tshark is unavailable")
             raise unittest.SkipTest(json.dumps({"status": "skipped", "reason": "tshark unavailable"}))
-        version = subprocess.run([cls.tshark, "--version"], check=True, capture_output=True, text=True).stdout
+        version_result = subprocess.run([cls.tshark, "--version"], check=False, capture_output=True, text=True)
+        if version_result.returncode != 0: raise AssertionError(tshark_diagnostic(version_result))
+        version = version_result.stdout
         if TSHARK_VERSION not in version:
             if required:
                 raise AssertionError(f"R8_REQUIRE_TSHARK=1 requires {TSHARK_VERSION}; got {version.splitlines()[0]!r}")
@@ -91,8 +100,11 @@ class TsharkCorpusTests(unittest.TestCase):
     def run_vector(self, capture: Path) -> list[str]:
         result = subprocess.run(
             [self.tshark, "-n", "-o", "udp.check_checksum:TRUE", "-X", f"lua_script:{LUA}", "-r", str(capture), "-T", "fields", "-E", "occurrence=f", "-E", "separator=\t", "-e", "r8.version", "-e", "r8.nh", "-e", "r8.ctl.type", "-e", "r8.dgram.length", "-e", "r8.ses.type", "-e", "r8.error", "-e", "udp.checksum.status"],
-            check=True, capture_output=True, text=True,
+            check=False,
+            capture_output=True,
+            text=True,
         )
+        self.assertEqual(result.returncode, 0, tshark_diagnostic(result))
         return result.stdout.rstrip("\n").split("\t") if result.stdout else []
 
     def assert_accept(self, payload: bytes, fields: list[str], carrier: str) -> None:

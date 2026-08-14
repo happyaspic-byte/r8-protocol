@@ -25,8 +25,8 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 240
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-      - uses: actions/setup-python@0a5c61591373683505ea898e09a3ea4f39ef2b9c
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.12"
       - name: Install Q1 prerequisites
@@ -54,7 +54,7 @@ jobs:
           python3 -c 'import hashlib, json, os, pathlib, runpy; output = pathlib.Path(os.environ["RUNNER_TEMP"]) / "q1-full"; contract = runpy.run_path("bench/q1.py"); manifest = json.loads((output / "manifest.json").read_text()); rows = json.loads((output / "raw.json").read_text()); summary = json.loads((output / "summary.json").read_text()); planned = {item["trial_id"]: item for item in contract["schedule"]()}; required = set(contract["RAW_FIELDS"]); assert len(rows) == 1320 and manifest["row_count"] == 1320 and manifest["host_epoch"] == os.environ["HOST_EPOCH"] and set(row["trial_id"] for row in rows) == set(planned); assert all(required <= set(row) and row["setup_status"] in {"complete", "failed"} for row in rows); assert all((row["mechanism"], row["arm"]) == (planned[row["trial_id"]]["mechanism"], planned[row["trial_id"]]["arm"]) for row in rows); pairs = {(item["mechanism"], item["arm"]) for item in planned.values()}; assert len(pairs) == 6 and all(sum((item["mechanism"], item["arm"]) == pair and item["exclusion_reason"] == "warmup" for item in planned.values()) == 20 and sum((item["mechanism"], item["arm"]) == pair and item["exclusion_reason"] is None for item in planned.values()) == 200 for pair in pairs); assert len({row["block_id"] for row in rows}) == 66; assert len(summary) == 6 and all({"setup_failure_count", "failure_rate", "measured_trial_count"} <= set(item) for item in summary); assert all(hashlib.sha256((output / name).read_bytes()).hexdigest() == digest for name, digest in manifest["files"].items()); assert "p99" not in json.dumps(summary).lower()'
       - name: Upload Q1 package
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
         with:
           name: q1-full-${{ github.run_id }}
           path: ${{ runner.temp }}/q1-full
