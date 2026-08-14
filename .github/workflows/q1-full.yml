@@ -44,7 +44,10 @@ jobs:
           SOURCE_IDENTITY="$(python3 bench/q1.py source-identity)"
           sudo -E env PATH="$PATH" GITHUB_SHA="$GITHUB_SHA" Q1_CLEAN_TREE=true python3 bench/q1.py run --output "$RUNNER_TEMP/q1-full" --source-identity "$SOURCE_IDENTITY" --git-commit "$GITHUB_SHA" --host-epoch "$HOST_EPOCH"
           sudo -E env PATH="$PATH" GITHUB_SHA="$GITHUB_SHA" Q1_CLEAN_TREE=true python3 bench/q1.py regenerate --output "$RUNNER_TEMP/q1-full"
-          sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/q1-full"
+      - name: Restore full Q1 package ownership
+        if: always()
+        run: |
+          if [ -e "$RUNNER_TEMP/q1-full" ]; then sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/q1-full"; sudo chmod -R u+rwX "$RUNNER_TEMP/q1-full"; fi
       - name: Validate full Q1 package
         env:
           HOST_EPOCH: ${{ inputs.host_epoch }}

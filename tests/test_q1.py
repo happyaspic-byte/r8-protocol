@@ -201,6 +201,14 @@ class Q1V4Tests(unittest.TestCase):
    with tempfile.TemporaryDirectory() as directory:
     with self.assertRaisesRegex(RuntimeError,"git commit required"): q1.package(Path(directory)/"out","bound","closed-lab-epoch-123",git_commit="F"*40)
   finally: q1.source_identity=original
+ def test_regenerate_preserves_valid_ineligible_empty_summary(self):
+  source=(ROOT/"bench/q1.py").read_text()
+  self.assertIn('rebuilt=summary(raw,expected_config) if not smoke and eligible else []',source)
+  self.assertIn('if published is not eligible: raise RuntimeError("publication binding mismatch")',source)
+ def test_workflow_restores_q1_ownership_before_validation(self):
+  for name,package,validation in (("ci.yml","q1-smoke","Validate Q1 smoke rows"),("q1-full.yml","q1-full","Validate full Q1 package")):
+   workflow=(ROOT/".github/workflows"/name).read_text()
+   self.assertLess(workflow.index("Restore"),workflow.index(validation)); self.assertIn(f'[ -e "$RUNNER_TEMP/{package}" ]',workflow); self.assertIn("chmod -R u+rwX",workflow)
  def test_smoke_package_rejects_source_identity_mismatch(self):
   with tempfile.TemporaryDirectory() as directory:
    with self.assertRaisesRegex(RuntimeError,"source identity mismatch"):
