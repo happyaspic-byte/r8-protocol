@@ -1,5 +1,6 @@
 """Execute shared wire vectors through the public R8 Wireshark dissector."""
 
+import hashlib
 import json
 import os
 import shutil
@@ -98,8 +99,16 @@ class TsharkCorpusTests(unittest.TestCase):
             raise unittest.SkipTest(json.dumps({"status": "skipped", "reason": "tshark version mismatch", "found": version.splitlines()[0]}))
 
     def run_vector(self, capture: Path) -> list[str]:
+        source = LUA.read_bytes()
+        lua_path = capture.parent / f"r8-{hashlib.sha256(source).hexdigest()}.lua"
+        if lua_path.exists():
+            self.assertEqual(lua_path.read_bytes(), source)
+        else:
+            lua_path.write_bytes(source)
+        lua_path.chmod(0o644)
+        self.assertEqual(hashlib.sha256(lua_path.read_bytes()).digest(), hashlib.sha256(source).digest())
         result = subprocess.run(
-            [self.tshark, "-n", "-o", "udp.check_checksum:TRUE", "-X", f"lua_script:{LUA}", "-r", str(capture), "-T", "fields", "-E", "occurrence=f", "-E", "separator=\t", "-e", "r8.version", "-e", "r8.nh", "-e", "r8.ctl.type", "-e", "r8.dgram.length", "-e", "r8.ses.type", "-e", "r8.error", "-e", "udp.checksum.status"],
+            [self.tshark, "-n", "-o", "udp.check_checksum:TRUE", "-X", f"lua_script:{lua_path}", "-r", str(capture), "-T", "fields", "-E", "occurrence=f", "-E", "separator=\t", "-e", "r8.version", "-e", "r8.nh", "-e", "r8.ctl.type", "-e", "r8.dgram.length", "-e", "r8.ses.type", "-e", "r8.error", "-e", "udp.checksum.status"],
             check=False,
             capture_output=True,
             text=True,
