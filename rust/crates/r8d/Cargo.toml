@@ -1,0 +1,10 @@
+[package]
+name = "r8d"
+description = "R8 daemon (udp-binding echo/dgram responder) — lab prototype"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+r8-proto = { path = "../r8-proto" }

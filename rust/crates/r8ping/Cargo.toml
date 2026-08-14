@@ -1,0 +1,10 @@
+[package]
+name = "r8ping"
+description = "R8 echo client (udp-binding) — lab prototype"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+r8-proto = { path = "../r8-proto" }
