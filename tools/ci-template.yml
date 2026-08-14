@@ -1,0 +1,33 @@
+# GitHub Actions CI template for r8-protocol.
+#
+# NOTE: the automation token used to create this repo cannot write under
+# .github/workflows/ (missing Actions/workflow permission), so this file
+# lives here as a template. To enable CI, copy it to
+# .github/workflows/ci.yml once from the GitHub web UI (Add file > Create
+# new file) or grant the integration Actions:write and re-push.
+
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: build + test workspace
+        working-directory: rust
+        run: cargo test --workspace
+
+  reference:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: r8ref selftest
+        run: python3 reference/r8ref.py selftest
