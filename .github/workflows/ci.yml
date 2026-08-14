@@ -23,7 +23,7 @@ jobs:
       - name: Install pinned tshark and Q1 prerequisites
         run: |
           sudo apt-get update
-          sudo env DEBIAN_FRONTEND=noninteractive apt-get install --yes tshark=4.6.4-1 iproute2 arping
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install --yes tshark=4.6.4-1 iproute2 arping ethtool
           tshark --version | grep -F "TShark (Wireshark) 4.6.4"
           tshark -G fields >/dev/null
       - name: Install development requirements
@@ -38,12 +38,13 @@ jobs:
         run: python3 tests/fuzz_mobility.py
       - name: Privileged Q1 closed-lab smoke
         run: |
-          sudo -E env PATH="$PATH" python3 bench/q1.py run --smoke --output "$RUNNER_TEMP/q1-smoke" --source-identity "git:${GITHUB_SHA}" --host-epoch ci-q1-smoke
-          sudo -E env PATH="$PATH" python3 bench/q1.py regenerate --output "$RUNNER_TEMP/q1-smoke"
+          SOURCE_IDENTITY="$(python3 bench/q1.py source-identity)"
+          sudo -E env PATH="$PATH" GITHUB_SHA="$GITHUB_SHA" python3 bench/q1.py run --smoke --output "$RUNNER_TEMP/q1-smoke" --source-identity "$SOURCE_IDENTITY" --git-commit "$GITHUB_SHA" --host-epoch ci-q1-smoke
+          sudo -E env PATH="$PATH" GITHUB_SHA="$GITHUB_SHA" python3 bench/q1.py regenerate --output "$RUNNER_TEMP/q1-smoke"
           sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/q1-smoke"
       - name: Validate Q1 smoke rows
         run: |
-          python3 -c 'import json, os, pathlib; output = pathlib.Path(os.environ["RUNNER_TEMP"]) / "q1-smoke"; rows = json.loads((output / "raw.json").read_text()); smoke = json.loads((output / "smoke_non_result.json").read_text()); assert len(rows) == 6 and smoke is True; assert all(row["setup_status"] == "complete" and row["error_category"] is None and row["failure"] is False and row["readiness_ns"] is not None and row["sent_payloads"] == 800 and row["received_payloads"] > 0 and set(row["interface_counter_by_ordinal"]) == {"pre", "post"} and row["interface_counter_by_ordinal"]["pre"] and row["interface_counter_by_ordinal"]["post"] for row in rows)'
+          python3 -c 'import json, os, pathlib; output = pathlib.Path(os.environ["RUNNER_TEMP"]) / "q1-smoke"; rows = json.loads((output / "raw.json").read_text()); smoke = json.loads((output / "smoke_non_result.json").read_text()); eligible = json.loads((output / "publication_eligible.json").read_text()); completeness = ("evidence_complete", "cleanup_complete", "cpu_complete", "counter_complete", "environment_complete", "topology_complete"); counts = ("scheduled_payloads", "attempted_payloads", "sent_payloads", "received_payloads"); topology = {"namespace_count": 3, "interface_count": 10, "non_loopback_interface_count": 7, "veth_pair_count": 3}; proof = lambda row: set(row["interface_counter_timestamp_ns_by_ordinal"]) == {"pre", "activation", "post"} and row["interface_counter_timestamp_ns_by_ordinal"]["pre"] <= row["t_minus_3_ns"] <= row["interface_counter_timestamp_ns_by_ordinal"]["pre"] + 100000000 and abs(row["interface_counter_timestamp_ns_by_ordinal"]["activation"] - row["cutover_ns"]) <= 100000000 and row["observation_end_ns"] <= row["interface_counter_timestamp_ns_by_ordinal"]["post"] <= row["observation_end_ns"] + 100000000 and set(row["process_cpu_timestamp_ns_by_ordinal"]) == {"endpoint_0", "endpoint_1", "parent"} and all(value["pre"] <= row["t_minus_3_ns"] and value["post"] >= row["observation_end_ns"] for value in row["process_cpu_timestamp_ns_by_ordinal"].values()); assert len(rows) == 6 and smoke is True and eligible is True; assert all(row["setup_status"] == "complete" and row["error_category"] is None and row["failure"] is False and row["readiness_ns"] is not None and all(row[field] is True for field in completeness) and all(type(row[field]) is int for field in counts) and 0 <= row["sent_payloads"] <= row["attempted_payloads"] <= row["scheduled_payloads"] == 800 and row["received_payloads"] >= 0 and set(row["interface_counter_by_ordinal"]) == {"pre", "activation", "post"} and all(row["interface_counter_by_ordinal"][key] for key in ("pre", "activation", "post")) and proof(row) and all(row[field] == value for field, value in topology.items()) for row in rows)'
       - name: Upload Q1 smoke package
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
@@ -54,11 +55,15 @@ jobs:
           retention-days: 7
       - name: Q3 closed-lab smoke
         run: |
-          python3 bench/q3.py run --smoke --output "$RUNNER_TEMP/q3-smoke" --source-identity ci-smoke-non-result --host-epoch ci-non-result
-          python3 bench/q3.py regenerate --output "$RUNNER_TEMP/q3-smoke"
+          PYTHON_BIN="$(command -v python3)"
+          SOURCE_IDENTITY=ci-smoke-non-result
+          HOST_EPOCH=ci-non-result
+          sudo env PATH="$PATH" PYTHON_BIN="$PYTHON_BIN" RUNNER_TEMP="$RUNNER_TEMP" GITHUB_SHA="$GITHUB_SHA" SOURCE_IDENTITY="$SOURCE_IDENTITY" HOST_EPOCH="$HOST_EPOCH" Q3_ISOLATED_NETNS=1 unshare --net --mount-proc bash -ceu 'ip link set lo up; "$PYTHON_BIN" bench/q3.py run --smoke --output "$RUNNER_TEMP/q3-smoke" --source-identity "$SOURCE_IDENTITY" --host-epoch "$HOST_EPOCH"; "$PYTHON_BIN" bench/q3.py regenerate --output "$RUNNER_TEMP/q3-smoke"'
+          sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/q3-smoke"
       - name: Validate Q3 smoke raw rows
         run: |
-          python3 -c 'import json, os, pathlib; rows = [json.loads(line) for line in (pathlib.Path(os.environ["RUNNER_TEMP"]) / "q3-smoke" / "raw.jsonl").read_text().splitlines()]; assert len(rows) == 8; assert all(row["status"] == "success" and row["smoke_non_result"] is True and row["source_identity"] == "ci-smoke-non-result" and row["host_epoch"] == "ci-non-result" for row in rows)'
+          PYTHON_BIN="$(command -v python3)"
+          "$PYTHON_BIN" -c 'import json, os, pathlib; output = pathlib.Path(os.environ["RUNNER_TEMP"]) / "q3-smoke"; manifest = json.loads((output / "run-manifest.json").read_text()); environment = json.loads((output / "environment.json").read_text()); rows = [json.loads(line) for line in (output / "raw.jsonl").read_text().splitlines()]; assert len(rows) == 8 and manifest["isolated_netns_proof"] is True and environment["isolated_netns_proof"] is True; assert all(row["status"] == "success" and row["smoke_non_result"] is True and row["source_identity"] == "ci-smoke-non-result" and row["host_epoch"] == "ci-non-result" and row["network"]["rx_bytes"] == row["network"]["tx_bytes"] and row["network"]["rx_packets"] == row["network"]["tx_packets"] for row in rows)'
 
   fuzz-smoke:
     runs-on: ubuntu-26.04
@@ -78,7 +83,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
         with:
           path: |
             ~/.cargo/registry/index

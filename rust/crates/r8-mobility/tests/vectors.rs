@@ -43,7 +43,7 @@ fn manager(role: u8, local_loc: [u8; 16], peer_loc: [u8; 16]) -> CandidateManage
 }
 
 fn commit(manager: &CandidateManager, transition: r8_mobility::Transition) {
-    manager.commit(transition, || Ok(()), || {}).unwrap();
+    manager.commit(transition, || Ok(())).unwrap();
 }
 
 fn flow(mover_role: u8) {
@@ -77,10 +77,18 @@ fn flow(mover_role: u8) {
     let results = receiver.take_results();
     assert_eq!(results.len(), 1);
     let result_bytes = results[0].encode().unwrap();
+    assert!(matches!(
+        receiver.preview(&result_bytes, &carrier, 5, 104),
+        Err(MobilityError::Candidate)
+    ));
     commit(
         &mover,
         mover.preview(&result_bytes, &carrier, 5, 104).unwrap(),
     );
+    assert!(matches!(
+        mover.preview(&result_bytes, &binding(10), 6, 104),
+        Err(MobilityError::Candidate)
+    ));
     assert_eq!(receiver.peer_loc(), new);
     assert_eq!(mover.local_loc(), new);
     assert_eq!(mover.current_binding(), Some(carrier));
@@ -170,7 +178,7 @@ fn transition_callback_failure_and_staleness_preserve_state() {
         .preview(&update.encode().unwrap(), &binding(8), 1, 0)
         .unwrap();
     assert_eq!(
-        manager.commit(transition, || Err(MobilityError::Replay), || {}),
+        manager.commit(transition, || Err(MobilityError::Replay)),
         Err(MobilityError::Replay)
     );
     assert_eq!(manager.peer_loc(), [1; 16]);
@@ -196,6 +204,110 @@ fn expiry_grace_and_restart_lifecycle() {
         manager.make_probe([5; 16], binding(8), [5; 16], 1),
         Err(MobilityError::Candidate)
     );
+}
+#[test]
+fn promotion_grace_is_exact_and_invalidates_preexpiry_transition() {
+    let mover = manager(1, [1; 16], [1; 16]);
+    let receiver = manager(2, [1; 16], [1; 16]);
+    let old_carrier = binding(1);
+    let new_carrier = binding(8);
+
+    let update = mover.propose_local([3; 16], [2; 16], 1, 0, 9_996).unwrap();
+    commit(
+        &receiver,
+        receiver
+            .preview(&update.encode().unwrap(), &new_carrier, 1, 9_996)
+            .unwrap(),
+    );
+    let probe = mover
+        .make_probe([3; 16], new_carrier.clone(), [3; 16], 9_997)
+        .unwrap();
+    let challenge_transition = receiver
+        .preview(&probe.encode().unwrap(), &new_carrier, 2, 9_997)
+        .unwrap();
+    let challenge = receiver
+        .response_for(&challenge_transition)
+        .unwrap()
+        .unwrap();
+    commit(&receiver, challenge_transition);
+    let response_transition = mover
+        .preview(&challenge.encode().unwrap(), &new_carrier, 3, 9_998)
+        .unwrap();
+    let response = mover.response_for(&response_transition).unwrap().unwrap();
+    commit(&mover, response_transition);
+    commit(
+        &receiver,
+        receiver
+            .preview(&response.encode().unwrap(), &new_carrier, 4, 10_000)
+            .unwrap(),
+    );
+    let result = receiver.take_results().pop().unwrap();
+    commit(
+        &mover,
+        mover
+            .preview(&result.encode().unwrap(), &new_carrier, 5, 10_001)
+            .unwrap(),
+    );
+
+    assert!(receiver.binding_allowed_inbound(&old_carrier, 19_999));
+    assert!(!receiver.binding_allowed_inbound(&old_carrier, 20_000));
+
+    let next_update = mover.propose_local([4; 16], [3; 16], 2, 0, 19_998).unwrap();
+    commit(
+        &receiver,
+        receiver
+            .preview(&next_update.encode().unwrap(), &old_carrier, 6, 19_998)
+            .unwrap(),
+    );
+    let preexpiry = receiver
+        .preview(&next_update.encode().unwrap(), &old_carrier, 7, 19_999)
+        .unwrap();
+    receiver.expire(20_000);
+    assert_eq!(
+        receiver.commit(preexpiry, || Ok(())),
+        Err(MobilityError::Replay)
+    );
+}
+#[test]
+fn no_state_commits_preserve_independent_previews() {
+    let mover = manager(1, [1; 16], [1; 16]);
+    let receiver = manager(2, [1; 16], [1; 16]);
+    let carrier = binding(8);
+    let update = mover.propose_local([9; 16], [2; 16], 1, 0, 0).unwrap();
+    let update_bytes = update.encode().unwrap();
+    commit(
+        &receiver,
+        receiver.preview(&update_bytes, &carrier, 1, 0).unwrap(),
+    );
+    let duplicate_update = receiver.preview(&update_bytes, &carrier, 2, 1).unwrap();
+    let probe = mover
+        .make_probe([9; 16], carrier.clone(), [9; 16], 1)
+        .unwrap();
+    let challenge_transition = receiver
+        .preview(&probe.encode().unwrap(), &carrier, 3, 1)
+        .unwrap();
+    commit(&receiver, duplicate_update);
+    let challenge = receiver
+        .response_for(&challenge_transition)
+        .unwrap()
+        .unwrap();
+    commit(&receiver, challenge_transition);
+
+    let existing = receiver
+        .preview(&probe.encode().unwrap(), &carrier, 4, 2)
+        .unwrap();
+    let duplicate_update = receiver.preview(&update_bytes, &carrier, 5, 2).unwrap();
+    commit(&receiver, existing);
+    commit(&receiver, duplicate_update);
+
+    let first_response = mover
+        .preview(&challenge.encode().unwrap(), &carrier, 6, 2)
+        .unwrap();
+    let second_response = mover
+        .preview(&challenge.encode().unwrap(), &carrier, 7, 2)
+        .unwrap();
+    commit(&mover, first_response);
+    commit(&mover, second_response);
 }
 #[test]
 fn local_proposals_are_idempotent_capacity_bounded_and_nonce_exact() {

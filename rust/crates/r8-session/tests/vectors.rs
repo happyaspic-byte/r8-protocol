@@ -1,4 +1,5 @@
 use ed25519_dalek::SigningKey;
+use r8_proto::Header;
 use r8_session::*;
 use serde_json::Value;
 
@@ -206,6 +207,7 @@ fn deterministic_client_server_cookie_handshake_reaches_authenticated_accept() {
     let vectors: Value = serde_json::from_str(VECTORS).unwrap();
     let identities = &vectors["identities"];
     let context = &vectors["context"];
+    let base = context["cookie_bucket"].as_u64().unwrap() * 10_000;
     let service_context = context["service_context"].as_u64().unwrap() as u32;
     let client_identity = Identity::from_public_key(
         1,
@@ -233,14 +235,14 @@ fn deterministic_client_server_cookie_handshake_reaches_authenticated_accept() {
         server_context_id: context["server_context_id"].as_u64().unwrap() as u32,
     };
     let server_config = HandshakeConfig {
-        local: server_identity,
-        peer: client_identity,
+        local: server_identity.clone(),
+        peer: client_identity.clone(),
         profile: 0,
         source,
         destination,
         budget: 1280,
         pending_limit: 256,
-        established_limit: 1024,
+        established_limit: 1,
         server_context_id: context["server_context_id"].as_u64().unwrap() as u32,
     };
     let mut client = ClientMachine::new(
@@ -267,18 +269,18 @@ fn deterministic_client_server_cookie_handshake_reaches_authenticated_accept() {
                 ephemeral_secret: array(field(identities, "client_x25519_secret_hex")),
                 nonce: array(field(context, "client_nonce_hex")),
             },
-            0,
+            base,
         )
         .unwrap();
     let verify = server
         .receive_open(&open, &binding, context["cookie_bucket"].as_u64().unwrap())
         .unwrap();
-    let auth = client.receive_verify(&verify, 0).unwrap();
+    let auth = client.receive_verify(&verify, base).unwrap();
     let ack = server
         .receive_open_auth(
             &auth,
             &binding,
-            0,
+            base,
             context["cookie_bucket"].as_u64().unwrap(),
             Some(ServerHandshakeMaterial {
                 ephemeral_secret: array(field(identities, "server_x25519_secret_hex")),
@@ -286,6 +288,16 @@ fn deterministic_client_server_cookie_handshake_reaches_authenticated_accept() {
             }),
         )
         .unwrap();
+    assert_eq!(
+        server.receive_open_auth(&auth, &binding, base + 1, 0, None),
+        Ok(ack.clone())
+    );
+    let mut competing_auth = auth.clone();
+    *competing_auth.last_mut().unwrap() ^= 1;
+    assert_eq!(
+        server.receive_open_auth(&competing_auth, &binding, base + 1, 0, None),
+        Err(SessionError::ScidCollision)
+    );
     assert_eq!(
         &open[48..],
         hex(field(&vectors["positive_cases"][0], "payload_hex"))
@@ -302,7 +314,7 @@ fn deterministic_client_server_cookie_handshake_reaches_authenticated_accept() {
         &ack[48..],
         hex(field(&vectors["positive_cases"][3], "payload_hex"))
     );
-    let accept = client.receive_ack(&ack, 0).unwrap();
+    let accept = client.receive_ack(&ack, base).unwrap();
     assert_eq!(
         accept,
         hex(field(
@@ -310,7 +322,62 @@ fn deterministic_client_server_cookie_handshake_reaches_authenticated_accept() {
             "packet_hex"
         ))
     );
-    server.receive_accept(&accept, 0).unwrap();
+    let hash: [u8; 32] = array(field(&vectors["transcript"], "transcript_hash_hex"));
+    let mut semantic_session = DirectionalSession {
+        send_key: derive_key(
+            array(field(identities, "shared_secret_hex")),
+            hash,
+            0,
+            1,
+            2,
+            0,
+        )
+        .unwrap(),
+        receive_key: [0; 32],
+        send_counters: Counters::new(),
+        replay: ReplayWindow::new(),
+        transcript_hash: hash,
+    };
+    let mut invalid_plaintext = b"R8 ACCEPT v1".to_vec();
+    invalid_plaintext.extend_from_slice(&[0; 32]);
+    let semantic_accept = semantic_session
+        .encrypt(
+            &Header {
+                profile: 0,
+                tc: 0,
+                next_header: r8_proto::NH_SES,
+                hop_limit: 64,
+                flags: 1,
+                path_slot: 0,
+                scid: context["scid"].as_u64().unwrap(),
+                src: source,
+                dst: destination,
+            },
+            SESSION_ACCEPT,
+            &invalid_plaintext,
+            1280,
+        )
+        .unwrap();
+    assert_eq!(
+        server.receive_accept(&semantic_accept, base),
+        Err(SessionError::AuthFailed)
+    );
+    server.receive_accept(&accept, base).unwrap();
+    assert_eq!(server.receive_accept(&accept, base + 1), Ok(()));
+    assert_eq!(
+        server.receive_open_auth(&auth, &binding, base + 1, 0, None),
+        Ok(ack.clone())
+    );
+    assert_eq!(
+        server.receive_open_auth(&competing_auth, &binding, base + 1, 0, None),
+        Err(SessionError::ScidCollision)
+    );
+    let mut forged_accept = accept.clone();
+    *forged_accept.last_mut().unwrap() ^= 1;
+    assert_eq!(
+        server.receive_accept(&forged_accept, base + 1),
+        Err(SessionError::AuthFailed)
+    );
     assert!(server.is_live(context["scid"].as_u64().unwrap()));
     server.rotate_cookie_key([9; 32], 600_000);
     assert!(server.is_live(context["scid"].as_u64().unwrap()));
@@ -326,18 +393,28 @@ fn deterministic_client_server_cookie_handshake_reaches_authenticated_accept() {
     let mut tampered = data.clone();
     *tampered.last_mut().unwrap() ^= 1;
     assert!(matches!(
-        server.preview_data_with_locs(&tampered, &[], &[]),
+        server.preview_data_with_locs(&tampered, &[], &[], base + 1),
         Err(SessionError::AuthFailed)
     ));
-    let preview = server.preview_data_with_locs(&data, &[], &[]).unwrap();
+    let preview = server
+        .preview_data_with_locs(&data, &[], &[], base + 1)
+        .unwrap();
     assert_eq!(preview.plaintext(), b"synthetic session data");
-    let stale = server.preview_data_with_locs(&data, &[], &[]).unwrap();
+    let stale = server
+        .preview_data_with_locs(&data, &[], &[], base + 1)
+        .unwrap();
     assert_eq!(
-        server.commit_data(preview, 1).unwrap(),
+        server.commit_data(preview, base + 1).unwrap(),
         b"synthetic session data"
     );
-    assert_eq!(server.commit_data(stale, 2), Err(SessionError::Replay));
-    assert_eq!(server.receive_data(&data, 3), Err(SessionError::Replay));
+    assert_eq!(
+        server.commit_data(stale, base + 2),
+        Err(SessionError::Replay)
+    );
+    assert_eq!(
+        server.receive_data(&data, base + 3),
+        Err(SessionError::Replay)
+    );
 
     let alternate_source = [3; 16];
     let alternate_destination = [4; 16];
@@ -349,14 +426,19 @@ fn deterministic_client_server_cookie_handshake_reaches_authenticated_accept() {
         )
         .unwrap();
     assert!(matches!(
-        server.preview_data_with_locs(&alternate, &[], &[]),
+        server.preview_data_with_locs(&alternate, &[], &[], base + 4),
         Err(SessionError::AuthFailed)
     ));
     let preview = server
-        .preview_data_with_locs(&alternate, &[alternate_source], &[alternate_destination])
+        .preview_data_with_locs(
+            &alternate,
+            &[alternate_source],
+            &[alternate_destination],
+            base + 4,
+        )
         .unwrap();
     assert_eq!(
-        server.commit_data(preview, 4).unwrap(),
+        server.commit_data(preview, base + 4).unwrap(),
         b"alternate loc data"
     );
     client.promote_local_loc(alternate_source);
@@ -370,8 +452,80 @@ fn deterministic_client_server_cookie_handshake_reaches_authenticated_accept() {
         .send_data(context["scid"].as_u64().unwrap(), b"ok")
         .unwrap();
     assert_eq!(client.receive_data(&response).unwrap(), b"ok");
+    let second_config = HandshakeConfig {
+        local: client_identity,
+        peer: server_identity,
+        profile: 0,
+        source,
+        destination,
+        budget: 1280,
+        pending_limit: 256,
+        established_limit: 1,
+        server_context_id: context["server_context_id"].as_u64().unwrap() as u32,
+    };
+    let mut second_client = ClientMachine::new(
+        second_config,
+        SigningKey::from_bytes(&array(field(identities, "client_ed25519_seed_hex"))),
+    )
+    .unwrap();
+    let second_open = second_client
+        .start(
+            context["scid"].as_u64().unwrap() + 1,
+            ClientMaterial {
+                ephemeral_secret: [7; 32],
+                nonce: [8; 32],
+            },
+            base,
+        )
+        .unwrap();
+    let second_verify = server
+        .receive_open(
+            &second_open,
+            &binding,
+            context["cookie_bucket"].as_u64().unwrap(),
+        )
+        .unwrap();
+    let second_auth = second_client.receive_verify(&second_verify, base).unwrap();
+    let second_ack = server
+        .receive_open_auth(
+            &second_auth,
+            &binding,
+            base + 1,
+            context["cookie_bucket"].as_u64().unwrap(),
+            Some(ServerHandshakeMaterial {
+                ephemeral_secret: [9; 32],
+                nonce: [10; 32],
+            }),
+        )
+        .unwrap();
+    let second_accept = second_client.receive_ack(&second_ack, base).unwrap();
+    assert_eq!(
+        server.receive_accept(&second_accept, base),
+        Err(SessionError::Capacity)
+    );
     let close = server.close(context["scid"].as_u64().unwrap(), 7).unwrap();
     assert_eq!(client.receive_close(&close).unwrap(), 7);
+    assert_eq!(server.receive_accept(&second_accept, base), Ok(()));
+    second_client.promote_local_loc(alternate_source);
+    second_client.promote_peer_loc(alternate_destination);
+    let late_data = second_client.send_data(b"late").unwrap();
+    assert!(server
+        .preview_data_with_locs(&late_data, &[], &[], base + 119_999)
+        .is_ok());
+    let late_close = second_client.close(8).unwrap();
+    assert_eq!(
+        server.receive_close(&late_close, base + 120_000),
+        Err(SessionError::UnexpectedMessage)
+    );
+    assert!(matches!(
+        server.preview_data_with_locs(&late_data, &[], &[], base + 120_000),
+        Err(SessionError::UnexpectedMessage)
+    ));
+    assert_eq!(
+        server.receive_data(&late_data, base + 120_000),
+        Err(SessionError::UnexpectedMessage)
+    );
+    assert!(!server.is_live(context["scid"].as_u64().unwrap() + 1));
     assert_eq!(
         client.receive_data(&response),
         Err(SessionError::UnexpectedMessage)
@@ -447,6 +601,131 @@ fn client_handshake_deadline_is_exact_and_retries_do_not_extend_it() {
     assert!(client.retry(5_009).is_ok());
     client.expire(5_009);
     assert!(client.retry(5_009).is_ok());
-    client.expire(5_010);
+    assert_eq!(
+        client.receive_verify(&[], 5_010),
+        Err(SessionError::UnexpectedMessage)
+    );
     assert_eq!(client.retry(5_010), Err(SessionError::UnexpectedMessage));
+}
+#[test]
+fn open_auth_budget_failure_releases_cookie_wait() {
+    let vectors: Value = serde_json::from_str(VECTORS).unwrap();
+    let identities = &vectors["identities"];
+    let context = &vectors["context"];
+    let service = context["service_context"].as_u64().unwrap() as u32;
+    let client_identity = Identity::from_public_key(
+        1,
+        service,
+        array(field(identities, "client_public_key_hex")),
+    )
+    .unwrap();
+    let server_identity = Identity::from_public_key(
+        2,
+        service,
+        array(field(identities, "server_public_key_hex")),
+    )
+    .unwrap();
+    let client_config = HandshakeConfig {
+        local: client_identity.clone(),
+        peer: server_identity.clone(),
+        profile: 0,
+        source: [1; 16],
+        destination: [2; 16],
+        budget: 170,
+        pending_limit: 1,
+        established_limit: 1,
+        server_context_id: 1,
+    };
+    let server_config = HandshakeConfig {
+        local: server_identity,
+        peer: client_identity,
+        profile: 0,
+        source: [1; 16],
+        destination: [2; 16],
+        budget: 1280,
+        pending_limit: 1,
+        established_limit: 1,
+        server_context_id: 1,
+    };
+    let mut client = ClientMachine::new(
+        client_config,
+        SigningKey::from_bytes(&array(field(identities, "client_ed25519_seed_hex"))),
+    )
+    .unwrap();
+    let server = ServerMachine::new(
+        server_config,
+        SigningKey::from_bytes(&array(field(identities, "server_ed25519_seed_hex"))),
+        ServerMaterial {
+            boot_instance: array(field(context, "server_boot_instance_hex")),
+            current_cookie_key: array(field(context, "cookie_key_hex")),
+            previous_cookie_key: [0; 32],
+            previous_key_rotated_ms: 0,
+        },
+    )
+    .unwrap();
+    let binding = UdpBinding::parse(hex(field(context, "udp_binding_ipv4_hex"))).unwrap();
+    let open = client
+        .start(
+            1,
+            ClientMaterial {
+                ephemeral_secret: array(field(identities, "client_x25519_secret_hex")),
+                nonce: array(field(context, "client_nonce_hex")),
+            },
+            0,
+        )
+        .unwrap();
+    let verify = server.receive_open(&open, &binding, 0).unwrap();
+    assert_eq!(client.receive_verify(&verify, 0), Err(SessionError::Budget));
+    assert_eq!(client.retry(0), Err(SessionError::UnexpectedMessage));
+}
+#[test]
+fn handshake_config_and_previous_cookie_key_boundaries_are_strict() {
+    let local = Identity::from_public_key(1, 1, [1; 32]).unwrap();
+    let peer = Identity::from_public_key(2, 1, [2; 32]).unwrap();
+    for budget in [47, 1281] {
+        assert_eq!(
+            HandshakeConfig {
+                local: local.clone(),
+                peer: peer.clone(),
+                profile: 0,
+                source: [1; 16],
+                destination: [2; 16],
+                budget,
+                pending_limit: 1,
+                established_limit: 1,
+                server_context_id: 1,
+            }
+            .validate(),
+            Err(SessionError::ConfigError)
+        );
+    }
+    assert!(HandshakeConfig {
+        local: local.clone(),
+        peer: peer.clone(),
+        profile: 0,
+        source: [1; 16],
+        destination: [2; 16],
+        budget: 48,
+        pending_limit: 1,
+        established_limit: 1,
+        server_context_id: 1,
+    }
+    .validate()
+    .is_ok());
+    let binding = UdpBinding::ipv4([192, 0, 2, 1], 1234, 1, [0; 16]).unwrap();
+    let context = CookieContext {
+        binding: &binding,
+        client: &local,
+        server: &peer,
+        scid: 1,
+        client_ephemeral: [3; 32],
+        boot: [4; 16],
+        bucket: 2,
+        server_context_id: 1,
+    };
+    let previous = [5; 32];
+    let input = cookie_input(&context).unwrap();
+    let supplied = cookie(&previous, &input);
+    assert!(cookie_matches_buckets(&[6; 32], &previous, 0, &supplied, context, 20_000).unwrap());
+    assert!(!cookie_matches_buckets(&[6; 32], &previous, 0, &supplied, context, 20_001).unwrap());
 }

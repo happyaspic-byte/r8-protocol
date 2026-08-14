@@ -29,6 +29,24 @@ enum Mode {
     Serve,
     Connect,
 }
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CliError {
+    Session(SessionError),
+    Io,
+}
+impl From<SessionError> for CliError {
+    fn from(error: SessionError) -> Self {
+        Self::Session(error)
+    }
+}
+impl CliError {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Session(error) => error.as_str(),
+            Self::Io => "IO",
+        }
+    }
+}
 
 struct Options {
     mode: Mode,
@@ -45,6 +63,7 @@ struct Options {
     max_sessions: usize,
     message: Option<Vec<u8>>,
     scid: Option<u64>,
+    ready_fd: Option<i32>,
     isolated: bool,
 }
 
@@ -52,17 +71,6 @@ fn usage() -> &'static str {
     "usage: r8session serve --local-seed-hex HEX --peer-public-key-hex HEX --service-context N --server-context-id N --address IPV6 --peer-address IPV6 --bind HOST:PORT [--binding-budget N] [--timeout SECONDS] [--max-sessions N] [--allow-isolated-underlay]\n       r8session connect --local-seed-hex HEX --peer-public-key-hex HEX --service-context N --server-context-id N --address IPV6 --peer-address IPV6 --bind HOST:PORT --peer HOST:PORT --message-hex HEX [--scid N] [--binding-budget N] [--timeout SECONDS] [--allow-isolated-underlay]"
 }
 
-fn argument(args: &[String], name: &str) -> Result<String, SessionError> {
-    args.windows(2)
-        .find(|pair| pair[0] == name)
-        .map(|pair| pair[1].clone())
-        .ok_or(SessionError::ConfigError)
-}
-fn optional(args: &[String], name: &str) -> Option<String> {
-    args.windows(2)
-        .find(|pair| pair[0] == name)
-        .map(|pair| pair[1].clone())
-}
 fn hex(text: &str) -> Result<Vec<u8>, SessionError> {
     if !text.len().is_multiple_of(2) {
         return Err(SessionError::ConfigError);
@@ -75,13 +83,11 @@ fn hex(text: &str) -> Result<Vec<u8>, SessionError> {
 fn fixed<const N: usize>(text: &str) -> Result<[u8; N], SessionError> {
     hex(text)?.try_into().map_err(|_| SessionError::ConfigError)
 }
-fn number<T: std::str::FromStr>(args: &[String], name: &str) -> Result<T, SessionError> {
-    argument(args, name)?
-        .parse()
-        .map_err(|_| SessionError::ConfigError)
+fn number<T: std::str::FromStr>(text: &str) -> Result<T, SessionError> {
+    text.parse().map_err(|_| SessionError::ConfigError)
 }
-fn loc(args: &[String], name: &str) -> Result<[u8; 16], SessionError> {
-    parse_loc(&argument(args, name)?).map_err(|_| SessionError::ConfigError)
+fn loc(text: &str) -> Result<[u8; 16], SessionError> {
+    parse_loc(text).map_err(|_| SessionError::ConfigError)
 }
 
 fn parse_options(args: &[String]) -> Result<Options, SessionError> {
@@ -90,74 +96,101 @@ fn parse_options(args: &[String]) -> Result<Options, SessionError> {
         Some("connect") => Mode::Connect,
         _ => return Err(SessionError::ConfigError),
     };
-    let budget = optional(args, "--binding-budget")
-        .map(|value| value.parse().map_err(|_| SessionError::ConfigError))
-        .transpose()?
-        .unwrap_or(DEFAULT_BUDGET);
+    let mut local_seed = None;
+    let mut peer_key = None;
+    let mut service = None;
+    let mut server_context = None;
+    let mut source = None;
+    let mut destination = None;
+    let mut bind = None;
+    let mut peer = None;
+    let mut budget = None;
+    let mut timeout = None;
+    let mut max_sessions = None;
+    let mut message = None;
+    let mut scid = None;
+    let mut ready_fd = None;
+    let mut isolated = false;
+    let mut values = args[2..].iter();
+    macro_rules! value {
+        ($slot:ident) => {{
+            if $slot.is_some() {
+                return Err(SessionError::ConfigError);
+            }
+            let value = values
+                .next()
+                .filter(|value| !value.starts_with("--"))
+                .ok_or(SessionError::ConfigError)?;
+            $slot = Some(value.as_str());
+        }};
+    }
+    while let Some(flag) = values.next() {
+        match flag.as_str() {
+            "--local-seed-hex" => value!(local_seed),
+            "--peer-public-key-hex" => value!(peer_key),
+            "--service-context" => value!(service),
+            "--server-context-id" => value!(server_context),
+            "--address" => value!(source),
+            "--peer-address" => value!(destination),
+            "--bind" => value!(bind),
+            "--binding-budget" => value!(budget),
+            "--timeout" => value!(timeout),
+            "--ready-fd" => value!(ready_fd),
+            "--peer" => value!(peer),
+            "--message-hex" => value!(message),
+            "--scid" => value!(scid),
+            "--max-sessions" => value!(max_sessions),
+            "--allow-isolated-underlay" if !isolated => isolated = true,
+            _ => return Err(SessionError::ConfigError),
+        }
+    }
+    if mode == Mode::Serve && (peer.is_some() || message.is_some() || scid.is_some())
+        || mode == Mode::Connect && (max_sessions.is_some() || peer.is_none() || message.is_none())
+    {
+        return Err(SessionError::ConfigError);
+    }
+    let budget = budget.map(number).transpose()?.unwrap_or(DEFAULT_BUDGET);
     if !(48..=1252).contains(&budget) {
         return Err(SessionError::ConfigError);
     }
-    let service = number(args, "--service-context")?;
-    let server_context = number(args, "--server-context-id")?;
+    let service = number(service.ok_or(SessionError::ConfigError)?)?;
+    let server_context = number(server_context.ok_or(SessionError::ConfigError)?)?;
     if service == 0 || server_context == 0 {
         return Err(SessionError::ConfigError);
     }
-    let timeout_seconds: u64 = optional(args, "--timeout")
-        .map(|value| value.parse().map_err(|_| SessionError::ConfigError))
-        .transpose()?
-        .unwrap_or(5);
+    let timeout_seconds = timeout.map(number).transpose()?.unwrap_or(5u64);
     if timeout_seconds == 0 {
         return Err(SessionError::ConfigError);
     }
-    let bind: SocketAddr = argument(args, "--bind")?
-        .parse()
-        .map_err(|_| SessionError::ConfigError)?;
-    let peer = if mode == Mode::Connect {
-        Some(
-            argument(args, "--peer")?
-                .parse()
-                .map_err(|_| SessionError::ConfigError)?,
-        )
-    } else {
-        None
-    };
-    let message = if mode == Mode::Connect {
-        Some(hex(&argument(args, "--message-hex")?)?)
-    } else {
-        None
-    };
-    if message.as_ref().is_some_and(|bytes| bytes.is_empty()) {
+    let message = message.map(hex).transpose()?;
+    if message.as_ref().is_some_and(Vec::is_empty) {
         return Err(SessionError::ConfigError);
     }
-    let scid = optional(args, "--scid")
-        .map(|value| value.parse::<u64>().map_err(|_| SessionError::ConfigError))
-        .transpose()?;
+    let scid = scid.map(number).transpose()?;
     if scid == Some(0) {
         return Err(SessionError::ConfigError);
     }
-    let max_sessions = optional(args, "--max-sessions")
-        .map(|value| value.parse().map_err(|_| SessionError::ConfigError))
-        .transpose()?
-        .unwrap_or(1usize);
+    let max_sessions = max_sessions.map(number).transpose()?.unwrap_or(1usize);
     if max_sessions == 0 || max_sessions > 1024 {
         return Err(SessionError::ConfigError);
     }
     Ok(Options {
         mode,
-        local_seed: fixed(&argument(args, "--local-seed-hex")?)?,
-        peer_key: fixed(&argument(args, "--peer-public-key-hex")?)?,
+        local_seed: fixed(local_seed.ok_or(SessionError::ConfigError)?)?,
+        peer_key: fixed(peer_key.ok_or(SessionError::ConfigError)?)?,
         service,
         server_context,
-        source: loc(args, "--address")?,
-        destination: loc(args, "--peer-address")?,
-        bind,
-        peer,
+        source: loc(source.ok_or(SessionError::ConfigError)?)?,
+        destination: loc(destination.ok_or(SessionError::ConfigError)?)?,
+        bind: number(bind.ok_or(SessionError::ConfigError)?)?,
+        peer: peer.map(number).transpose()?,
         budget,
         timeout: Duration::from_secs(timeout_seconds),
         max_sessions,
+        ready_fd: ready_fd.map(number).transpose()?,
         message,
         scid,
-        isolated: args.iter().any(|arg| arg == "--allow-isolated-underlay"),
+        isolated,
     })
 }
 
@@ -168,7 +201,7 @@ fn allowed_underlay(address: SocketAddr, isolated: bool) -> bool {
     }
 }
 
-fn configure_df(socket: &UdpSocket) -> Result<(), SessionError> {
+fn configure_df(socket: &UdpSocket) -> Result<(), CliError> {
     #[cfg(target_os = "linux")]
     {
         let value: libc::c_int = libc::IP_PMTUDISC_DO;
@@ -183,7 +216,7 @@ fn configure_df(socket: &UdpSocket) -> Result<(), SessionError> {
             )
         };
         if result != 0 {
-            return Err(SessionError::ConfigError);
+            return Err(CliError::Io);
         }
     }
     #[cfg(not(target_os = "linux"))]
@@ -268,63 +301,102 @@ fn machine_config(local: Identity, peer: Identity, options: &Options) -> Handsha
         server_context_id: options.server_context,
     }
 }
-fn send(socket: &UdpSocket, packet: &[u8], peer: SocketAddr) -> Result<(), SessionError> {
-    match socket.send_to(packet, peer) {
-        Ok(written) if written == packet.len() => Ok(()),
-        Ok(_) => Err(SessionError::Budget),
-        Err(error) if error.raw_os_error() == Some(libc::EMSGSIZE) => Err(SessionError::Budget),
-        Err(_) => Err(SessionError::AuthFailed),
+fn ready(fd: Option<i32>) -> Result<(), CliError> {
+    if let Some(fd) = fd {
+        let mut clock = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut clock) } != 0 {
+            return Err(CliError::Io);
+        }
+        let value = ((clock.tv_sec as u64)
+            .saturating_mul(1_000_000_000)
+            .saturating_add(clock.tv_nsec as u64))
+        .to_be_bytes();
+        if unsafe { libc::write(fd, value.as_ptr().cast(), value.len()) } != value.len() as isize {
+            return Err(CliError::Io);
+        }
+    }
+    Ok(())
+}
+fn send_error(error: &std::io::Error) -> CliError {
+    if error.raw_os_error() == Some(libc::EMSGSIZE) {
+        SessionError::Budget.into()
+    } else {
+        CliError::Io
     }
 }
+
+fn send(socket: &UdpSocket, packet: &[u8], peer: SocketAddr) -> Result<(), CliError> {
+    match socket.send_to(packet, peer) {
+        Ok(written) if written == packet.len() => Ok(()),
+        Ok(_) => Err(CliError::Io),
+        Err(error) => Err(send_error(&error)),
+    }
+}
+
+fn receive_error(error: &std::io::Error) -> CliError {
+    if error.kind() == std::io::ErrorKind::TimedOut
+        || error.kind() == std::io::ErrorKind::WouldBlock
+    {
+        SessionError::Timeout.into()
+    } else {
+        CliError::Io
+    }
+}
+
 fn receive(
     socket: &UdpSocket,
     timeout: Duration,
     budget: usize,
-) -> Result<(Vec<u8>, SocketAddr), SessionError> {
+) -> Result<(Vec<u8>, SocketAddr), CliError> {
     socket
         .set_read_timeout(Some(timeout))
-        .map_err(|_| SessionError::ConfigError)?;
+        .map_err(|_| CliError::Io)?;
     let mut buffer = vec![0u8; budget.checked_add(RECV_EXTRA).ok_or(SessionError::Budget)?];
     match socket.recv_from(&mut buffer) {
         Ok((length, peer)) if length <= budget => {
             buffer.truncate(length);
             Ok((buffer, peer))
         }
-        Ok(_) => Err(SessionError::Budget),
-        Err(error)
-            if error.kind() == std::io::ErrorKind::TimedOut
-                || error.kind() == std::io::ErrorKind::WouldBlock =>
-        {
-            Err(SessionError::Timeout)
-        }
-        Err(_) => Err(SessionError::AuthFailed),
+        Ok(_) => Err(SessionError::Budget.into()),
+        Err(error) => Err(receive_error(&error)),
     }
 }
-fn receive_retry(
+
+fn receive_retry<T, F>(
     socket: &UdpSocket,
     peer: SocketAddr,
     packet: &[u8],
     budget: usize,
-) -> Result<Vec<u8>, SessionError> {
+    mut receive_packet: F,
+) -> Result<T, CliError>
+where
+    F: FnMut(&[u8]) -> Result<T, SessionError>,
+{
     for timeout in RETRIES {
         match receive(socket, timeout, budget) {
-            Ok((response, source)) if source == peer => return Ok(response),
+            Ok((response, source)) if source == peer => match receive_packet(&response) {
+                Ok(value) => return Ok(value),
+                Err(_) => send(socket, packet, peer)?,
+            },
             Ok(_) => continue,
-            Err(SessionError::Timeout) => send(socket, packet, peer)?,
+            Err(CliError::Session(SessionError::Timeout)) => send(socket, packet, peer)?,
             Err(error) => return Err(error),
         }
     }
-    Err(SessionError::Timeout)
+    Err(SessionError::Timeout.into())
 }
 
-fn connect(options: Options) -> Result<(), SessionError> {
-    let socket = UdpSocket::bind(options.bind).map_err(|_| SessionError::ConfigError)?;
+fn connect(options: Options) -> Result<(), CliError> {
+    let socket = UdpSocket::bind(options.bind).map_err(|_| CliError::Io)?;
     configure_df(&socket)?;
     let peer_endpoint = options.peer.ok_or(SessionError::ConfigError)?;
     if !allowed_underlay(peer_endpoint, options.isolated)
         || !allowed_underlay(options.bind, options.isolated)
     {
-        return Err(SessionError::ConfigError);
+        return Err(SessionError::ConfigError.into());
     }
     let signing = SigningKey::from_bytes(&options.local_seed);
     let local = Identity::from_public_key(1, options.service, signing.verifying_key().to_bytes())?;
@@ -340,12 +412,15 @@ fn connect(options: Options) -> Result<(), SessionError> {
         0,
     )?;
     send(&socket, &open, peer_endpoint)?;
-    let verify = receive_retry(&socket, peer_endpoint, &open, options.budget)?;
-    let auth = client.receive_verify(&verify, start.elapsed().as_millis() as u64)?;
+    let auth = receive_retry(&socket, peer_endpoint, &open, options.budget, |verify| {
+        client.receive_verify(verify, start.elapsed().as_millis() as u64)
+    })?;
     send(&socket, &auth, peer_endpoint)?;
-    let ack = receive_retry(&socket, peer_endpoint, &auth, options.budget)?;
-    let accept = client.receive_ack(&ack, start.elapsed().as_millis() as u64)?;
+    let accept = receive_retry(&socket, peer_endpoint, &auth, options.budget, |ack| {
+        client.receive_ack(ack, start.elapsed().as_millis() as u64)
+    })?;
     send(&socket, &accept, peer_endpoint)?;
+    ready(options.ready_fd)?;
     let data = client.send_data(
         options
             .message
@@ -353,19 +428,20 @@ fn connect(options: Options) -> Result<(), SessionError> {
             .ok_or(SessionError::ConfigError)?,
     )?;
     send(&socket, &data, peer_endpoint)?;
-    let echo = receive_retry(&socket, peer_endpoint, &data, options.budget)?;
-    let _ = client.receive_data(&echo)?;
+    receive_retry(&socket, peer_endpoint, &data, options.budget, |echo| {
+        client.receive_data(echo).map(|_| ())
+    })?;
     let close = client.close(0)?;
     send(&socket, &close, peer_endpoint)?;
     println!("r8session: OK");
     Ok(())
 }
 
-fn serve(options: Options) -> Result<(), SessionError> {
-    let socket = UdpSocket::bind(options.bind).map_err(|_| SessionError::ConfigError)?;
+fn serve(options: Options) -> Result<(), CliError> {
+    let socket = UdpSocket::bind(options.bind).map_err(|_| CliError::Io)?;
     configure_df(&socket)?;
     if !allowed_underlay(options.bind, options.isolated) {
-        return Err(SessionError::ConfigError);
+        return Err(SessionError::ConfigError.into());
     }
     let signing = SigningKey::from_bytes(&options.local_seed);
     let local = Identity::from_public_key(2, options.service, signing.verifying_key().to_bytes())?;
@@ -395,11 +471,12 @@ fn serve(options: Options) -> Result<(), SessionError> {
     let started = Instant::now();
     let mut successes = 0usize;
     let mut last_cookie_rotation_ms = 0u64;
+    let mut ready_sent = false;
     while successes < options.max_sessions {
         let (packet, endpoint) = match receive(&socket, options.timeout, options.budget) {
             Ok(value) => value,
-            Err(SessionError::Timeout) => break,
-            Err(_) => continue,
+            Err(CliError::Session(SessionError::Timeout)) => break,
+            Err(error) => return Err(error),
         };
         if !allowed_underlay(endpoint, options.isolated) {
             continue;
@@ -449,6 +526,10 @@ fn serve(options: Options) -> Result<(), SessionError> {
                 {
                     continue;
                 }
+                if !ready_sent {
+                    ready(options.ready_fd)?;
+                    ready_sent = true;
+                }
                 None
             }
             Ok((header, payload)) if payload.first() == Some(&r8_session::SESSION_DATA) => {
@@ -473,7 +554,7 @@ fn serve(options: Options) -> Result<(), SessionError> {
             _ => None,
         };
         if let Some(response) = response {
-            let _ = send(&socket, &response, endpoint);
+            send(&socket, &response, endpoint)?;
         }
         server.expire(now);
         retain_live_peer_bindings(&mut peer_bindings, |scid| server.is_live(scid));
@@ -482,16 +563,18 @@ fn serve(options: Options) -> Result<(), SessionError> {
         println!("r8session: OK");
         Ok(())
     } else {
-        Err(SessionError::Timeout)
+        Err(SessionError::Timeout.into())
     }
 }
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    let result = parse_options(&args).and_then(|options| match options.mode {
-        Mode::Connect => connect(options),
-        Mode::Serve => serve(options),
-    });
+    let result = parse_options(&args)
+        .map_err(CliError::from)
+        .and_then(|options| match options.mode {
+            Mode::Connect => connect(options),
+            Mode::Serve => serve(options),
+        });
     if let Err(error) = result {
         eprintln!("r8session: {}\n{}", error.as_str(), usage());
         process::exit(1);
@@ -515,6 +598,103 @@ mod tests {
     fn redacted_usage() {
         assert!(!usage().contains("cookie"));
         assert!(!usage().contains("key="));
+    }
+    fn valid_args(mode: &str) -> Vec<String> {
+        vec![
+            "r8session".into(),
+            mode.into(),
+            "--local-seed-hex".into(),
+            "00".repeat(32),
+            "--peer-public-key-hex".into(),
+            "11".repeat(32),
+            "--service-context".into(),
+            "1".into(),
+            "--server-context-id".into(),
+            "1".into(),
+            "--address".into(),
+            "::1".into(),
+            "--peer-address".into(),
+            "::2".into(),
+            "--bind".into(),
+            "127.0.0.1:1".into(),
+        ]
+    }
+
+    #[test]
+    fn argv_validation_rejects_unrecognized_duplicate_positional_missing_and_wrong_mode_flags() {
+        let mut unknown = valid_args("serve");
+        unknown.extend(["--unknown", "secret-value"].into_iter().map(String::from));
+        assert!(matches!(
+            parse_options(&unknown),
+            Err(SessionError::ConfigError)
+        ));
+
+        let mut duplicate = valid_args("serve");
+        duplicate.extend(["--bind", "127.0.0.1:2"].into_iter().map(String::from));
+        assert!(matches!(
+            parse_options(&duplicate),
+            Err(SessionError::ConfigError)
+        ));
+
+        let mut positional = valid_args("serve");
+        positional.push("secret-value".into());
+        assert!(matches!(
+            parse_options(&positional),
+            Err(SessionError::ConfigError)
+        ));
+
+        let mut missing = valid_args("serve");
+        missing.push("--timeout".into());
+        assert!(matches!(
+            parse_options(&missing),
+            Err(SessionError::ConfigError)
+        ));
+
+        let mut serve_peer = valid_args("serve");
+        serve_peer.extend(["--peer", "127.0.0.1:2"].into_iter().map(String::from));
+        assert!(matches!(
+            parse_options(&serve_peer),
+            Err(SessionError::ConfigError)
+        ));
+
+        let mut connect_sessions = valid_args("connect");
+        connect_sessions.extend(
+            [
+                "--peer",
+                "127.0.0.1:2",
+                "--message-hex",
+                "00",
+                "--max-sessions",
+                "1",
+            ]
+            .into_iter()
+            .map(String::from),
+        );
+        assert!(matches!(
+            parse_options(&connect_sessions),
+            Err(SessionError::ConfigError)
+        ));
+    }
+
+    #[test]
+    fn injected_socket_and_fd_errors_keep_their_categories() {
+        assert_eq!(
+            send_error(&std::io::Error::from_raw_os_error(libc::EMSGSIZE)),
+            CliError::Session(SessionError::Budget)
+        );
+        assert_eq!(
+            send_error(&std::io::Error::from_raw_os_error(libc::EACCES)),
+            CliError::Io
+        );
+        assert_eq!(
+            receive_error(&std::io::Error::from(std::io::ErrorKind::TimedOut)),
+            CliError::Session(SessionError::Timeout)
+        );
+        assert_eq!(
+            receive_error(&std::io::Error::from(std::io::ErrorKind::ConnectionReset)),
+            CliError::Io
+        );
+        assert_eq!(ready(Some(-1)), Err(CliError::Io));
     }
     #[test]
     fn selector_is_stable_and_binding_tracks_remote_endpoint() {

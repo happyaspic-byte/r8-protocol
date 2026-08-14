@@ -299,6 +299,7 @@ class ReferenceVectors(unittest.TestCase):
         me, peer = r8ref.parse_loc("8:1::10"), r8ref.parse_loc("8:1::20")
         server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         server.bind(("127.0.0.1", 0))
+        server.settimeout(.2)
         stop = threading.Event()
         thread = threading.Thread(target=r8ref.run_echo_server, args=(server, me, stop), daemon=True)
         thread.start()
@@ -316,6 +317,8 @@ class ReferenceVectors(unittest.TestCase):
                              (r8ref.CTL_ECHO_REPLY, 0, body))
         finally:
             stop.set()
+            thread.join(1)
+            self.assertFalse(thread.is_alive())
             client.close()
             server.close()
 

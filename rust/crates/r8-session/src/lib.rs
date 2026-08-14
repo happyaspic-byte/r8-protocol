@@ -692,7 +692,12 @@ impl HandshakeConfig {
         if self.local.service_context != self.peer.service_context {
             return Err(SessionError::ServiceMismatch);
         }
-        if self.profile > 3 || self.budget < 48 || self.server_context_id == 0 {
+        if self.profile > 3
+            || !(48..=1280).contains(&self.budget)
+            || self.pending_limit == 0
+            || self.established_limit == 0
+            || self.server_context_id == 0
+        {
             return Err(SessionError::ConfigError);
         }
         Ok(())
@@ -859,6 +864,9 @@ enum ClientState {
         scid: u64,
         material: ClientMaterial,
         boot: [u8; 16],
+        opening: Vec<u8>,
+        verify_header: Header,
+        verify_cookie: [u8; 32],
         open_auth: Vec<u8>,
         deadline_ms: u64,
     },
@@ -920,7 +928,10 @@ impl ClientMachine {
         Ok(packet)
     }
 
-    pub fn retry(&self, now_ms: u64) -> Result<Vec<u8>, SessionError> {
+    pub fn retry(&mut self, now_ms: u64) -> Result<Vec<u8>, SessionError> {
+        if self.release_cookie_wait_if_expired(now_ms) {
+            return Err(SessionError::UnexpectedMessage);
+        }
         match &self.state {
             ClientState::CookieWait {
                 open, deadline_ms, ..
@@ -945,88 +956,192 @@ impl ClientMachine {
         }
     }
 
+    fn release_cookie_wait_if_expired(&mut self, now_ms: u64) -> bool {
+        if matches!(
+            &self.state,
+            ClientState::CookieWait { deadline_ms, .. } if now_ms >= *deadline_ms
+        ) {
+            self.state = ClientState::Released;
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn receive_verify(&mut self, packet: &[u8], now_ms: u64) -> Result<Vec<u8>, SessionError> {
-        let (scid, material, deadline_ms) = match &self.state {
+        if self.release_cookie_wait_if_expired(now_ms) {
+            return Err(SessionError::UnexpectedMessage);
+        }
+        match &self.state {
             ClientState::CookieWait {
                 scid,
                 material,
+                open,
                 deadline_ms,
-                ..
-            } if now_ms < *deadline_ms => (*scid, *material, *deadline_ms),
-            _ => return Err(SessionError::UnexpectedMessage),
-        };
-        let (_, payload) = Header::unpack(packet).map_err(|_| SessionError::AuthFailed)?;
-        let verify = SessionMessage::decode(payload, self.config.profile, self.config.budget)?;
-        if verify.typ != VERIFY_COOKIE {
-            return Err(SessionError::UnexpectedMessage);
+            } if now_ms < *deadline_ms => {
+                let scid = *scid;
+                let material = *material;
+                let deadline_ms = *deadline_ms;
+                let result = (|| {
+                    let (header, boot, cookie) =
+                        self.validate_verify_cookie(packet, scid, material, open)?;
+                    let opening = open.clone();
+                    let expected_ephemeral =
+                        PublicKey::from(&StaticSecret::from(material.ephemeral_secret)).to_bytes();
+                    let placeholder_server = Identity {
+                        role: self.config.peer.role,
+                        service_context: self.config.peer.service_context,
+                        eid: self.config.peer.eid,
+                        public_key: [0; 32],
+                    };
+                    let t0 = transcript_t0(&TranscriptContext {
+                        profile: self.config.profile,
+                        scid,
+                        client: &self.config.local,
+                        server: &placeholder_server,
+                        client_ephemeral: expected_ephemeral,
+                        server_ephemeral: [0; 32],
+                        client_nonce: material.nonce,
+                        server_nonce: [0; 32],
+                        boot,
+                    })?;
+                    let signature = sign_open_auth(&self.signing_key, &t0);
+                    let mut body = Vec::with_capacity(230);
+                    body.extend_from_slice(&[self.config.local.role, self.config.peer.role]);
+                    body.extend_from_slice(&self.config.local.service_context.to_be_bytes());
+                    body.extend_from_slice(&self.config.local.eid);
+                    body.extend_from_slice(&self.config.local.public_key);
+                    body.extend_from_slice(&expected_ephemeral);
+                    body.extend_from_slice(&material.nonce);
+                    body.extend_from_slice(&boot);
+                    body.extend_from_slice(&cookie);
+                    body.extend_from_slice(&signature);
+                    let open_auth = self.packet(scid, OPEN_AUTH, 0, 0, &body)?;
+                    Ok((header, boot, cookie, opening, open_auth))
+                })();
+                match result {
+                    Ok((header, boot, cookie, opening, open_auth)) => {
+                        self.state = ClientState::AuthWait {
+                            scid,
+                            material,
+                            boot,
+                            opening,
+                            verify_header: header,
+                            verify_cookie: cookie,
+                            open_auth: open_auth.clone(),
+                            deadline_ms,
+                        };
+                        Ok(open_auth)
+                    }
+                    Err(error) => {
+                        self.state = ClientState::Released;
+                        Err(error)
+                    }
+                }
+            }
+            ClientState::AuthWait {
+                scid,
+                material,
+                boot,
+                opening,
+                verify_header,
+                verify_cookie,
+                open_auth,
+                deadline_ms,
+            } if now_ms < *deadline_ms => {
+                let (header, candidate_boot, candidate_cookie) =
+                    self.validate_verify_cookie(packet, *scid, *material, opening)?;
+                if header != *verify_header
+                    || candidate_boot != *boot
+                    || candidate_cookie != *verify_cookie
+                {
+                    return Err(SessionError::AuthFailed);
+                }
+                Ok(open_auth.clone())
+            }
+            _ => Err(SessionError::UnexpectedMessage),
         }
-        let body = &verify.body;
-        if body[0] != self.config.peer.role || body[1] != self.config.local.role {
-            return Err(SessionError::RoleMismatch);
-        }
-        if u32::from_be_bytes(body[2..6].try_into().expect("checked"))
-            != self.config.local.service_context
-        {
-            return Err(SessionError::ServiceMismatch);
-        }
-        if body[6..38] != self.config.local.public_key {
-            return Err(SessionError::PinMismatch);
-        }
+    }
+
+    fn validate_verify_cookie(
+        &self,
+        packet: &[u8],
+        scid: u64,
+        material: ClientMaterial,
+        opening: &[u8],
+    ) -> Result<(Header, [u8; 16], [u8; 32]), SessionError> {
+        let (opening_header, opening_payload) =
+            Header::unpack_with_budget(opening, self.config.budget)
+                .map_err(|_| SessionError::AuthFailed)?;
         let expected_ephemeral =
             PublicKey::from(&StaticSecret::from(material.ephemeral_secret)).to_bytes();
-        let ephemeral_digest = Sha256::digest(expected_ephemeral);
-        if ephemeral_digest[..] != body[38..70] {
+        if opening_header.next_header != r8_proto::NH_SES
+            || opening_header.profile != self.config.profile
+            || opening_header.scid != scid
+            || opening_header.flags != 0
+            || opening_header.path_slot != 0
+            || opening_header.src != self.config.source
+            || opening_header.dst != self.config.destination
+            || opening_payload.len() != 122
+            || opening_payload[0] != OPEN
+            || opening_payload[1] != SESSION_VERSION
+            || opening_payload[2] != self.config.profile
+            || opening_payload[3] != 0
+            || opening_payload[4] != self.config.local.role
+            || opening_payload[5] != self.config.peer.role
+            || u32::from_be_bytes(opening_payload[6..10].try_into().expect("checked"))
+                != self.config.local.service_context
+            || opening_payload[10..26] != self.config.local.eid
+            || opening_payload[26..58] != self.config.local.public_key
+            || opening_payload[58..90] != expected_ephemeral
+            || opening_payload[90..122] != material.nonce
+        {
             return Err(SessionError::AuthFailed);
         }
-        let boot: [u8; 16] = body[70..86].try_into().expect("checked");
-        let cookie: [u8; 32] = body[86..118].try_into().expect("checked");
-        let placeholder_server = Identity {
-            role: self.config.peer.role,
-            service_context: self.config.peer.service_context,
-            eid: self.config.peer.eid,
-            public_key: [0; 32],
-        };
-        let t0 = transcript_t0(&TranscriptContext {
-            profile: self.config.profile,
-            scid,
-            client: &self.config.local,
-            server: &placeholder_server,
-            client_ephemeral: expected_ephemeral,
-            server_ephemeral: [0; 32],
-            client_nonce: material.nonce,
-            server_nonce: [0; 32],
-            boot,
-        })?;
-        let signature = sign_open_auth(&self.signing_key, &t0);
-        let mut body = Vec::with_capacity(230);
-        body.extend_from_slice(&[self.config.local.role, self.config.peer.role]);
-        body.extend_from_slice(&self.config.local.service_context.to_be_bytes());
-        body.extend_from_slice(&self.config.local.eid);
-        body.extend_from_slice(&self.config.local.public_key);
-        body.extend_from_slice(&expected_ephemeral);
-        body.extend_from_slice(&material.nonce);
-        body.extend_from_slice(&boot);
-        body.extend_from_slice(&cookie);
-        body.extend_from_slice(&signature);
-        let open_auth = self.packet(scid, OPEN_AUTH, 0, 0, &body)?;
-        self.state = ClientState::AuthWait {
-            scid,
-            material,
-            boot,
-            open_auth: open_auth.clone(),
-            deadline_ms,
-        };
-        Ok(open_auth)
+        let (header, payload) = Header::unpack_with_budget(packet, self.config.budget)
+            .map_err(|_| SessionError::AuthFailed)?;
+        if header.next_header != r8_proto::NH_SES
+            || header.profile != self.config.profile
+            || header.scid != scid
+            || header.flags != 0
+            || header.path_slot != 0
+            || header.src != self.config.destination
+            || header.dst != self.config.source
+            || payload.len() != 122
+            || payload[0] != VERIFY_COOKIE
+            || payload[1] != SESSION_VERSION
+            || payload[2] != self.config.profile
+            || payload[3] != 0
+            || payload[4] != self.config.peer.role
+            || payload[5] != self.config.local.role
+            || u32::from_be_bytes(payload[6..10].try_into().expect("checked"))
+                != self.config.local.service_context
+            || payload[10..42] != opening_payload[26..58]
+        {
+            return Err(SessionError::AuthFailed);
+        }
+        if Sha256::digest(&opening_payload[58..90])[..] != payload[42..74] {
+            return Err(SessionError::AuthFailed);
+        }
+        let boot = payload[74..90].try_into().expect("checked");
+        let cookie = payload[90..122].try_into().expect("checked");
+        Ok((header, boot, cookie))
     }
     pub fn receive_ack(&mut self, packet: &[u8], now_ms: u64) -> Result<Vec<u8>, SessionError> {
+        if matches!(
+            &self.state,
+            ClientState::AuthWait { deadline_ms, .. } if now_ms >= *deadline_ms
+        ) {
+            self.state = ClientState::Released;
+            return Err(SessionError::Timeout);
+        }
         let (scid, material, boot) = match &self.state {
             ClientState::AuthWait {
                 scid,
                 material,
                 boot,
-                deadline_ms,
                 ..
-            } if now_ms < *deadline_ms => (*scid, *material, *boot),
+            } => (*scid, *material, *boot),
             ClientState::Established { cached_accept, .. } => return Ok(cached_accept.clone()),
             _ => return Err(SessionError::UnexpectedMessage),
         };
@@ -1328,6 +1443,10 @@ struct PendingSession {
 struct EstablishedSession {
     scid: u64,
     session: DirectionalSession,
+    opening: Vec<u8>,
+    cached_ack: Vec<u8>,
+    binding: UdpBinding,
+    accepted: Vec<u8>,
     last_active_ms: u64,
 }
 
@@ -1361,6 +1480,19 @@ impl ServerMachine {
             established: Vec::new(),
         })
     }
+    fn validate_handshake_header(&self, header: &Header, scid: u64) -> Result<(), SessionError> {
+        if header.next_header != r8_proto::NH_SES
+            || header.profile != self.config.profile
+            || header.scid != scid
+            || header.flags != 0
+            || header.path_slot != 0
+            || header.src != self.config.source
+            || header.dst != self.config.destination
+        {
+            return Err(SessionError::AuthFailed);
+        }
+        Ok(())
+    }
 
     pub fn receive_open(
         &self,
@@ -1370,6 +1502,7 @@ impl ServerMachine {
     ) -> Result<Vec<u8>, SessionError> {
         let (header, payload) = Header::unpack_with_budget(packet, self.config.budget)
             .map_err(|_| SessionError::AuthFailed)?;
+        self.validate_handshake_header(&header, header.scid)?;
         let open = SessionMessage::decode(payload, self.config.profile, self.config.budget)?;
         if open.typ != OPEN {
             return Err(SessionError::UnexpectedMessage);
@@ -1418,13 +1551,33 @@ impl ServerMachine {
         bucket: u64,
         handshake_material: Option<ServerHandshakeMaterial>,
     ) -> Result<Vec<u8>, SessionError> {
+        self.expire(now_ms);
         let (header, payload) = Header::unpack_with_budget(packet, self.config.budget)
             .map_err(|_| SessionError::AuthFailed)?;
+        self.validate_handshake_header(&header, header.scid)?;
         let auth = SessionMessage::decode(payload, self.config.profile, self.config.budget)?;
         if auth.typ != OPEN_AUTH {
             return Err(SessionError::UnexpectedMessage);
         }
         let body = &auth.body;
+        if let Some(pending) = self.pending.iter().find(|entry| entry.scid == header.scid) {
+            return if pending.opening == packet && pending.binding == *binding {
+                Ok(pending.cached_ack.clone())
+            } else {
+                Err(SessionError::ScidCollision)
+            };
+        }
+        if let Some(established) = self
+            .established
+            .iter()
+            .find(|entry| entry.scid == header.scid)
+        {
+            return if established.opening == packet && established.binding == *binding {
+                Ok(established.cached_ack.clone())
+            } else {
+                Err(SessionError::ScidCollision)
+            };
+        }
         let client = self.client_identity(body)?;
         let client_ephemeral: [u8; 32] = body[54..86].try_into().expect("auth body length");
         let client_nonce: [u8; 32] = body[86..118].try_into().expect("auth body length");
@@ -1449,15 +1602,9 @@ impl ServerMachine {
             self.material.previous_key_rotated_ms,
             &supplied_cookie,
             cookie_context,
-            bucket.saturating_mul(10_000),
+            now_ms,
         )? {
             return Err(SessionError::CookieInvalid);
-        }
-        if let Some(pending) = self.pending.iter().find(|entry| entry.scid == header.scid) {
-            if pending.opening == packet && pending.binding == *binding {
-                return Ok(pending.cached_ack.clone());
-            }
-            return Err(SessionError::ScidCollision);
         }
         if self.pending.len() >= self.config.pending_limit {
             return Err(SessionError::Capacity);
@@ -1546,7 +1693,8 @@ impl ServerMachine {
     }
 
     pub fn receive_accept(&mut self, packet: &[u8], now_ms: u64) -> Result<(), SessionError> {
-        let (header, _) = Header::unpack_with_budget(packet, self.config.budget)
+        self.expire(now_ms);
+        let (header, payload) = Header::unpack_with_budget(packet, self.config.budget)
             .map_err(|_| SessionError::AuthFailed)?;
         validate_protected_header(
             &header,
@@ -1555,48 +1703,64 @@ impl ServerMachine {
             &self.config.source,
             &self.config.destination,
         )?;
-        if self
+        let message = SessionMessage::decode(payload, header.profile, self.config.budget)?;
+        if message.typ != SESSION_ACCEPT {
+            return Err(SessionError::UnexpectedMessage);
+        }
+        if let Some(entry) = self
             .established
             .iter()
-            .any(|entry| entry.scid == header.scid)
+            .find(|entry| entry.scid == header.scid)
         {
-            return Ok(());
+            return if entry.accepted == packet {
+                Ok(())
+            } else {
+                Err(SessionError::AuthFailed)
+            };
         }
         let index = self
             .pending
             .iter()
             .position(|entry| entry.scid == header.scid)
             .ok_or(SessionError::UnexpectedMessage)?;
-        let plaintext = self.pending[index].session.decrypt(packet)?;
-        if plaintext.len() != 44
-            || &plaintext[..12] != b"R8 ACCEPT v1"
-            || plaintext[12..] != self.pending[index].session.transcript_hash
+        let preview = self.pending[index].session.preview(packet)?;
+        if preview.plaintext().len() != 44
+            || &preview.plaintext()[..12] != b"R8 ACCEPT v1"
+            || preview.plaintext()[12..] != self.pending[index].session.transcript_hash
         {
             return Err(SessionError::AuthFailed);
         }
         if self.established.len() >= self.config.established_limit {
             return Err(SessionError::Capacity);
         }
+        self.pending[index].session.commit(preview)?;
         let pending = self.pending.remove(index);
         self.established.push(EstablishedSession {
             scid: pending.scid,
             session: pending.session,
+            opening: pending.opening,
+            cached_ack: pending.cached_ack,
+            binding: pending.binding,
+            accepted: packet.to_vec(),
             last_active_ms: now_ms,
         });
         Ok(())
     }
 
     pub fn receive_data(&mut self, packet: &[u8], now_ms: u64) -> Result<Vec<u8>, SessionError> {
-        let preview = self.preview_data_with_locs(packet, &[], &[])?;
+        self.expire(now_ms);
+        let preview = self.preview_data_with_locs(packet, &[], &[], now_ms)?;
         self.commit_data(preview, now_ms)
     }
 
     pub fn preview_data_with_locs(
-        &self,
+        &mut self,
         packet: &[u8],
         allowed_sources: &[[u8; 16]],
         allowed_destinations: &[[u8; 16]],
+        now_ms: u64,
     ) -> Result<DataPreview, SessionError> {
+        self.expire(now_ms);
         let (header, payload) = Header::unpack_with_budget(packet, self.config.budget)
             .map_err(|_| SessionError::AuthFailed)?;
         let session = self
@@ -1635,6 +1799,7 @@ impl ServerMachine {
         if preview.header.scid != preview.scid {
             return Err(SessionError::Replay);
         }
+        self.expire(now_ms);
         let entry = self
             .established
             .iter_mut()
@@ -1740,6 +1905,7 @@ impl ServerMachine {
         }
     }
     pub fn receive_close(&mut self, packet: &[u8], now_ms: u64) -> Result<u16, SessionError> {
+        self.expire(now_ms);
         let (header, payload) = Header::unpack_with_budget(packet, self.config.budget)
             .map_err(|_| SessionError::AuthFailed)?;
         validate_protected_header(

@@ -1,0 +1,56 @@
+name: Q3 Full
+
+on:
+  workflow_dispatch:
+    inputs:
+      host_epoch:
+        description: Closed-lab epoch label (closed-lab-epoch-NNN)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: q3-full-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  q3-full:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+      - name: Install Q3 requirements
+        run: |
+          sudo apt-get update
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install --yes iproute2
+          PYTHON_BIN="$(command -v python3)"
+          "$PYTHON_BIN" -m pip install --requirement requirements-dev.txt
+      - name: Execute full isolated Q3 package
+        env:
+          HOST_EPOCH: ${{ inputs.host_epoch }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          PYTHON_BIN="$(command -v python3)"
+          SOURCE_IDENTITY="$("$PYTHON_BIN" -c 'import runpy; print(runpy.run_path("bench/q3.py")["source_identity"]())')"
+          sudo env PATH="$PATH" PYTHON_BIN="$PYTHON_BIN" RUNNER_TEMP="$RUNNER_TEMP" GITHUB_SHA="$GITHUB_SHA" HOST_EPOCH="$HOST_EPOCH" SOURCE_IDENTITY="$SOURCE_IDENTITY" Q3_ISOLATED_NETNS=1 unshare --net --mount-proc bash -ceu 'ip link set lo up; "$PYTHON_BIN" bench/q3.py run --output "$RUNNER_TEMP/q3-full" --source-identity "$SOURCE_IDENTITY" --host-epoch "$HOST_EPOCH" --git-commit "$GITHUB_SHA"; "$PYTHON_BIN" bench/q3.py regenerate --output "$RUNNER_TEMP/q3-full"'
+          sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/q3-full"
+      - name: Validate full Q3 package
+        env:
+          HOST_EPOCH: ${{ inputs.host_epoch }}
+        run: |
+          PYTHON_BIN="$(command -v python3)"
+          "$PYTHON_BIN" -c 'import hashlib, json, os, pathlib, runpy; output = pathlib.Path(os.environ["RUNNER_TEMP"]) / "q3-full"; q3 = runpy.run_path("bench/q3.py"); manifest = json.loads((output / "run-manifest.json").read_text()); environment = json.loads((output / "environment.json").read_text()); rows = [json.loads(line) for line in (output / "raw.jsonl").read_text().splitlines()]; assert len(rows) == 4200 and manifest["row_count"] == 4200 and manifest["failures"] == 0 and manifest["status"] == "completed" and manifest["host_epoch"] == os.environ["HOST_EPOCH"] and manifest["git_commit"] == os.environ["GITHUB_SHA"] and manifest["source_identity"] == q3["source_identity"]() and manifest["isolated_netns_proof"] is True and environment["isolated_netns_proof"] is True; assert all(row["status"] == "success" and row["network"]["rx_bytes"] == row["network"]["tx_bytes"] and row["network"]["rx_packets"] == row["network"]["tx_packets"] for row in rows); assert set(manifest["sha256"]) == {"raw.jsonl", "environment.json", "summary.json"}; assert all(hashlib.sha256((output / name).read_bytes()).hexdigest() == digest for name, digest in manifest["sha256"].items())'
+      - name: Upload Q3 package
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: q3-full-${{ github.run_id }}
+          path: ${{ runner.temp }}/q3-full
+          if-no-files-found: warn
+          retention-days: 30

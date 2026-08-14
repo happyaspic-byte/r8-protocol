@@ -299,6 +299,7 @@ class Session:
             return counter, seal(self.key, header, prefix, counter, plaintext)
     def preview_decrypt(self, header, prefix, counter, ciphertext):
         with self._lock:
+            if len(self._previews) >= 64: _fail("CAPACITY")
             generation = self.replay.preview(counter)
             plaintext = open_sealed(self.key, header, prefix, counter, ciphertext)
             preview = _DecryptPreview(self, generation, counter)
@@ -312,16 +313,26 @@ class Session:
                 self._previews.discard(preview)
                 _fail("REPLAY")
             self.replay.check_and_mark(preview._counter)
-            self._previews.remove(preview)
-            preview._used = True
+            for stale in self._previews:
+                stale._used = True
+            self._previews.clear()
     def abort_decrypt(self, preview):
         with self._lock:
-            if (not isinstance(preview, _DecryptPreview) or preview._session is not self
-                    or preview._used or preview not in self._previews
-                    or preview._generation != self.replay.generation):
+            valid = (isinstance(preview, _DecryptPreview) and preview._session is self
+                     and not preview._used and preview in self._previews
+                     and preview._generation == self.replay.generation)
+            if not valid:
+                if isinstance(preview, _DecryptPreview) and preview._session is self:
+                    self._previews.discard(preview)
+                    preview._used = True
                 _fail("REPLAY")
             self._previews.remove(preview)
             preview._used = True
+    def _discard_previews(self):
+        with self._lock:
+            for preview in self._previews:
+                preview._used = True
+            self._previews.clear()
     def decrypt(self, header, prefix, counter, ciphertext):
         with self._lock:
             plaintext, preview = self.preview_decrypt(header, prefix, counter, ciphertext)
@@ -444,25 +455,46 @@ class ServerMachine:
         self.limiter.admit(binding, len(packet), len(reply))
         return reply
 
+    def _discard_record(self, record):
+        record.cached_ack = b""
+        for name in ("auth_packet", "hash", "c2s", "s2c", "accept_replay"):
+            if hasattr(record, name):
+                setattr(record, name, None)
+    def _dispose_established(self, established):
+        for preview in tuple(self._previews):
+            if preview._record is established:
+                self._previews.remove(preview)
+                preview._used = True
+        established["c2s"]._discard_previews()
+        established["s2c"]._discard_previews()
+        self._discard_record(established["record"])
+    def _expire(self, now):
+        with self._lock:
+            expired_pending = [key for key, record in self.pending.items() if now >= record.created + 5]
+            for key in expired_pending:
+                self._discard_record(self.pending.pop(key))
+            expired_established = [key for key, value in self.established.items() if now >= value["last"] + 120]
+            for key in expired_established:
+                self._dispose_established(self.established.pop(key))
     def expire(self):
-        now = self.clock()
-        self.pending = {k: v for k, v in self.pending.items() if now - v.created <= 5}
-        if hasattr(self, "established"):
-            self.established = {k: v for k, v in self.established.items()
-                                if now - v["last"] <= 120}
+        self._expire(self.clock())
 
     def receive_open_auth(self, packet, binding, current_bucket, server_ephemeral_secret, server_nonce):
         if len(packet) > self.config.binding_budget: _fail("BUDGET")
         header, payload = parse_packet(packet, self.config.binding_budget)
         self._header(header)
         auth = OpenAuth.parse(payload)
-        if auth.boot_instance != self.boot_instance or not self._cookies(binding, auth, header.scid, current_bucket):
-            _fail("COOKIE_INVALID")
+        self._expire(self.clock())
         existing = self.pending.get(header.scid)
+        if existing is None:
+            existing = self.established.get(header.scid, {}).get("record")
         if existing is not None:
-            if existing.binding == binding and existing.auth_packet == packet:
+            if existing.binding == binding and existing.auth_packet == bytes(packet):
                 return existing.cached_ack
             _fail("SCID_COLLISION")
+        auth = OpenAuth.parse(payload)
+        if auth.boot_instance != self.boot_instance or not self._cookies(binding, auth, header.scid, current_bucket):
+            _fail("COOKIE_INVALID")
         if auth.sender_role != self.peer_pin.role or auth.receiver_role != self.identity_role:
             _fail("ROLE_MISMATCH")
         if auth.service_context != self.service_context:
@@ -498,6 +530,7 @@ class ServerMachine:
         if len(packet) > self.config.binding_budget: _fail("BUDGET")
         header, payload = parse_packet(packet, self.config.binding_budget)
         self._header(header, True)
+        self._expire(self.clock())
         record = self.pending.get(header.scid)
         if record is None:
             record = self.established.get(header.scid, {}).get("record")
@@ -532,6 +565,7 @@ class ServerMachine:
             if len(packet) > self.config.binding_budget: _fail("BUDGET")
             header, payload = parse_packet(packet, self.config.binding_budget)
             self._header(header, True, allowed_sources, allowed_destinations)
+            self._expire(self.clock())
             established = self.established.get(header.scid)
             if established is None: _fail("UNEXPECTED_MESSAGE")
             message = ProtectedMessage.parse(payload)
@@ -545,6 +579,7 @@ class ServerMachine:
             return plaintext, header, message, preview
     def commit_data(self, preview):
         with self._lock:
+            self._expire(self.clock())
             if (not isinstance(preview, _DataPreview) or preview._machine is not self
                     or preview._used or preview not in self._previews
                     or self.established.get(preview._record["record"].scid) is not preview._record):
@@ -556,17 +591,24 @@ class ServerMachine:
                 self._previews.discard(preview)
                 preview._used = True
                 raise
-            self._previews.remove(preview)
-            preview._used = True
+            for stale in self._previews:
+                if stale._session_preview._session is preview._record["c2s"]:
+                    stale._used = True
+            self._previews = {stale for stale in self._previews
+                              if stale._session_preview._session is not preview._record["c2s"]}
             if preview._close:
-                self.established.pop(preview._record["record"].scid)
+                self._dispose_established(self.established.pop(preview._record["record"].scid))
             else:
                 preview._record["last"] = self.clock()
     def abort_data_preview(self, preview):
         with self._lock:
-            if (not isinstance(preview, _DataPreview) or preview._machine is not self
-                    or preview._used or preview not in self._previews
-                    or self.established.get(preview._record["record"].scid) is not preview._record):
+            valid = (isinstance(preview, _DataPreview) and preview._machine is self
+                     and not preview._used and preview in self._previews
+                     and self.established.get(preview._record["record"].scid) is preview._record)
+            if not valid:
+                if isinstance(preview, _DataPreview) and preview._machine is self:
+                    self._previews.discard(preview)
+                    preview._used = True
                 _fail("REPLAY")
             preview._record["c2s"].abort_decrypt(preview._session_preview)
             self._previews.remove(preview)
@@ -593,23 +635,30 @@ class ServerMachine:
                     header.pack(prefix + struct.pack("!Q", 1) + b"\0" * (len(plaintext) + 16),
                                 self.config.binding_budget)[:48], prefix, plaintext)
             except SessionError:
-                self.established.pop(scid, None)
+                discarded = self.established.pop(scid, None)
+                if discarded is not None:
+                    self._dispose_established(discarded)
                 raise
             payload = ProtectedMessage(typ, self.config.profile, counter, ciphertext).build()
             established["last"] = self.clock()
             packet = build_packet(header, payload, self.config.binding_budget)
             if close:
-                self.established.pop(scid, None)
+                self._dispose_established(self.established.pop(scid))
             return packet
     def restart(self, boot_instance, current_cookie_key, prior_cookie_key=None, prior_key_valid_until=None):
         if len(boot_instance) != 16 or len(current_cookie_key) != 32:
             raise ValueError("server secrets")
         if prior_cookie_key is not None and len(prior_cookie_key) != 32:
             raise ValueError("prior cookie key")
-        self.pending.clear()
-        self.established.clear()
-        self.boot_instance, self.cookie_key = boot_instance, current_cookie_key
-        self.prior_cookie_key, self.prior_key_valid_until = prior_cookie_key, prior_key_valid_until
+        with self._lock:
+            for record in self.pending.values():
+                self._discard_record(record)
+            for established in self.established.values():
+                self._dispose_established(established)
+            self.pending.clear()
+            self.established.clear()
+            self.boot_instance, self.cookie_key = boot_instance, current_cookie_key
+            self.prior_cookie_key, self.prior_key_valid_until = prior_cookie_key, prior_key_valid_until
 class PrevalidationLimiter:
     def __init__(self, clock, hash_key, max_sources=4096, window=20, burst=2000, refill=1000):
         if len(hash_key) != 32: raise ValueError("limiter hash key")
@@ -700,31 +749,55 @@ class ClientMachine:
         self.ephemeral = X25519PrivateKey.from_private_bytes(ephemeral_secret).public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
         self.nonce_value, self.deadline = nonce_value, self.clock() + 5
         self.opening = Open(1, self.server_pin.role, self.service_context, self.identity.eid, self.identity.public, self.ephemeral, nonce_value)
-        self.open_packet = build_packet(Header(NH_SES, self.source, self.destination, profile=self.profile, scid=scid), self.opening.build(self.profile))
+        self.open_packet = build_packet(Header(NH_SES, self.source, self.destination, profile=self.profile, scid=scid), self.opening.build(self.profile), self.binding_budget)
         self.state = self.COOKIE_WAIT
         return self.open_packet
     def receive_verify(self, packet):
-        if self.state != self.COOKIE_WAIT or self.clock() > self.deadline: self._release()
-        header, payload = parse_packet(packet)
-        if header.scid != self.scid or header.src != self.destination or header.dst != self.source: self._release()
-        verify = VerifyCookie.parse(payload)
-        if verify.receiver_role != 2 or verify.sender_role != 1 or verify.service_context != self.service_context: self._release()
-        if verify.client_public_key != self.identity.public or verify.ephemeral_hash != hashlib.sha256(self.ephemeral).digest(): self._release()
-        if hasattr(self, "verify_payload"):
-            if payload == self.verify_payload: return self.auth_packet
+        retry = self.state == self.AUTH_WAIT
+        if self.state not in (self.COOKIE_WAIT, self.AUTH_WAIT) or self.clock() >= self.deadline:
             self._release()
-        t0 = placeholder_t0(self.scid, 1, 2, self.service_context, self.identity.eid, self.identity.public, self.server_pin.eid, self.ephemeral, self.nonce_value, verify.boot_instance)
-        auth = OpenAuth(1, 2, self.service_context, self.identity.eid, self.identity.public, self.ephemeral, self.nonce_value, verify.boot_instance, verify.cookie_value, sign_open_auth(self.identity, t0))
-        self.verify_payload, self.boot_instance, self.auth_payload = payload, verify.boot_instance, auth.build(self.profile)
-        self.auth_packet = build_packet(Header(NH_SES, self.source, self.destination, profile=self.profile, scid=self.scid), self.auth_payload)
-        self.state = self.AUTH_WAIT
-        return self.auth_packet
+        try:
+            header, payload = parse_packet(packet, self.binding_budget)
+            if (header.scid != self.scid or header.src != self.destination or header.dst != self.source
+                    or header.profile != self.profile or header.flags != 0 or header.pslot != 0):
+                _fail("AUTH_FAILED")
+            verify = VerifyCookie.parse(payload)
+            if (verify.receiver_role != self.opening.receiver_role or verify.sender_role != self.opening.sender_role
+                    or verify.service_context != self.opening.service_context
+                    or verify.client_public_key != self.opening.sender_public_key
+                    or eid(verify.client_public_key) != self.opening.sender_eid
+                    or verify.ephemeral_hash != hashlib.sha256(self.opening.sender_ephemeral).digest()):
+                _fail("AUTH_FAILED")
+            if retry:
+                if (verify.boot_instance != self.boot_instance or payload != self.verify_payload):
+                    _fail("AUTH_FAILED")
+                return self.auth_packet
+            t0 = placeholder_t0(self.scid, self.opening.sender_role, self.opening.receiver_role,
+                                self.opening.service_context, self.opening.sender_eid,
+                                self.opening.sender_public_key, self.server_pin.eid,
+                                self.opening.sender_ephemeral, self.opening.sender_nonce,
+                                verify.boot_instance)
+            auth = OpenAuth(self.opening.sender_role, self.opening.receiver_role,
+                            self.opening.service_context, self.opening.sender_eid,
+                            self.opening.sender_public_key, self.opening.sender_ephemeral,
+                            self.opening.sender_nonce, verify.boot_instance, verify.cookie_value,
+                            sign_open_auth(self.identity, t0))
+            self.verify_payload, self.boot_instance, self.auth_payload = payload, verify.boot_instance, auth.build(self.profile)
+            self.auth_packet = build_packet(Header(NH_SES, self.source, self.destination,
+                                                   profile=self.profile, scid=self.scid),
+                                            self.auth_payload, self.binding_budget)
+            self.state = self.AUTH_WAIT
+            return self.auth_packet
+        except SessionError:
+            if retry:
+                _fail("AUTH_FAILED")
+            self._release()
     def receive_ack(self, packet):
         if self.state == self.ESTABLISHED:
             if packet == self.ack_packet:
                 return self.accept_packet
             self._release()
-        if self.state != self.AUTH_WAIT or self.clock() > self.deadline:
+        if self.state != self.AUTH_WAIT or self.clock() >= self.deadline:
             self._release()
         try:
             header, payload = parse_packet(packet)
@@ -824,17 +897,24 @@ class ClientMachine:
                 self._previews.discard(preview)
                 preview._used = True
                 raise
-            self._previews.remove(preview)
-            preview._used = True
+            for stale in self._previews:
+                if stale._session_preview._session is self.s2c_session:
+                    stale._used = True
+            self._previews = {stale for stale in self._previews
+                              if stale._session_preview._session is not self.s2c_session}
             if preview._close:
-                self.state = self.RELEASED
+                self._clear_state()
             else:
                 self.deadline = self.clock()
     def abort_data_preview(self, preview):
         with self._lock:
-            if (not isinstance(preview, _DataPreview) or preview._machine is not self
-                    or preview._used or preview not in self._previews
-                    or preview._record is not self.s2c_session):
+            valid = (isinstance(preview, _DataPreview) and preview._machine is self
+                     and not preview._used and preview in self._previews
+                     and preview._record is self.s2c_session)
+            if not valid:
+                if isinstance(preview, _DataPreview) and preview._machine is self:
+                    self._previews.discard(preview)
+                    preview._used = True
                 _fail("REPLAY")
             self.s2c_session.abort_decrypt(preview._session_preview)
             self._previews.remove(preview)
@@ -861,18 +941,35 @@ class ClientMachine:
                 prefix, struct.pack("!H", code))
         except SessionError:
             self._release()
-        self.state = self.RELEASED
-        return build_packet(header, ProtectedMessage(7, self.profile, counter, ciphertext).build(),
-                            self.binding_budget)
+        packet = build_packet(header, ProtectedMessage(7, self.profile, counter, ciphertext).build(),
+                              self.binding_budget)
+        self._clear_state()
+        return packet
 
     def expire(self):
-        if self.state in (self.COOKIE_WAIT, self.AUTH_WAIT) and self.clock() > self.deadline:
+        if self.state in (self.COOKIE_WAIT, self.AUTH_WAIT) and self.clock() >= self.deadline:
             self._release()
         if self.state == self.ESTABLISHED and self.clock() > self.deadline + 120:
             self._release()
         return self.state
+    def _clear_state(self):
+        with self._lock:
+            self.state = self.RELEASED
+            for preview in self._previews:
+                preview._used = True
+            self._previews.clear()
+            for name in ("c2s_session", "s2c_session"):
+                session = getattr(self, name, None)
+                if session is not None:
+                    session._discard_previews()
+            for name in ("ephemeral_secret", "ephemeral", "nonce_value", "opening", "open_packet",
+                         "verify_payload", "boot_instance", "auth_payload", "auth_packet",
+                         "ack_payload", "ack_packet", "accept_payload", "accept_packet",
+                         "transcript_hash", "c2s", "s2c", "c2s_session", "s2c_session"):
+                if hasattr(self, name):
+                    setattr(self, name, None)
     def _release(self):
-        self.state, self.ephemeral_secret = self.RELEASED, None
+        self._clear_state()
         _fail("AUTH_FAILED")
 
 def _endpoint(text, allow_isolated=False, allow_zero=False):

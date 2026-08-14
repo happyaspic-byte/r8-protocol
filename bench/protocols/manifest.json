@@ -11,9 +11,9 @@
     {
       "protocol_id": "Q1",
       "path": "bench/protocols/q1.json",
-      "contract_version": "r8-benchmark-preregistration-v3",
-      "size_bytes": 16890,
-      "sha256": "fc55647092b6c8e007b9e2f9f1b913d114e264f6a84e27e42b2bcbf0f9d200e6",
+      "contract_version": "r8-benchmark-preregistration-v4",
+      "size_bytes": 12132,
+      "sha256": "9c1aa76ab120f8464bf54ef634b0d852858ebe9e6c5ceea4c6fd8d0acf36ada3",
       "status": "frozen-preregistered-no-results",
       "superseded": [
         {
@@ -26,8 +26,16 @@
           "sha256": "9c652576d52f16f32a93436c147886d9e4ce68566d83e7a307a4f8d0e8f26f8c",
           "status": "retained-setup-failure-only",
           "application_observations": "none",
-          "reason": "All 1320 retained rows were setup failures before application traffic; gateway/source-policy routes preceded link activation and implementation omitted gateway/onlink semantics.",
+          "reason": "All 1320 retained rows were setup failures before application traffic; the route-ordering and omitted gateway/onlink-semantics explanation is an unverified historical hypothesis, not an established cause.",
           "retained_package_path": "bench/results/q1-setup-failure-v2"
+        },
+        {
+          "contract_version": "r8-benchmark-preregistration-v3",
+          "sha256": "fc55647092b6c8e007b9e2f9f1b913d114e264f6a84e27e42b2bcbf0f9d200e6",
+          "status": "cancelled-non-result",
+          "application_observations": "none",
+          "artifact_or_package_published": false,
+          "reason": "Run 31804033453 began and was cancelled after read-only QA found measurement and runtime defects."
         }
       ]
     },

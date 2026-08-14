@@ -510,6 +510,13 @@ enum CandidateState {
     Released,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct BindResponseIdentity {
+    loc: [u8; 16],
+    binding: ObservedBinding,
+    expiry_ms: u64,
+    token: [u8; 32],
+}
 #[derive(Clone, Debug)]
 struct Candidate {
     candidate_id: [u8; 16],
@@ -518,7 +525,14 @@ struct Candidate {
     slot: u8,
     binding: ObservedBinding,
     expiry_ms: u64,
+    response: Option<BindResponseIdentity>,
     state: CandidateState,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ResultOrigin {
+    Emitted,
+    Received,
 }
 
 #[derive(Clone, Debug)]
@@ -528,6 +542,9 @@ struct ResultEntry {
     slot: u8,
     bytes: Vec<u8>,
     expiry_ms: u64,
+    response: Option<BindResponseIdentity>,
+    origin: ResultOrigin,
+    received_binding: Option<ObservedBinding>,
 }
 
 #[derive(Clone, Debug)]
@@ -555,7 +572,7 @@ struct State {
     proposal_tokens: u8,
     proposal_refill_ms: u64,
     candidate_secret: Option<Zeroizing<[u8; 32]>>,
-    frozen_cohort: Option<(u64, Vec<[u8; 16]>)>,
+    frozen_cohort: Option<(u64, Vec<Proposal>)>,
     outbound: Vec<OutboundCandidate>,
     emitted_results: Vec<Vec<u8>>,
 }
@@ -571,19 +588,141 @@ enum Action {
     ExistingChallenge(Candidate),
     Respond(Control),
     CommitLocal {
-        candidate_id: [u8; 16],
         epoch: u64,
+        loc: [u8; 16],
+        binding: ObservedBinding,
+        promote: bool,
         result: ResultEntry,
     },
     Prove {
         candidate_id: [u8; 16],
         epoch: u64,
         slot: u8,
-        outcomes: Vec<ResultEntry>,
-        promoted: Option<[u8; 16]>,
         grace_until_ms: u64,
+        response: BindResponseIdentity,
     },
     None,
+}
+fn frozen_slots(state: &State) -> usize {
+    state
+        .frozen_cohort
+        .as_ref()
+        .map_or(0, |(_, members)| members.len())
+}
+
+fn result_entry(
+    proposal: &Proposal,
+    result: u8,
+    now_ms: u64,
+    response: Option<BindResponseIdentity>,
+) -> ResultEntry {
+    ResultEntry {
+        candidate_id: proposal.candidate_id,
+        epoch: proposal.epoch,
+        slot: proposal.slot,
+        bytes: Control::CandidateResult {
+            candidate_id: proposal.candidate_id,
+            epoch: proposal.epoch,
+            path_slot: proposal.slot,
+            result,
+        }
+        .encode()
+        .expect("fixed-width candidate result is valid"),
+        expiry_ms: now_ms.saturating_add(10_000),
+        response,
+        origin: ResultOrigin::Emitted,
+        received_binding: None,
+    }
+}
+
+fn settle_frozen_cohort(state: &mut State, now_ms: u64) -> bool {
+    let Some((epoch, members)) = state.frozen_cohort.clone() else {
+        return false;
+    };
+    if members.iter().any(|proposal| {
+        state
+            .proposals
+            .iter()
+            .any(|current| current.candidate_id == proposal.candidate_id)
+            && !state.candidates.iter().any(|candidate| {
+                candidate.candidate_id == proposal.candidate_id
+                    && matches!(
+                        candidate.state,
+                        CandidateState::Proven | CandidateState::Failed
+                    )
+            })
+    }) {
+        return false;
+    }
+
+    let mut proven: Vec<_> = members
+        .iter()
+        .filter(|proposal| {
+            state.candidates.iter().any(|candidate| {
+                candidate.candidate_id == proposal.candidate_id
+                    && candidate.state == CandidateState::Proven
+            })
+        })
+        .map(|proposal| proposal.candidate_id)
+        .collect();
+    proven.sort_unstable();
+    let winner = proven.first().copied();
+    let outcomes: Vec<_> = members
+        .iter()
+        .map(|proposal| {
+            let result = match winner {
+                Some(candidate_id) if candidate_id == proposal.candidate_id => 1,
+                Some(_)
+                    if state
+                        .candidates
+                        .iter()
+                        .any(|candidate| candidate.candidate_id == proposal.candidate_id) =>
+                {
+                    2
+                }
+                _ => 3,
+            };
+            let response = state
+                .candidates
+                .iter()
+                .find(|candidate| candidate.candidate_id == proposal.candidate_id)
+                .and_then(|candidate| candidate.response.clone());
+            result_entry(proposal, result, now_ms, response)
+        })
+        .collect();
+    debug_assert!(state.results.len().saturating_add(outcomes.len()) <= RESULT_CACHE_SLOTS);
+
+    if let Some(winner) = winner {
+        let candidate = state
+            .candidates
+            .iter()
+            .find(|candidate| candidate.candidate_id == winner)
+            .expect("proven candidate is present");
+        state.peer_epoch = epoch;
+        state.peer_loc = candidate.loc;
+        state.old_binding = Some((
+            state.current_binding.clone(),
+            now_ms.saturating_add(OLD_BINDING_GRACE_MS),
+        ));
+        state.current_binding = candidate.binding.clone();
+        for candidate in &mut state.candidates {
+            if candidate.epoch == epoch {
+                candidate.state = if candidate.candidate_id == winner {
+                    CandidateState::Promoted
+                } else {
+                    CandidateState::Failed
+                };
+            }
+        }
+    }
+    state
+        .emitted_results
+        .extend(outcomes.iter().map(|entry| entry.bytes.clone()));
+    state.results.extend(outcomes);
+    state.proposals.retain(|proposal| proposal.epoch > epoch);
+    state.candidates.retain(|candidate| candidate.epoch > epoch);
+    state.frozen_cohort = None;
+    true
 }
 
 pub struct Transition {
@@ -808,7 +947,7 @@ impl CandidateManager {
             return Err(MobilityError::Candidate);
         }
         let state = self.state.lock().map_err(|_| MobilityError::Candidate)?;
-        if state.closed {
+        if state.closed || state.generation == u64::MAX {
             return Err(MobilityError::Candidate);
         }
         let action = match &control {
@@ -845,9 +984,13 @@ impl CandidateManager {
                         return Err(MobilityError::Candidate);
                     }
                 } else if state
-                    .candidates
-                    .iter()
-                    .any(|candidate| candidate.candidate_id == *candidate_id)
+                    .frozen_cohort
+                    .as_ref()
+                    .is_some_and(|(cohort_epoch, _)| *epoch <= *cohort_epoch)
+                    || state
+                        .candidates
+                        .iter()
+                        .any(|candidate| candidate.candidate_id == *candidate_id)
                     || state
                         .outbound
                         .iter()
@@ -925,6 +1068,7 @@ impl CandidateManager {
                         slot: proposal.slot,
                         binding: binding.clone(),
                         expiry_ms: now_ms.saturating_add(CHALLENGE_EXPIRY_MS),
+                        response: None,
                         state: CandidateState::Challenged,
                     })
                 }
@@ -943,18 +1087,15 @@ impl CandidateManager {
                         && entry.slot == *path_slot
                         && now_ms < entry.expiry_ms
                 }) {
-                    let candidate = state
-                        .candidates
-                        .iter()
-                        .find(|candidate| {
-                            candidate.candidate_id == *candidate_id && candidate.binding == *binding
+                    if result.response.as_ref()
+                        == Some(&BindResponseIdentity {
+                            loc: *loc,
+                            binding: binding.clone(),
+                            expiry_ms: *expiry_ms,
+                            token: *supplied,
                         })
-                        .ok_or(MobilityError::Candidate)?;
-                    let control = Control::parse(&result.bytes)?;
-                    if candidate.state == CandidateState::Promoted
-                        || candidate.state == CandidateState::Failed
                     {
-                        Action::Respond(control)
+                        Action::Respond(Control::parse(&result.bytes)?)
                     } else {
                         return Err(MobilityError::Candidate);
                     }
@@ -1017,79 +1158,26 @@ impl CandidateManager {
                                 .proposals
                                 .iter()
                                 .filter(|proposal| proposal.epoch == greatest)
-                                .map(|proposal| proposal.candidate_id)
+                                .cloned()
                                 .collect()
                         });
-                    let terminal = members.iter().all(|member| {
-                        if *member == *candidate_id {
-                            true
-                        } else {
-                            state.candidates.iter().any(|candidate| {
-                                candidate.candidate_id == *member
-                                    && matches!(
-                                        candidate.state,
-                                        CandidateState::Proven | CandidateState::Failed
-                                    )
-                            })
-                        }
-                    });
-                    let mut outcomes = Vec::new();
-                    let mut promoted = None;
-                    if terminal {
-                        let mut proven: Vec<[u8; 16]> = members
-                            .iter()
-                            .copied()
-                            .filter(|member| {
-                                *member == *candidate_id
-                                    || state.candidates.iter().any(|candidate| {
-                                        candidate.candidate_id == *member
-                                            && candidate.state == CandidateState::Proven
-                                    })
-                            })
-                            .collect();
-                        proven.sort_unstable();
-                        promoted = proven.first().copied();
-                        for member in &members {
-                            let candidate = if *member == *candidate_id {
-                                Some((*loc, *epoch, *path_slot))
-                            } else {
-                                state
-                                    .candidates
-                                    .iter()
-                                    .find(|candidate| candidate.candidate_id == *member)
-                                    .map(|candidate| {
-                                        (candidate.loc, candidate.epoch, candidate.slot)
-                                    })
-                            };
-                            if let Some((_, result_epoch, result_slot)) = candidate {
-                                let result = if Some(*member) == promoted { 1 } else { 2 };
-                                let bytes = Control::CandidateResult {
-                                    candidate_id: *member,
-                                    epoch: result_epoch,
-                                    path_slot: result_slot,
-                                    result,
-                                }
-                                .encode()?;
-                                outcomes.push(ResultEntry {
-                                    candidate_id: *member,
-                                    epoch: result_epoch,
-                                    slot: result_slot,
-                                    bytes,
-                                    expiry_ms: now_ms.saturating_add(10_000),
-                                });
-                            }
-                        }
-                        if state.results.len().saturating_add(outcomes.len()) > RESULT_CACHE_SLOTS {
-                            return Err(MobilityError::Capacity);
-                        }
+                    if state.frozen_cohort.is_none()
+                        && *epoch == greatest
+                        && state.results.len().saturating_add(members.len()) > RESULT_CACHE_SLOTS
+                    {
+                        return Err(MobilityError::Capacity);
                     }
                     Action::Prove {
                         candidate_id: *candidate_id,
                         epoch: *epoch,
                         slot: *path_slot,
-                        outcomes,
-                        promoted,
-                        grace_until_ms: now_ms.saturating_add(OLD_BINDING_GRACE_MS),
+                        grace_until_ms: now_ms,
+                        response: BindResponseIdentity {
+                            loc: *loc,
+                            binding: binding.clone(),
+                            expiry_ms: *expiry_ms,
+                            token: *supplied,
+                        },
                     }
                 }
             }
@@ -1128,38 +1216,55 @@ impl CandidateManager {
                 path_slot,
                 result,
             } => {
-                let candidate = state
-                    .outbound
-                    .iter()
-                    .find(|candidate| {
-                        candidate.candidate_id == *candidate_id
-                            && candidate.epoch == *epoch
-                            && candidate.slot == *path_slot
-                            && candidate.binding.as_ref() == Some(binding)
-                    })
-                    .ok_or(MobilityError::Candidate)?;
-                if state.results.iter().any(|entry| {
+                if let Some(entry) = state.results.iter().find(|entry| {
                     entry.candidate_id == *candidate_id
                         && entry.epoch == *epoch
                         && entry.slot == *path_slot
+                        && now_ms < entry.expiry_ms
                 }) {
-                    Action::None
-                } else if state.results.len() >= RESULT_CACHE_SLOTS {
-                    return Err(MobilityError::Capacity);
-                } else if *result == 1 {
+                    if entry.origin == ResultOrigin::Received
+                        && entry.bytes == control.encode()?
+                        && entry.received_binding.as_ref() == Some(binding)
+                    {
+                        Action::None
+                    } else {
+                        return Err(MobilityError::Candidate);
+                    }
+                } else {
+                    let candidate = state
+                        .outbound
+                        .iter()
+                        .find(|candidate| {
+                            candidate.candidate_id == *candidate_id
+                                && candidate.epoch == *epoch
+                                && candidate.slot == *path_slot
+                                && candidate.binding.as_ref() == Some(binding)
+                        })
+                        .ok_or(MobilityError::Candidate)?;
+                    if state.results.len().saturating_add(frozen_slots(&state))
+                        >= RESULT_CACHE_SLOTS
+                    {
+                        return Err(MobilityError::Capacity);
+                    }
                     Action::CommitLocal {
-                        candidate_id: candidate.candidate_id,
                         epoch: candidate.epoch,
+                        loc: candidate.loc,
+                        binding: candidate
+                            .binding
+                            .clone()
+                            .expect("binding was verified while preparing transition"),
+                        promote: *result == 1,
                         result: ResultEntry {
                             candidate_id: *candidate_id,
                             epoch: *epoch,
                             slot: *path_slot,
                             bytes: control.encode()?,
                             expiry_ms: now_ms.saturating_add(10_000),
+                            response: None,
+                            origin: ResultOrigin::Received,
+                            received_binding: Some(binding.clone()),
                         },
                     }
-                } else {
-                    Action::None
                 }
             }
         };
@@ -1215,12 +1320,23 @@ impl CandidateManager {
         &self,
         transition: Transition,
         replay_commit: impl FnOnce() -> Result<(), MobilityError>,
-        idle_commit: impl FnOnce(),
     ) -> Result<(), MobilityError> {
         let mut state = self.state.lock().map_err(|_| MobilityError::Candidate)?;
         if state.closed || state.generation != transition.generation {
             return Err(MobilityError::Replay);
         }
+        let mutates = !matches!(
+            &transition.action,
+            Action::ExistingChallenge(_) | Action::Respond(_) | Action::None
+        );
+        let next_generation = if mutates {
+            state
+                .generation
+                .checked_add(1)
+                .ok_or(MobilityError::Replay)?
+        } else {
+            state.generation
+        };
         replay_commit()?;
         match transition.action {
             Action::CacheProposal {
@@ -1236,42 +1352,35 @@ impl CandidateManager {
             Action::ExistingChallenge(_) => {}
             Action::Respond(_) => {}
             Action::CommitLocal {
-                candidate_id,
                 epoch,
+                loc,
+                binding,
+                promote,
                 result,
             } => {
-                let (loc, binding, expiry_ms) = state
-                    .outbound
-                    .iter()
-                    .find(|candidate| {
-                        candidate.candidate_id == candidate_id && candidate.epoch == epoch
-                    })
-                    .map(|candidate| {
-                        (
-                            candidate.loc,
-                            candidate.binding.clone(),
-                            candidate.expiry_ms,
-                        )
-                    })
-                    .ok_or(MobilityError::Candidate)?;
-                let binding = binding.ok_or(MobilityError::Candidate)?;
+                let result_expiry_ms = result.expiry_ms;
+                let result_candidate_id = result.candidate_id;
                 state.results.push(result);
-                state.local_epoch = epoch;
-                state.local_loc = loc;
-                state.old_binding = Some((
-                    state.current_binding.clone(),
-                    expiry_ms.saturating_add(OLD_BINDING_GRACE_MS),
-                ));
-                state.current_binding = binding;
-                state.outbound.retain(|candidate| candidate.epoch > epoch);
+                if promote {
+                    state.local_epoch = epoch;
+                    state.local_loc = loc;
+                    state.old_binding = Some((state.current_binding.clone(), result_expiry_ms));
+                    state.current_binding = binding;
+                }
+                if promote {
+                    state.outbound.retain(|candidate| candidate.epoch > epoch);
+                } else {
+                    state
+                        .outbound
+                        .retain(|candidate| candidate.candidate_id != result_candidate_id);
+                }
             }
             Action::Prove {
                 candidate_id,
                 epoch,
                 slot,
-                outcomes,
-                promoted,
                 grace_until_ms,
+                response,
             } => {
                 let candidate = state
                     .candidates
@@ -1283,88 +1392,72 @@ impl CandidateManager {
                     })
                     .expect("transition generation protects candidate");
                 candidate.state = CandidateState::Proven;
-                if state.frozen_cohort.is_none() {
+                candidate.response = Some(response);
+                if state.proposals.iter().map(|proposal| proposal.epoch).max() == Some(epoch)
+                    && state
+                        .frozen_cohort
+                        .as_ref()
+                        .is_none_or(|(cohort_epoch, _)| epoch > *cohort_epoch)
+                {
                     let members = state
                         .proposals
                         .iter()
                         .filter(|proposal| proposal.epoch == epoch)
-                        .map(|proposal| proposal.candidate_id)
+                        .cloned()
                         .collect();
                     state.frozen_cohort = Some((epoch, members));
                 }
-                if let Some(winner) = promoted {
-                    let winner_candidate = state
-                        .candidates
-                        .iter()
-                        .find(|candidate| candidate.candidate_id == winner)
-                        .expect("terminal cohort members have candidates");
-                    let loc = winner_candidate.loc;
-                    let binding = winner_candidate.binding.clone();
-                    state.peer_epoch = epoch;
-                    state.peer_loc = loc;
-                    state.old_binding = Some((state.current_binding.clone(), grace_until_ms));
-                    state.current_binding = binding;
-                    for candidate in &mut state.candidates {
-                        if candidate.epoch == epoch {
-                            candidate.state = if candidate.candidate_id == winner {
-                                CandidateState::Promoted
-                            } else {
-                                CandidateState::Failed
-                            };
-                        }
-                    }
-                    state
-                        .emitted_results
-                        .extend(outcomes.iter().map(|entry| entry.bytes.clone()));
-                    state.results.extend(outcomes);
-                    state.proposals.retain(|proposal| proposal.epoch >= epoch);
-                    state
-                        .candidates
-                        .retain(|candidate| candidate.epoch >= epoch);
-                    state.frozen_cohort = Some((
-                        epoch,
-                        state
-                            .proposals
-                            .iter()
-                            .filter(|proposal| proposal.epoch == epoch)
-                            .map(|proposal| proposal.candidate_id)
-                            .collect(),
-                    ));
-                }
+                settle_frozen_cohort(&mut state, grace_until_ms);
             }
             Action::None => {}
         }
-        idle_commit();
-        state.generation = state
-            .generation
-            .checked_add(1)
-            .ok_or(MobilityError::Replay)?;
+        if mutates {
+            state.generation = next_generation;
+        }
         Ok(())
     }
 
     pub fn expire(&self, now_ms: u64) {
         if let Ok(mut state) = self.state.lock() {
+            if state.closed {
+                return;
+            }
+            let mut changed = false;
             for candidate in &mut state.candidates {
                 if now_ms >= candidate.expiry_ms && candidate.state == CandidateState::Challenged {
                     candidate.state = CandidateState::Failed;
+                    changed = true;
                 }
             }
+            let proposals = state.proposals.len();
             state
                 .proposals
                 .retain(|proposal| now_ms < proposal.expiry_ms);
+            changed |= state.proposals.len() != proposals;
+            let candidates = state.candidates.len();
             state
                 .candidates
                 .retain(|candidate| candidate.state != CandidateState::Released);
+            changed |= state.candidates.len() != candidates;
+            let results = state.results.len();
             state.results.retain(|result| now_ms < result.expiry_ms);
+            changed |= state.results.len() != results;
+            let outbound = state.outbound.len();
             state
                 .outbound
                 .retain(|candidate| now_ms < candidate.expiry_ms);
+            changed |= state.outbound.len() != outbound;
             if state
                 .old_binding
                 .as_ref()
                 .is_some_and(|(_, expiry)| now_ms >= *expiry)
             {
                 state.old_binding = None;
+                changed = true;
+            }
+            changed |= settle_frozen_cohort(&mut state, now_ms);
+            if changed {
+                state.generation = state.generation.wrapping_add(1);
             }
         }
     }
@@ -1598,6 +1691,9 @@ mod corpus_negative_state_machine {
                     .get("expiry_ms")
                     .and_then(Value::as_u64)
                     .unwrap_or(now + 10000),
+                response: None,
+                origin: ResultOrigin::Emitted,
+                received_binding: None,
             });
         }
         for entry in field(setup, "live_candidates")
@@ -1622,6 +1718,7 @@ mod corpus_negative_state_machine {
                     .get("challenge_expiry_ms")
                     .and_then(Value::as_u64)
                     .unwrap_or(now + 3000),
+                response: None,
                 state: match field(entry, "state").as_str().expect("state") {
                     "CHALLENGED" => CandidateState::Challenged,
                     "PROVEN" => CandidateState::Proven,
@@ -1686,6 +1783,343 @@ mod corpus_negative_state_machine {
             _ => panic!("unknown category"),
         }
     }
+    fn cohort_manager() -> (CandidateManager, SigningKey, ObservedBinding) {
+        let local_signing = SigningKey::from_bytes(&[0x11; 32]);
+        let peer_signing = SigningKey::from_bytes(&[0x22; 32]);
+        let local_key = local_signing.verifying_key().to_bytes();
+        let peer_key = peer_signing.verifying_key().to_bytes();
+        let binding = ObservedBinding::Native {
+            ingress_descriptor_id: 1,
+            next_hop_mac: [0x33; 6],
+        };
+        let manager = CandidateManager::new(CandidateManagerConfig {
+            signing: local_signing,
+            local: Identity {
+                role: 2,
+                service_context: 1,
+                eid: r8_session::eid(&local_key),
+                public_key: local_key,
+            },
+            peer: Identity {
+                role: 1,
+                service_context: 1,
+                eid: r8_session::eid(&peer_key),
+                public_key: peer_key,
+            },
+            profile: 0,
+            scid: 1,
+            policy: Policy { policy_id: 1 },
+            local_loc: [0x41; 16],
+            peer_loc: [0x42; 16],
+            initial_peer_binding: binding.clone(),
+            candidate_secret: [0x43; 32],
+        })
+        .expect("manager");
+        (manager, peer_signing, binding)
+    }
+
+    fn update(
+        manager: &CandidateManager,
+        peer_signing: &SigningKey,
+        candidate_id: [u8; 16],
+        new_loc: [u8; 16],
+        epoch: u64,
+    ) -> Control {
+        sign_loc_update(
+            peer_signing,
+            MobilityContext {
+                profile: manager.profile,
+                scid: manager.scid,
+                sender: &manager.peer,
+                receiver: &manager.local,
+                policy_id: manager.policy.policy_id,
+            },
+            LocUpdateFields {
+                candidate_id,
+                old_loc: manager.peer_loc(),
+                new_loc,
+                epoch,
+                path_slot: 0,
+            },
+        )
+        .expect("signed update")
+    }
+
+    fn proposal(control: &Control, expiry_ms: u64) -> Proposal {
+        let Control::LocUpdate {
+            candidate_id,
+            new_loc,
+            epoch,
+            path_slot,
+            ..
+        } = control
+        else {
+            panic!("update control");
+        };
+        Proposal {
+            bytes: control.encode().expect("encoded update"),
+            candidate_id: *candidate_id,
+            loc: *new_loc,
+            epoch: *epoch,
+            slot: *path_slot,
+            expiry_ms,
+        }
+    }
+
+    #[test]
+    fn frozen_cohort_rejects_late_equal_epoch_without_mutation() {
+        let (manager, peer_signing, binding) = cohort_manager();
+        let a = [0x01; 16];
+        let cached_a = update(&manager, &peer_signing, a, [0x51; 16], 1);
+        {
+            let mut state = manager.state.lock().expect("state lock");
+            state.proposals.push(proposal(&cached_a, 5_000));
+            state.candidates.push(Candidate {
+                candidate_id: a,
+                loc: [0x51; 16],
+                epoch: 1,
+                slot: 0,
+                binding: binding.clone(),
+                expiry_ms: 3_000,
+                response: None,
+                state: CandidateState::Proven,
+            });
+            state.frozen_cohort = Some((1, vec![proposal(&cached_a, 5_000)]));
+        }
+        let before = snapshot(&manager, 0);
+        let late_b = update(&manager, &peer_signing, [0x02; 16], [0x52; 16], 1)
+            .encode()
+            .expect("encoded update");
+
+        assert!(matches!(
+            manager.preview(&late_b, &binding, 1, 1),
+            Err(MobilityError::Candidate)
+        ));
+        assert_eq!(snapshot(&manager, 0), before);
+    }
+
+    #[test]
+    fn promotion_discards_same_epoch_cohort_state_after_grace() {
+        let (manager, peer_signing, binding) = cohort_manager();
+        let a = [0x01; 16];
+        let cached_a = update(&manager, &peer_signing, a, [0x51; 16], 1);
+        {
+            let mut state = manager.state.lock().expect("state lock");
+            state.proposals.push(proposal(&cached_a, 5_000));
+            state.candidates.push(Candidate {
+                candidate_id: a,
+                loc: [0x51; 16],
+                epoch: 1,
+                slot: 0,
+                binding: binding.clone(),
+                expiry_ms: 3_000,
+                response: None,
+                state: CandidateState::Challenged,
+            });
+        }
+        manager
+            .commit(
+                Transition {
+                    generation: 0,
+                    action: Action::Prove {
+                        candidate_id: a,
+                        epoch: 1,
+                        slot: 0,
+                        grace_until_ms: OLD_BINDING_GRACE_MS,
+                        response: BindResponseIdentity {
+                            loc: [0x51; 16],
+                            binding: binding.clone(),
+                            expiry_ms: 3_000,
+                            token: [0; 32],
+                        },
+                    },
+                },
+                || Ok(()),
+            )
+            .expect("promotion");
+
+        manager.expire(OLD_BINDING_GRACE_MS);
+        let state = manager.state.lock().expect("state lock");
+        assert_eq!(state.peer_epoch, 1);
+        assert!(state.proposals.is_empty());
+        assert!(state.candidates.is_empty());
+        assert!(state.frozen_cohort.is_none());
+        drop(state);
+
+        let stale_b = Control::BindProbe {
+            candidate_id: [0x02; 16],
+            loc: [0x52; 16],
+            epoch: 1,
+            path_slot: 0,
+            probe_nonce: [0x44; 16],
+        }
+        .encode()
+        .expect("encoded probe");
+        assert!(matches!(
+            manager.preview(&stale_b, &binding, 2, OLD_BINDING_GRACE_MS),
+            Err(MobilityError::Candidate)
+        ));
+        let stale_update = update(&manager, &peer_signing, [0x02; 16], [0x52; 16], 1)
+            .encode()
+            .expect("encoded update");
+        assert!(matches!(
+            manager.preview(&stale_update, &binding, 3, OLD_BINDING_GRACE_MS),
+            Err(MobilityError::Candidate)
+        ));
+        let stale_result = Control::CandidateResult {
+            candidate_id: [0x02; 16],
+            epoch: 1,
+            path_slot: 0,
+            result: 1,
+        }
+        .encode()
+        .expect("encoded result");
+        assert!(matches!(
+            manager.preview(&stale_result, &binding, 4, OLD_BINDING_GRACE_MS),
+            Err(MobilityError::Candidate)
+        ));
+    }
+
+    #[test]
+    fn cached_equal_epoch_members_still_arbitrate_lexically() {
+        let (manager, peer_signing, binding) = cohort_manager();
+        let a = [0x01; 16];
+        let b = [0x02; 16];
+        let cached_a = update(&manager, &peer_signing, a, [0x51; 16], 1);
+        let cached_b = update(&manager, &peer_signing, b, [0x52; 16], 1);
+        {
+            let mut state = manager.state.lock().expect("state lock");
+            state.proposals = vec![proposal(&cached_a, 5_000), proposal(&cached_b, 5_000)];
+            state.candidates = vec![
+                Candidate {
+                    candidate_id: a,
+                    loc: [0x51; 16],
+                    epoch: 1,
+                    slot: 0,
+                    binding: binding.clone(),
+                    expiry_ms: 3_000,
+                    response: None,
+                    state: CandidateState::Challenged,
+                },
+                Candidate {
+                    candidate_id: b,
+                    loc: [0x52; 16],
+                    epoch: 1,
+                    slot: 0,
+                    binding: binding.clone(),
+                    expiry_ms: 3_000,
+                    response: None,
+                    state: CandidateState::Challenged,
+                },
+            ];
+            state.frozen_cohort = None;
+        }
+        let first_response = Control::BindResponse {
+            candidate_id: a,
+            loc: [0x51; 16],
+            epoch: 1,
+            path_slot: 0,
+            expiry_ms: 3_000,
+            token: token(
+                &[0x43; 32],
+                MobilityContext {
+                    profile: manager.profile,
+                    scid: manager.scid,
+                    sender: &manager.peer,
+                    receiver: &manager.local,
+                    policy_id: manager.policy.policy_id,
+                },
+                TokenFields {
+                    candidate_id: a,
+                    loc: [0x51; 16],
+                    binding: &binding,
+                    epoch: 1,
+                    path_slot: 0,
+                    expiry_ms: 3_000,
+                },
+            )
+            .expect("token"),
+        }
+        .encode()
+        .expect("encoded response");
+        let transition = manager
+            .preview(&first_response, &binding, 3, 1)
+            .expect("first proven preview");
+        manager
+            .commit(transition, || Ok(()))
+            .expect("cohort freeze");
+        assert_eq!(
+            manager
+                .state
+                .lock()
+                .expect("state lock")
+                .frozen_cohort
+                .as_ref()
+                .expect("frozen cohort")
+                .1
+                .iter()
+                .map(|proposal| proposal.candidate_id)
+                .collect::<Vec<_>>(),
+            vec![a, b]
+        );
+        let response = Control::BindResponse {
+            candidate_id: b,
+            loc: [0x52; 16],
+            epoch: 1,
+            path_slot: 0,
+            expiry_ms: 3_000,
+            token: token(
+                &[0x43; 32],
+                MobilityContext {
+                    profile: manager.profile,
+                    scid: manager.scid,
+                    sender: &manager.peer,
+                    receiver: &manager.local,
+                    policy_id: manager.policy.policy_id,
+                },
+                TokenFields {
+                    candidate_id: b,
+                    loc: [0x52; 16],
+                    binding: &binding,
+                    epoch: 1,
+                    path_slot: 0,
+                    expiry_ms: 3_000,
+                },
+            )
+            .expect("token"),
+        }
+        .encode()
+        .expect("encoded response");
+        let transition = manager
+            .preview(&response, &binding, 3, 1)
+            .expect("proven preview");
+        manager.commit(transition, || Ok(())).expect("settlement");
+
+        assert_eq!(manager.peer_loc(), [0x51; 16]);
+        assert_eq!(manager.take_results().len(), 2);
+    }
+
+    #[test]
+    fn higher_epoch_updates_remain_admissible_after_a_frozen_cohort() {
+        let (manager, peer_signing, binding) = cohort_manager();
+        {
+            let mut state = manager.state.lock().expect("state lock");
+            state.frozen_cohort = Some((1, Vec::new()));
+        }
+        let higher = update(&manager, &peer_signing, [0x02; 16], [0x52; 16], 2)
+            .encode()
+            .expect("encoded update");
+        let transition = manager
+            .preview(&higher, &binding, 4, 1)
+            .expect("higher epoch preview");
+        manager
+            .commit(transition, || Ok(()))
+            .expect("higher epoch commit");
+
+        let state = manager.state.lock().expect("state lock");
+        assert_eq!(state.proposals.len(), 1);
+        assert_eq!(state.proposals[0].epoch, 2);
+    }
     #[test]
     fn corpus_negative_state_machine_executes_43_exact_operations_and_categories() {
         let vectors: Value = serde_json::from_str(VECTORS).expect("vector JSON");
@@ -1729,21 +2163,17 @@ mod corpus_negative_state_machine {
                         .preview(&first, &observed, 1, now)
                         .expect("first preview");
                     manager
-                        .commit(
-                            transition,
-                            || {
-                                callbacks += 1;
-                                Ok(())
-                            },
-                            || {},
-                        )
+                        .commit(transition, || {
+                            callbacks += 1;
+                            Ok(())
+                        })
                         .expect("first commit");
                     let before_replay = snapshot(&manager, callbacks);
                     let result =
                         manager
                             .preview(&first, &observed, 1, now)
                             .and_then(|transition| {
-                                manager.commit(transition, || Err(MobilityError::Replay), || {})
+                                manager.commit(transition, || Err(MobilityError::Replay))
                             });
                     assert_eq!(snapshot(&manager, callbacks), before_replay, "{id}");
                     result

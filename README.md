@@ -20,7 +20,7 @@ spec/                 Gate-0 baseline·active contracts·architecture·검증 �
   parameters-v0.1.md  packet, binding, and resource-limit registry
 tests/vectors/        shared corpus: 162 reviewed fixtures (73 wire + 41 session + 48 mobility: 5 positive/43 negative); native/redundant families planned
 bench/protocols/      immutable Q1/Q2/Q3 preregistrations and manifest (no observed-result fields)
-.github/workflows/ci.yml  active least-privilege CI workflow; hosted evidence pending first push/run
+.github/workflows/ci.yml  active least-privilege CI workflow; latest green hosted prior-snapshot CI `31803830187`; corrected dirty source awaits a new hosted CI
 requirements-dev.txt  pinned Python verification dependency set
 reference/r8ref.py    strict v0.2 Python UDP implementation
 reference/r8session.py  pinned cookie-first session reference
@@ -67,12 +67,13 @@ python3 tests/interop.py --build
 python3 tests/session_interop.py --build
 python3 tests/mobility_interop.py --build
 
-# Q3: compute the current implementation identity, smoke into a new directory, regenerate frozen evidence, or run a new full frozen series
+# Q3: compute source identity, then request the hosted isolated-netns smoke/full workflow
 python3 -c 'import runpy; print(runpy.run_path("bench/q3.py")["source_identity"]())'
-python3 bench/q3.py run --smoke --output /tmp/r8-q3-smoke --source-identity smoke-label --host-epoch local-smoke
-python3 bench/q3.py regenerate --output bench/results/q3-closed-lab-v4
-python3 bench/q3.py run --output /tmp/r8-q3-full --source-identity sha256:94ef91922006fa2ecac7e0d1a29e5c20f4a8daa9d1fc14e8cae1b8fc14e35aca --host-epoch closed-lab-epoch-005
+gh workflow run q3-full.yml -f host_epoch=closed-lab-epoch-NNN
 ```
+`r8move --moving-role {1,2}` defaults to role 1; connect remains handshake role 1 and serve role 2, and the flag selects only the endpoint that initiates mobility. Both abrupt and make-before-break use a proof-gated candidate switch with old inbound-only grace, on closed loopback or an isolated lab only.
+
+Q3 runs require a dedicated root network namespace and must not be invoked against shared-host loopback.
 
 `spec/0001-wire-format-v0.1.md` remains offline provenance for historical emitted bytes only; it has no active parser, service, or compatibility path.
 
@@ -83,22 +84,20 @@ python3 bench/q3.py run --output /tmp/r8-q3-full --source-identity sha256:94ef91
 | Stage | Scope | Status |
 |---|---|---|
 | Gate 0 | provenance / wire-change / budget / machine-contract baseline | ✅ durably checkpointed |
-| Gate 1 / M0–M1 | strict v0.2 Python/Rust wire implementation and UDP interop | ✅ durably complete locally; hosted GitHub Actions evidence pending first push/run |
-| Gate 2 / G003 | pinned cookie-first sessions and Q3 evidence | locally checkpointed with current v4; hosted run `31796956484` has Rust/fuzz/interop green, while repaired Python jsonschema pin and whole CI/Q1 v3 smoke await rerun |
-| M3 / Q1 | mobility implementation | implemented; verification candidate pending privileged Q1 |
+| Gate 1 / M0–M1 | strict v0.2 Python/Rust wire implementation and UDP interop | ✅ durably complete locally; latest green hosted prior-snapshot CI `31803830187`; corrected dirty source awaits a new hosted CI |
+| Gate 2 / G003 | pinned cookie-first sessions and Q3 evidence | deferred in joined VB002 until G004 closes; isolated-netns v8 implementation/q3-full workflow awaits a new hosted observation |
+| M3 / Q1 | mobility implementation | implemented; Q1 v4 preregistered and awaits privileged smoke |
 | M4–M5 / Q2 | native binding, REDUNDANT, and registered measurement protocol | ⬜ unexecuted |
 
 ### Q3 closed-lab result
 
-The canonical self-generated result package is `bench/results/q3-closed-lab-v4/run-manifest.json`, `raw.jsonl`, `environment.json`, and `summary.json`. Its run manifest verifies hashes, row counts, toolchain, and exact implementation inputs. It contains 4200 rows: 50 warmups plus 1000 measured handshakes per mechanism in each cold-process and warm-process series, with 0 failures. Cold p50/p90/p99 are R8 16.014413/19.037471/22.987121 ms versus TLS 50.560727/58.319026/75.903778 ms; warm values are R8 6.174286/7.825702/9.911064 ms versus TLS 7.589604/9.381159/12.898597 ms. Retained bootstrap confidence intervals are in `summary.json`.
+No canonical Q3 result is currently retained. Q3 v7 is rejected and non-retained because host-global loopback counters were contaminated and unattributable; Q3 v6 is rejected and non-retained because expected TLS-pin setup biased its timed path. Q3 v4 is invalid and non-retained, Q3 v3 is a historical run and non-retained, and no Q3 v5 result is retained. No Q3 result package remains until the isolated-netns v8 implementation/q3-full workflow produces a new hosted observation. Any future observation remains limited to the isolated closed lab and is not an Internet or IPv8-standard claim.
 
-The implementation/source identity is `sha256:94ef91922006fa2ecac7e0d1a29e5c20f4a8daa9d1fc14e8cae1b8fc14e35aca`; raw-data SHA-256 is `70543cba7990a542e5241cb5876f4c671779923599cd40d4a83efac6771606bc`; host epoch is `closed-lab-epoch-005`. It uses synthetic pins and host-global loopback counters. v3 remains historical; v4 supersedes it as canonical because v4 binds the exact implementation inputs and `requirements-dev.txt`. The comparison is Python R8 versus OpenSSL TLS implementations with different process behavior; it is an isolated closed-lab observation, not an Internet or IPv8-standard claim.
-
-Hosted run `31796956484` has Rust, fuzz, and interop checks green. Its Python failure was a missing `jsonschema` pin, now repaired; whole CI and Q1 v3 smoke remain pending rerun. Q1 v2 is retained setup-only non-result evidence, Q1 v3 retry is preregistered, and no Q1 result or hosted CI completion is claimed. M3 remains a verification candidate pending privileged Q1; M4–M5 and Q2 remain unexecuted.
+The latest green hosted prior-snapshot CI is `31803830187`; the corrected dirty source awaits a new hosted CI and Q1 v4 privileged smoke. Gate 2/G003 remains deferred in joined VB002 until G004 closes. Q1 v2 is retained setup-only non-result evidence, Q1 v3 was cancelled without an artifact, and Q1 v4 is preregistered. No current hosted CI, Q3 result, full Q1, or G004 pass is claimed.
 
 ### Q1 retained failed setup evidence
 
-Hosted run `31796070637` is retained at `bench/results/q1-setup-failure-v2/` as failed topology-setup evidence, not a Q1 result and not canonical performance evidence. No root cause is inferred beyond topology setup failure pending v3 repair verification.
+Q1 v2 is retained at `bench/results/q1-setup-failure-v2/` as setup-only evidence, not a Q1 result and not canonical performance evidence. Its manifest route-ordering diagnosis is a historical unverified hypothesis, not an established root cause; current status infers none pending Q1 v4 privileged-smoke verification.
 
 ## 설계 한계 (스스로 밝히는 것)
 

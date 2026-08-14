@@ -18,6 +18,7 @@ import tempfile
 import threading
 import time
 from datetime import datetime, timezone
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -31,6 +32,12 @@ MECHANISMS = ("R8-cookie-pinned-full-handshake", "TLS-1.3-full-handshake")
 WARMUPS, MEASURED, BLOCK_SIZE, TIMEOUT = 50, 1000, 20, 5.0
 ORDER_SEED, BOOTSTRAP_SEED = "r8-q3-block-order-v1", "r8-q3-block-bootstrap-v1"
 R8_BINDING_BUDGET = 1252
+LO_COUNTERS = ("rx_bytes", "tx_bytes", "rx_packets", "tx_packets")
+SMOKE_STATUS = "smoke-non-result"
+FULL_EPOCH = re.compile(r"closed-lab-epoch-[0-9]{3,}\Z")
+SAFE_LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}\Z")
+SOURCE_LABEL = re.compile(r"(?:sha256:[0-9a-f]{64}|[A-Za-z0-9][A-Za-z0-9_-]{0,127})\Z")
+COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 SOURCE_INPUTS = {
     "bench/fixtures/q3-cert.pem": CERT,
     "bench/fixtures/q3-key.pem": KEY,
@@ -55,14 +62,42 @@ def source_identity():
 
 def net():
     base = Path("/sys/class/net/lo/statistics")
-    return {name: int((base / name).read_text().strip()) for name in ("rx_bytes", "tx_bytes", "rx_packets", "tx_packets")}
+    return {name: int((base / name).read_text().strip()) for name in LO_COUNTERS}
 
+def isolated_netns_proof():
+    try:
+        own = os.stat("/proc/self/ns/net").st_ino
+        init = os.stat("/proc/1/ns/net").st_ino
+        interfaces = sorted(path.name for path in Path("/sys/class/net").iterdir())
+        return (
+            os.environ.get("Q3_ISOLATED_NETNS") == "1"
+            and own != init
+            and interfaces == ["lo"]
+            and int(Path("/sys/class/net/lo/flags").read_text().strip(), 16) & 1
+            and int(Path("/sys/class/net/lo/mtu").read_text().strip()) == 65536
+        )
+    except (OSError, ValueError):
+        return False
 
-def spki_pin():
+def require_isolated_netns():
+    if not isolated_netns_proof():
+        raise ValueError("Q3 evidence run requires a dedicated loopback-only network namespace")
+
+def require_loopback_delta(delta):
+    if set(delta) != set(LO_COUNTERS) or delta["rx_bytes"] != delta["tx_bytes"] or delta["rx_packets"] != delta["tx_packets"]:
+        raise ValueError("loopback receive/transmit counters differ")
+def _fixture_spki_pin():
     from cryptography import x509
     from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
-    cert = x509.load_pem_x509_certificate(CERT.read_bytes())
-    return hashlib.sha256(cert.public_key().public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)).hexdigest()
+
+    certificate = x509.load_pem_x509_certificate(CERT.read_bytes())
+    return hashlib.sha256(
+        certificate.public_key().public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
+    ).hexdigest()
+
+
+
+
 
 
 def _r8_id(label):
@@ -72,17 +107,26 @@ def cookie_bucket(clock):
 
 
 
-def r8_trial():
+def _random_scid():
+    while True:
+        scid = int.from_bytes(r8._random(8), "big")
+        if scid:
+            return scid
+
+def _r8_server_ready():
     client_id, server_id = _r8_id(b"client"), _r8_id(b"server")
     client_pin = r8.PeerPin(2, server_id.eid, server_id.public)
     server_pin = r8.PeerPin(1, client_id.eid, client_id.public)
     local, peer = __import__("ipaddress").IPv6Address("::1"), __import__("ipaddress").IPv6Address("::2")
     clock = time.monotonic
     config = r8.ServerConfig(server_id, server_pin, 1, 1, 0, peer, local, R8_BINDING_BUDGET, 4, 4)
-    server = r8.ServerMachine(config, b"B" * 16, b"K" * 32, None, 0, clock, r8.PrevalidationLimiter(clock, b"L" * 32))
+    server = r8.ServerMachine(config, r8._random(16), r8._random(32), None, 0, clock,
+                              r8.PrevalidationLimiter(clock, r8._random(32)))
+    binding_selector = r8._random(16)
     ready = threading.Event()
     port = []
     error = []
+
     def serve():
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
@@ -90,10 +134,10 @@ def r8_trial():
                 while True:
                     packet, addr = s.recvfrom(R8_BINDING_BUDGET)
                     header, payload = r8.parse_packet(packet)
-                    binding = r8.UdpBinding.from_endpoint(addr[0], addr[1], 1, b"Q" * 16)
+                    binding = r8.UdpBinding.from_endpoint(addr[0], addr[1], 1, binding_selector)
                     typ = r8.decode(payload)[0]
                     if typ == 1: reply = server.receive_open_packet(packet, binding, cookie_bucket(clock))
-                    elif typ == 3: reply = server.receive_open_auth(packet, binding, cookie_bucket(clock), b"E" * 32, b"N" * 32)
+                    elif typ == 3: reply = server.receive_open_auth(packet, binding, cookie_bucket(clock), r8._random(32), r8._random(32))
                     elif typ == 5: server.receive_protected(packet); continue
                     elif typ == 6:
                         if server.receive_protected(packet) != b"x": raise ValueError("application byte mismatch")
@@ -102,33 +146,61 @@ def r8_trial():
                     s.sendto(reply, addr)
                     if typ == 6: return
         except Exception as exc: error.append(type(exc).__name__)
+
     thread = threading.Thread(target=serve, daemon=True); thread.start()
     if not ready.wait(TIMEOUT): raise TimeoutError("R8 server readiness")
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-        s.settimeout(TIMEOUT)
-        machine = r8.ClientMachine(client_id, client_pin, 1, 0, local, peer, clock, R8_BINDING_BUDGET)
-        packet = machine.start(1, b"C" * 32, b"D" * 32); s.sendto(packet, ("127.0.0.1", port[0]))
-        packet = machine.receive_verify(s.recv(R8_BINDING_BUDGET)); s.sendto(packet, ("127.0.0.1", port[0]))
-        packet = machine.receive_ack(s.recv(R8_BINDING_BUDGET)); s.sendto(packet, ("127.0.0.1", port[0]))
-        packet = machine.send_data(b"x"); s.sendto(packet, ("127.0.0.1", port[0]))
-        if machine.receive_protected(s.recv(R8_BINDING_BUDGET)) != b"x": raise ValueError("application response mismatch")
-    thread.join(TIMEOUT)
-    if thread.is_alive(): raise TimeoutError("R8 server completion")
-    if error: raise RuntimeError(error[0])
+
+    machine = r8.ClientMachine(client_id, client_pin, 1, 0, local, peer, clock, R8_BINDING_BUDGET)
+
+    def client():
+        captured = None
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.settimeout(TIMEOUT)
+                packet = machine.start(_random_scid(), r8._random(32), r8._random(32)); s.sendto(packet, ("127.0.0.1", port[0]))
+                packet = machine.receive_verify(s.recv(R8_BINDING_BUDGET)); s.sendto(packet, ("127.0.0.1", port[0]))
+                packet = machine.receive_ack(s.recv(R8_BINDING_BUDGET)); s.sendto(packet, ("127.0.0.1", port[0]))
+                packet = machine.send_data(b"x"); s.sendto(packet, ("127.0.0.1", port[0]))
+                if machine.receive_protected(s.recv(R8_BINDING_BUDGET)) != b"x": raise ValueError("application response mismatch")
+                captured = _measurement_end()
+                client.snapshot = captured
+        finally:
+            thread.join(TIMEOUT)
+        if thread.is_alive(): raise TimeoutError("R8 server completion")
+        if error: raise RuntimeError(error[0])
+        return captured
+    return client
+
+def r8_trial():
+    _r8_server_ready()()
 
 
 def _disable_tickets(context):
-    if hasattr(ssl, "OP_NO_TICKET"):
-        context.options |= ssl.OP_NO_TICKET
+    if getattr(ssl, "OP_NO_TICKET", None) is None:
+        raise RuntimeError("ssl.OP_NO_TICKET is required for Q3")
+    context.options |= ssl.OP_NO_TICKET
+    if not context.options & ssl.OP_NO_TICKET:
+        raise RuntimeError("unable to disable TLS session tickets")
+def _disable_server_tickets(context):
+    if not hasattr(context, "num_tickets"):
+        raise RuntimeError("ssl server num_tickets is required for Q3")
+    context.num_tickets = 0
+    if context.num_tickets != 0:
+        raise RuntimeError("unable to disable TLS server session tickets")
 
 
-def tls_trial():
-    ready, port, error = threading.Event(), [], []
+def _tls_server_ready():
+    from cryptography import x509
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+    expected_pin = _fixture_spki_pin()
+    ready, release, port, error = threading.Event(), threading.Event(), [], []
+
     def serve():
         try:
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
             context.minimum_version = context.maximum_version = ssl.TLSVersion.TLSv1_3
             _disable_tickets(context)
+            _disable_server_tickets(context)
             context.load_cert_chain(CERT, KEY)
             with socket.socket() as listener:
                 listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); listener.bind(("127.0.0.1", 0)); listener.listen(1); listener.settimeout(TIMEOUT)
@@ -137,42 +209,76 @@ def tls_trial():
                     conn.settimeout(TIMEOUT)
                     if conn.recv(1) != b"x": raise ValueError("application byte mismatch")
                     conn.sendall(b"x")
+                    if not release.wait(TIMEOUT):
+                        raise TimeoutError("TLS client release")
         except Exception as exc: error.append(type(exc).__name__)
+
     thread = threading.Thread(target=serve, daemon=True); thread.start()
     if not ready.wait(TIMEOUT): raise TimeoutError("TLS server readiness")
+
     context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH, cafile=str(CERT))
     context.minimum_version = context.maximum_version = ssl.TLSVersion.TLSv1_3
     _disable_tickets(context)
-    with socket.create_connection(("127.0.0.1", port[0]), TIMEOUT) as raw:
-        with context.wrap_socket(raw, server_hostname="localhost") as conn:
-            from cryptography import x509
-            from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
-            actual = hashlib.sha256(x509.load_der_x509_certificate(conn.getpeercert(binary_form=True)).public_key().public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)).hexdigest()
-            if actual != spki_pin(): raise ssl.SSLError("SPKI pin mismatch")
-            conn.settimeout(TIMEOUT); conn.sendall(b"x")
-            if conn.recv(1) != b"x": raise ValueError("application response mismatch")
-    thread.join(TIMEOUT)
-    if thread.is_alive(): raise TimeoutError("TLS server completion")
-    if error: raise RuntimeError(error[0])
 
+    def client():
+        captured = None
+        try:
+            with socket.create_connection(("127.0.0.1", port[0]), TIMEOUT) as raw:
+                with context.wrap_socket(raw, server_hostname="localhost") as conn:
+                    try:
+                        actual = hashlib.sha256(x509.load_der_x509_certificate(conn.getpeercert(binary_form=True)).public_key().public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)).hexdigest()
+                        if actual != expected_pin: raise ssl.SSLError("SPKI pin mismatch")
+                        conn.settimeout(TIMEOUT); conn.sendall(b"x")
+                        if conn.recv(1) != b"x": raise ValueError("application response mismatch")
+                        captured = _measurement_end()
+                        client.snapshot = captured
+                    finally:
+                        release.set()
+        finally:
+            release.set()
+            thread.join(TIMEOUT)
+        if thread.is_alive(): raise TimeoutError("TLS server completion")
+        if error: raise RuntimeError(error[0])
+        return captured
+    return client
+
+def tls_trial():
+    _tls_server_ready()()
+
+
+def _measurement_start():
+    return net(), time.process_time_ns(), time.monotonic_ns()
+def _measurement_end():
+    return net(), time.process_time_ns(), time.monotonic_ns()
 
 def trial(mechanism):
-    start_net, cpu, started = net(), time.process_time_ns(), time.monotonic_ns()
     status, category = "success", None
-    previous = signal.getsignal(signal.SIGALRM)
-    def expired(_signum, _frame): raise TimeoutError("Q3 trial timeout")
-    signal.signal(signal.SIGALRM, expired)
-    signal.setitimer(signal.ITIMER_REAL, TIMEOUT)
+    start_net = cpu = started = snapshot = client = None
+    previous = None
+    timer_started = False
     try:
-        (r8_trial if mechanism == MECHANISMS[0] else tls_trial)()
-    except TimeoutError as exc: status, category = "timeout", type(exc).__name__
-    except Exception as exc: status, category = "failure", type(exc).__name__
+        client = (_r8_server_ready if mechanism == MECHANISMS[0] else _tls_server_ready)()
+        start_net, cpu, started = _measurement_start()
+        previous = signal.getsignal(signal.SIGALRM)
+        def expired(_signum, _frame): raise TimeoutError("Q3 trial timeout")
+        signal.signal(signal.SIGALRM, expired)
+        signal.setitimer(signal.ITIMER_REAL, TIMEOUT)
+        timer_started = True
+        snapshot = client()
+    except TimeoutError as exc:
+        status, category = "timeout", type(exc).__name__
+        snapshot = getattr(client, "snapshot", None)
+    except Exception as exc:
+        status, category = "failure", type(exc).__name__
+        snapshot = getattr(client, "snapshot", None)
     finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
-        signal.signal(signal.SIGALRM, previous)
-    end_net = net()
-    return {"status": status, "error_category": category, "latency_ns": time.monotonic_ns() - started,
-            "cpu_ns": time.process_time_ns() - cpu, "network": {k: end_net[k] - start_net[k] for k in start_net}}
+        if timer_started:
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, previous)
+    if start_net is None or snapshot is None:
+        return {"status": status, "error_category": category, "latency_ns": 0, "cpu_ns": 0, "network": {key: 0 for key in net()}}
+    end_net, end_cpu, ended = snapshot
+    return {"status": status, "error_category": category, "latency_ns": ended - started, "cpu_ns": end_cpu - cpu, "network": {k: end_net[k] - start_net[k] for k in start_net}}
 
 
 def order(per_mechanism_count):
@@ -256,7 +362,6 @@ def environment(source_label):
         "protocol_sha256": sources["bench/protocols/q3.json"],
         "fixture_certificate_sha256": sources["bench/fixtures/q3-cert.pem"],
         "fixture_key_sha256": sources["bench/fixtures/q3-key.pem"],
-        "fixture_spki_sha256": spki_pin(),
         "reference_sha256": sources["reference/r8session.py"],
         "requirements_dev_sha256": sources["requirements-dev.txt"],
         "loopback_interface": "lo",
@@ -265,6 +370,7 @@ def environment(source_label):
         "toolchain": {"python": sys.version.split()[0], "openssl": ssl.OPENSSL_VERSION, "cryptography": provenance()["cryptography"]},
         "os": {"platform": platform.platform(), "kernel": platform.release(), "arch": platform.machine()},
         "generated_at": datetime.now(timezone.utc).isoformat(),
+        "isolated_netns_proof": isolated_netns_proof(),
     }
 
 
@@ -276,18 +382,20 @@ def manifest(args, rows, directory):
             group_counts.append({
                 "series": series,
                 "mechanism": mechanism,
-                "warmups": 2 if args.smoke else WARMUPS,
-                "measured": 0 if args.smoke else MEASURED,
+                "warmups": 0 if args.smoke else WARMUPS,
+                "measured": 2 if args.smoke else MEASURED,
                 "rows": len(group),
                 "failures": sum(row["status"] != "success" for row in group),
             })
     return {
         "schema": "q3-run-manifest-v1",
-        "status": "smoke-non-result" if args.smoke else "completed",
+        "status": SMOKE_STATUS if args.smoke else "completed",
         "source_identity": args.source_identity,
         "implementation_source_identity": source_identity(),
         "implementation_sources": source_hashes(),
         "host_epoch": args.host_epoch,
+        "git_commit": args.git_commit,
+        "isolated_netns_proof": True,
         "group_counts": group_counts,
         "row_count": len(rows),
         "failures": sum(row["status"] != "success" for row in rows),
@@ -295,15 +403,36 @@ def manifest(args, rows, directory):
         "command_template": "python3 bench/q3.py run --output OUTPUT_DIR --source-identity SOURCE_ID --host-epoch HOST_EPOCH" + (" --smoke" if args.smoke else ""),
         "sha256": {name: digest(directory / name) for name in ("raw.jsonl", "environment.json", "summary.json")},
         "limitations": [
-            "Closed-lab loopback measurements require an isolated host to avoid unrelated loopback counter traffic.",
+            "Closed-lab loopback measurements require a dedicated loopback-only network namespace.",
             "Smoke output is explicitly non-result and does not satisfy preregistered trial counts.",
         ],
         "toolchain_provenance": provenance(),
     }
 
-def run(args):
-    if not args.smoke and args.source_identity != source_identity():
+def _git(command):
+    return subprocess.run(["git", *command], cwd=ROOT, text=True, capture_output=True, check=True).stdout.strip()
+
+def require_labels(args):
+    if not SOURCE_LABEL.fullmatch(args.source_identity) or not SAFE_LABEL.fullmatch(args.host_epoch):
+        raise ValueError("source identity and host epoch must be safe labels")
+    if args.smoke:
+        return
+    if args.source_identity != source_identity():
         raise ValueError("full run source identity must match current Q3 implementation")
+    if not FULL_EPOCH.fullmatch(args.host_epoch):
+        raise ValueError("full run host epoch must be closed-lab-epoch-NNN")
+    if not args.git_commit or not COMMIT.fullmatch(args.git_commit):
+        raise ValueError("full run git commit must be an exact lowercase 40-character SHA")
+    if _git(["rev-parse", "HEAD"]) != args.git_commit:
+        raise ValueError("full run git commit must match HEAD")
+    if os.environ.get("GITHUB_SHA") != args.git_commit:
+        raise ValueError("full run git commit must match GITHUB_SHA")
+    if _git(["status", "--porcelain"]):
+        raise ValueError("full run requires a clean repository")
+
+def run(args):
+    require_isolated_netns()
+    require_labels(args)
     per_mechanism_count = 2 if args.smoke else WARMUPS + MEASURED
     destination = Path(args.output)
     if destination.exists(): raise FileExistsError("output directory already exists")
@@ -314,23 +443,69 @@ def run(args):
         for series in ("cold-process-primary", "warm-process"):
             for block, position, mechanism, ordinal, excluded in planned_trials(per_mechanism_count, args.smoke):
                 measurement = invoke_worker(mechanism) if series == "cold-process-primary" else trial(mechanism)
+                require_loopback_delta(measurement["network"])
                 measurement.update({"schema": "q3-raw-v1", "source_identity": args.source_identity, "series": series, "mechanism": mechanism, "host_epoch": args.host_epoch, "block": block, "order": position, "trial": ordinal, "excluded": excluded, "smoke_non_result": bool(args.smoke)})
                 rows.append(measurement)
         (staging / "raw.jsonl").write_text("".join(json.dumps(r, sort_keys=True) + "\n" for r in rows))
-        (staging / "environment.json").write_text(json.dumps(environment(args.source_identity), sort_keys=True, indent=2) + "\n")
+        saved_environment = environment(args.source_identity)
+        if saved_environment["isolated_netns_proof"] is not True:
+            raise ValueError("network namespace proof changed during run")
+        (staging / "environment.json").write_text(json.dumps(saved_environment, sort_keys=True, indent=2) + "\n")
         (staging / "summary.json").write_text(json.dumps(summary(rows), sort_keys=True, indent=2) + "\n")
         (staging / "run-manifest.json").write_text(json.dumps(manifest(args, rows, staging), sort_keys=True, indent=2) + "\n")
         os.replace(staging, destination)
     except Exception:
         shutil.rmtree(staging, ignore_errors=True); raise
 
+def _validate_rows(manifest_data, saved, rows):
+    smoke = manifest_data["status"] == SMOKE_STATUS
+    if manifest_data["status"] not in {SMOKE_STATUS, "completed"}:
+        raise ValueError("invalid run status")
+    if manifest_data.get("isolated_netns_proof") is not True or saved.get("isolated_netns_proof") is not True:
+        raise ValueError("missing isolated network namespace proof")
+    if saved.get("source_identity") != manifest_data["source_identity"] or saved.get("loopback_interface") != "lo" or saved.get("loopback_mtu") != 65536:
+        raise ValueError("environment consistency verification failed")
+    labels = type("Args", (), {"smoke": smoke, "source_identity": manifest_data["source_identity"], "host_epoch": manifest_data["host_epoch"], "git_commit": manifest_data.get("git_commit")})()
+    require_labels(labels)
+    expected = []
+    per_mechanism_count = 2 if smoke else WARMUPS + MEASURED
+    for series in ("cold-process-primary", "warm-process"):
+        for block, position, mechanism, ordinal, excluded in planned_trials(per_mechanism_count, smoke):
+            expected.append((series, block, position, mechanism, ordinal, excluded))
+    if len(rows) != len(expected) or manifest_data.get("row_count") != len(expected):
+        raise ValueError("row count verification failed")
+    groups = []
+    for series in ("cold-process-primary", "warm-process"):
+        for mechanism in MECHANISMS:
+            group = [row for row in rows if row.get("series") == series and row.get("mechanism") == mechanism]
+            groups.append({"series": series, "mechanism": mechanism, "warmups": 0 if smoke else WARMUPS, "measured": 2 if smoke else MEASURED, "rows": len(group), "failures": sum(row.get("status") != "success" for row in group)})
+    if manifest_data.get("group_counts") != groups or manifest_data.get("failures") != sum(group["failures"] for group in groups):
+        raise ValueError("group/failure verification failed")
+    if manifest_data.get("post_hoc_exclusions") != 0:
+        raise ValueError("post-hoc exclusions verification failed")
+    if not smoke and manifest_data["failures"] != 0:
+        raise ValueError("full run contains failures")
+    fields = {"schema", "source_identity", "series", "mechanism", "host_epoch", "block", "order", "trial", "excluded", "smoke_non_result", "status", "error_category", "latency_ns", "cpu_ns", "network"}
+    for row, (series, block, position, mechanism, ordinal, excluded) in zip(rows, expected):
+        if set(row) != fields or row["schema"] != "q3-raw-v1" or row["source_identity"] != manifest_data["source_identity"] or row["host_epoch"] != manifest_data["host_epoch"] or (row["series"], row["block"], row["order"], row["mechanism"], row["trial"], row["excluded"]) != (series, block, position, mechanism, ordinal, excluded) or row["smoke_non_result"] is not smoke or row["status"] not in {"success", "failure", "timeout"} or (row["status"] == "success") != (row["error_category"] is None):
+            raise ValueError("raw row consistency verification failed")
+        if type(row["network"]) is not dict:
+            raise ValueError("raw network verification failed")
+        numeric = [row["latency_ns"], row["cpu_ns"], *row["network"].values()]
+        if any(type(value) is not int or value < 0 for value in numeric):
+            raise ValueError("raw numeric verification failed")
+        require_loopback_delta(row["network"])
+
 def regenerate(args):
     directory = Path(args.output)
     manifest_data = json.loads((directory / "run-manifest.json").read_text())
     if manifest_data.get("schema") != "q3-run-manifest-v1":
         raise ValueError("invalid run manifest")
-    for name in ("raw.jsonl", "environment.json"):
-        if manifest_data["sha256"].get(name) != digest(directory / name):
+    hashes = manifest_data.get("sha256")
+    if set(hashes or ()) != {"raw.jsonl", "environment.json", "summary.json"}:
+        raise ValueError("invalid manifest file hashes")
+    for name, expected_hash in hashes.items():
+        if expected_hash != digest(directory / name):
             raise ValueError("manifest hash verification failed: " + name)
     saved = json.loads((directory / "environment.json").read_text())
     current_sources = source_hashes()
@@ -342,19 +517,13 @@ def regenerate(args):
             raise ValueError("implementation source identity verification failed")
     if manifest_data.get("toolchain_provenance", {}).get("requirements_dev_sha256") != current_sources["requirements-dev.txt"]:
         raise ValueError("requirements toolchain hash verification failed")
-    for key, expected in (
-        ("protocol_sha256", current_sources["bench/protocols/q3.json"]),
-        ("fixture_certificate_sha256", current_sources["bench/fixtures/q3-cert.pem"]),
-        ("fixture_key_sha256", current_sources["bench/fixtures/q3-key.pem"]),
-        ("fixture_spki_sha256", spki_pin()),
-        ("reference_sha256", current_sources["reference/r8session.py"]),
-        ("requirements_dev_sha256", current_sources["requirements-dev.txt"]),
-    ):
+    for key, expected in (("protocol_sha256", current_sources["bench/protocols/q3.json"]), ("fixture_certificate_sha256", current_sources["bench/fixtures/q3-cert.pem"]), ("fixture_key_sha256", current_sources["bench/fixtures/q3-key.pem"]), ("reference_sha256", current_sources["reference/r8session.py"]), ("requirements_dev_sha256", current_sources["requirements-dev.txt"])):
         if saved.get(key) != expected:
             raise ValueError("hash verification failed: " + key)
     rows = [json.loads(line) for line in (directory / "raw.jsonl").read_text().splitlines()]
+    _validate_rows(manifest_data, saved, rows)
     rendered = json.dumps(summary(rows), sort_keys=True, indent=2) + "\n"
-    if hashlib.sha256(rendered.encode()).hexdigest() != manifest_data["sha256"].get("summary.json"):
+    if hashlib.sha256(rendered.encode()).hexdigest() != hashes["summary.json"]:
         raise ValueError("manifest summary verification failed")
     temporary = directory / ".summary.json.tmp"
     temporary.write_text(rendered)
@@ -362,7 +531,7 @@ def regenerate(args):
 
 def main():
     parser = argparse.ArgumentParser(); commands = parser.add_subparsers(dest="command", required=True)
-    run_parser = commands.add_parser("run"); run_parser.add_argument("--output", required=True); run_parser.add_argument("--source-identity", required=True); run_parser.add_argument("--host-epoch", required=True); run_parser.add_argument("--smoke", action="store_true")
+    run_parser = commands.add_parser("run"); run_parser.add_argument("--output", required=True); run_parser.add_argument("--source-identity", required=True); run_parser.add_argument("--host-epoch", required=True); run_parser.add_argument("--git-commit"); run_parser.add_argument("--smoke", action="store_true")
     work = commands.add_parser("worker"); work.add_argument("--mechanism", choices=MECHANISMS, required=True)
     regen = commands.add_parser("regenerate"); regen.add_argument("--output", required=True)
     args = parser.parse_args()

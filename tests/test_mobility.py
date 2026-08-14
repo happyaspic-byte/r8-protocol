@@ -52,7 +52,7 @@ class Mobility(unittest.TestCase):
         manager.fixture_role_error = role_error
         for key, expected in (("candidate_capacity", 2), ("proposal_capacity", 2), ("result_cache_capacity", 2)):
             self.assertIn(setup.get(key, expected), (0, expected))
-        manager.epoch = setup.get("committed_epoch", 0)
+        manager.peer_epoch = setup.get("committed_epoch", 0)
         if "proposal_bucket" in setup:
             manager.tokens = setup["proposal_bucket"]["tokens"]
             manager.refill = setup["proposal_bucket"]["last_refill_ms"]
@@ -106,11 +106,14 @@ class Mobility(unittest.TestCase):
 
     @staticmethod
     def _fixture_snapshot(manager, commits):
-        return (manager.local_loc, manager.peer_loc, manager.binding, manager.epoch, manager.generation,
+        return (manager.local_loc, manager.peer_loc, manager.binding, manager.local_epoch, manager.peer_epoch, manager.generation,
                 manager.tokens, manager.refill, tuple(manager.proposals.items()), tuple(manager.candidates.items()),
-                tuple(manager.results.items()), manager.grace, tuple(commits))
+                tuple(manager.outbound.items()), tuple(manager.outbound_expiry.items()), tuple(manager.results.items()),
+                manager.cohort, manager.grace, tuple(manager.emitted), tuple(commits))
 
-    def _commit(self, manager, raw, binding, token=object()):
+    def _commit(self, manager, raw, binding, token=None):
+        if token is None:
+            token = object()
         return manager.commit(manager.preview(raw, binding, token))
 
     def test_all_positive_corpus_controls_round_trip_exactly(self):
@@ -256,18 +259,58 @@ class Mobility(unittest.TestCase):
         self.assertEqual(self.a_manager.peer_loc, m.ipaddress.IPv6Address("8::3"))
         emitted = {m.Result.parse(raw).candidate_id: m.Result.parse(raw).result for raw in self.a_manager.take_results()}
         self.assertEqual(emitted, {low: 1, high: 2})
+    def test_frozen_cohort_rejects_late_equal_epoch_without_mutation(self):
+        winner, pending, late = b"\x10" * 16, b"\x30" * 16, b"\x20" * 16
+        update = lambda cid, loc: self.b_manager._sign_update(cid, m.ipaddress.IPv6Address(loc), 1, 0).build()
+        self._commit(self.a_manager, self.b_manager.propose_local("8::3", 1, winner), self.binding)
+        self._commit(self.a_manager, self.b_manager.propose_local("8::4", 1, pending), self.binding)
+        challenge = self._commit(self.a_manager, self.b_manager.make_probe(
+            winner, self.other, b"\x40" * 16), self.other)
+        response = self._commit(self.b_manager, challenge, self.other)
+        self._commit(self.a_manager, response, self.other)
+        self.assertEqual(self.a_manager.cohort[0], 1)
+        self.assertEqual(set(self.a_manager.cohort[1]), {winner, pending})
+        before = copy.deepcopy(self._fixture_snapshot(self.a_manager, []))
+        with self.assertRaisesRegex(m.MobilityError, "E-CANDIDATE"):
+            self.a_manager.preview(update(late, "8::5"), self.binding, object())
+        self.assertEqual(before, self._fixture_snapshot(self.a_manager, []))
+        self.now[0] = 5000
+        self.a_manager.expire()
+        self.assertEqual(self.a_manager.peer_loc, m.ipaddress.IPv6Address("8::3"))
+        self.now[0] = 15000
+        self.assertFalse(self.a_manager.binding_allowed_inbound(self.binding))
+        before = copy.deepcopy(self._fixture_snapshot(self.a_manager, []))
+        with self.assertRaisesRegex(m.MobilityError, "E-CANDIDATE"):
+            self.a_manager.preview(update(late, "8::5"), self.binding, object())
+        self.assertEqual(before, self._fixture_snapshot(self.a_manager, []))
+        self.assertNotIn(late, self.a_manager.proposals)
+        self.assertEqual(self.a_manager.peer_epoch, 1)
+    def test_frozen_cohort_keeps_prefreeze_equal_members_for_lexical_arbitration(self):
+        low, high = b"\x10" * 16, b"\x20" * 16
+        for cid, loc in ((low, "8::3"), (high, "8::4")):
+            self._commit(self.a_manager, self.b_manager.propose_local(loc, 1, cid), self.binding)
+        for cid in (high, low):
+            challenge = self._commit(self.a_manager, self.b_manager.make_probe(cid, self.other, cid), self.other)
+            self._commit(self.a_manager, self._commit(self.b_manager, challenge, self.other), self.other)
+        self.assertEqual(self.a_manager.peer_loc, m.ipaddress.IPv6Address("8::3"))
+        self.assertEqual(self.a_manager.peer_epoch, 1)
 
     def test_preview_callback_failure_and_stale_commit_do_not_mutate(self):
-        def fail(_): raise RuntimeError("session")
+        calls = []
+        def fail(token):
+            calls.append(token)
+            raise RuntimeError("session")
         manager = m.MobilityManager(self.a, PeerPin(2, self.b.eid, self.b.public), 1, 0, 1, 7, "8::1", "8::2", self.binding, b"\x30" * 32, lambda: self.now[0], fail)
         raw = self.b_manager.propose_local("8::3", 1, b"\x03" * 16)
         preview = manager.preview(raw, self.binding, 1)
-        before = copy.deepcopy((manager.proposals, manager.candidates, manager.results, manager.tokens, manager.refill, manager.generation))
+        before = copy.deepcopy(self._fixture_snapshot(manager, []))
         with self.assertRaises(RuntimeError): manager.commit(preview)
-        self.assertEqual(before, (manager.proposals, manager.candidates, manager.results, manager.tokens, manager.refill, manager.generation))
+        self.assertEqual(before, self._fixture_snapshot(manager, []))
+        self.assertEqual(calls, [1])
         manager.session_commit = lambda _: None
         manager.commit(preview)
         with self.assertRaisesRegex(m.MobilityError, "E-REPLAY"): manager.commit(preview)
+        self.assertEqual(calls, [1])
 
     def test_outbound_capacity_secret_zeroization_and_expiry_release(self):
         secret_state = self.a_manager.candidate_secret_state
@@ -294,5 +337,115 @@ class Mobility(unittest.TestCase):
         self.assertNotIn(low, self.a_manager.proposals)
         self.assertNotIn(low, self.a_manager.candidates)
 
+    def test_full_cohort_result_cache_rejects_before_session_callback(self):
+        calls = []
+        self.a_manager.session_commit = calls.append
+        low, high = b"\x51" * 16, b"\x52" * 16
+        for cid, loc in ((low, "8::3"), (high, "8::4")):
+            self._commit(self.a_manager, self.b_manager.propose_local(loc, 1, cid, carrier=self.other), self.binding, cid)
+        challenges = {cid: self._commit(self.a_manager, self.b_manager.make_probe(cid, self.other, cid), self.other, cid)
+                      for cid in (low, high)}
+        self._commit(self.a_manager, self._commit(self.b_manager, challenges[low], self.other, low), self.other, low)
+        self.a_manager.results = {
+            b"\xa1" * 16: (b"x", 10000, 1, 0, 2),
+            b"\xa2" * 16: (b"y", 10000, 1, 0, 2),
+        }
+        before = copy.deepcopy(self._fixture_snapshot(self.a_manager, calls))
+        response = self._commit(self.b_manager, challenges[high], self.other, high)
+        with self.assertRaisesRegex(m.MobilityError, "E-CAPACITY"):
+            self.a_manager.preview(response, self.other, high)
+        self.assertEqual(before, self._fixture_snapshot(self.a_manager, calls))
+
+    def test_expiry_invalidates_preview_before_session_callback(self):
+        calls = []
+        self.a_manager.session_commit = calls.append
+        cid = b"\x53" * 16
+        update = self.b_manager.propose_local("8::3", 1, cid, carrier=self.other)
+        self._commit(self.a_manager, update, self.binding, cid)
+        preview = self.a_manager.preview(self.b_manager.make_probe(cid, self.other, cid), self.other, object())
+        callback_count = len(calls)
+        self.now[0] = 5000
+        self.a_manager.expire()
+        with self.assertRaisesRegex(m.MobilityError, "E-REPLAY"):
+            self.a_manager.commit(preview)
+        self.assertEqual(len(calls), callback_count)
+    def test_same_epoch_bidirectional_promotions_keep_epochs_independent(self):
+        a_id, b_id = b"\x61" * 16, b"\x62" * 16
+        a_update = self.a_manager.propose_local("8::3", 1, a_id, carrier=self.other)
+        b_update = self.b_manager.propose_local("8::4", 1, b_id, carrier=self.other)
+        self._commit(self.a_manager, b_update, self.binding, "a-update")
+        self._commit(self.b_manager, a_update, self.binding, "b-update")
+        a_challenge = self._commit(self.b_manager, self.a_manager.make_probe(a_id, self.other, a_id), self.other, "a-probe")
+        b_challenge = self._commit(self.a_manager, self.b_manager.make_probe(b_id, self.other, b_id), self.other, "b-probe")
+        a_response = self._commit(self.a_manager, a_challenge, self.other, "a-response")
+        b_response = self._commit(self.b_manager, b_challenge, self.other, "b-response")
+        self._commit(self.b_manager, a_response, self.other, "a-settle")
+        self._commit(self.a_manager, b_response, self.other, "b-settle")
+        self._commit(self.a_manager, self.b_manager.take_results()[0], self.other, "a-result")
+        self._commit(self.b_manager, self.a_manager.take_results()[0], self.other, "b-result")
+        self.assertEqual((self.a_manager.local_epoch, self.a_manager.peer_epoch), (1, 1))
+        self.assertEqual((self.b_manager.local_epoch, self.b_manager.peer_epoch), (1, 1))
+        self.assertEqual(self.a_manager.local_loc, m.ipaddress.IPv6Address("8::3"))
+        self.assertEqual(self.b_manager.local_loc, m.ipaddress.IPv6Address("8::4"))
+
+    def test_frozen_cohort_reserves_result_cache_before_local_result(self):
+        calls = []
+        self.a_manager.session_commit = calls.append
+        winner, sibling, local = b"\x63" * 16, b"\x64" * 16, b"\x65" * 16
+        for cid, loc in ((winner, "8::3"), (sibling, "8::4")):
+            self._commit(self.a_manager, self.b_manager.propose_local(loc, 1, cid, carrier=self.other), self.binding, cid)
+        challenge = self._commit(self.a_manager, self.b_manager.make_probe(winner, self.other, winner), self.other, "probe")
+        self._commit(self.a_manager, self._commit(self.b_manager, challenge, self.other, "response"), self.other, "prove")
+        self.assertEqual(set(self.a_manager.cohort[1]), {winner, sibling})
+        self.a_manager.outbound[local] = (b"update", (m.ipaddress.IPv6Address("8::5"), 1, 0), self.other, None)
+        before = self._fixture_snapshot(self.a_manager, calls)
+        with self.assertRaisesRegex(m.MobilityError, "E-CAPACITY"):
+            self.a_manager.preview(m.Result(local, 1, 0, 2).build(), self.other, "local-result")
+        self.assertEqual(before, self._fixture_snapshot(self.a_manager, calls))
+
+    def test_expiry_settles_frozen_siblings_and_invalidates_every_preview(self):
+        winner, sibling = b"\x66" * 16, b"\x67" * 16
+        for cid, loc in ((winner, "8::3"), (sibling, "8::4")):
+            self._commit(self.a_manager, self.b_manager.propose_local(loc, 1, cid, carrier=self.other), self.binding, cid)
+        preview = self.a_manager.preview(self.b_manager.make_probe(winner, self.other, winner), self.other, "stale")
+        self.a_manager.expire()
+        with self.assertRaisesRegex(m.MobilityError, "E-REPLAY"):
+            self.a_manager.commit(preview)
+        challenge = self._commit(self.a_manager, self.b_manager.make_probe(winner, self.other, winner), self.other, "probe")
+        self._commit(self.a_manager, self._commit(self.b_manager, challenge, self.other, "response"), self.other, "prove")
+        self.now[0] = 5000
+        self.a_manager.expire()
+        emitted = {m.Result.parse(raw).candidate_id: m.Result.parse(raw).result for raw in self.a_manager.take_results()}
+        self.assertEqual(emitted, {winner: 1, sibling: 3})
+
+    def test_exact_result_retry_is_idempotent(self):
+        cid = b"\x68" * 16
+        self.a_manager.outbound[cid] = (b"update", (m.ipaddress.IPv6Address("8::3"), 1, 0), self.other, None)
+        raw = m.Result(cid, 1, 0, 2).build()
+        self._commit(self.a_manager, raw, self.other, "first")
+        before = self._fixture_snapshot(self.a_manager, [])
+        self._commit(self.a_manager, raw, self.other, "duplicate")
+        self.assertEqual(before, self._fixture_snapshot(self.a_manager, []))
+    def test_response_commit_preserves_independent_preview(self):
+        mover, peer = b"\x69" * 16, b"\x6a" * 16
+        update = self.b_manager.propose_local("8::3", 1, mover, carrier=self.other)
+        self._commit(self.a_manager, update, self.binding, "update")
+        challenge = self._commit(self.a_manager, self.b_manager.make_probe(mover, self.other, mover), self.other, "probe")
+        response_preview = self.b_manager.preview(challenge, self.other, "response")
+        proposal_preview = self.b_manager.preview(
+            self.a_manager.propose_local("8::4", 1, peer), self.binding, "proposal")
+        generation = self.b_manager.generation
+        response = self.b_manager.commit(response_preview)
+        self.assertEqual(m.parse_control(response).typ, 4)
+        self.assertEqual(self.b_manager.generation, generation)
+        self.b_manager.commit(proposal_preview)
+        self.assertIn(peer, self.b_manager.proposals)
+    def test_probe_at_proposal_expiry_times_out(self):
+        cid = b"\x70" * 16
+        update = m.LocUpdate(cid, self.a_manager.peer_loc, m.ipaddress.IPv6Address("8::3"), 1, 0, 5000, 0, b"\0" * 64)
+        self.a_manager.proposals[cid] = (update.build(), update, 5000)
+        self.now[0] = 5000
+        with self.assertRaisesRegex(m.MobilityError, "E-TIMEOUT"):
+            self.a_manager.preview(m.Probe(cid, update.new_loc, update.epoch, update.slot, b"\0" * 16).build(), self.other, "expired")
 if __name__ == "__main__":
     unittest.main()
