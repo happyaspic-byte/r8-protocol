@@ -30,17 +30,22 @@ class RedundantStateTests(unittest.TestCase):
             context["service_context"], context["server_context_id"], 3, self.server_loc, self.client_loc, 1280, 2, 2),
             bytes.fromhex(context["server_boot_instance_hex"]), bytes.fromhex(context["cookie_key_hex"]), None, 0,
             lambda: self.now[0], session.PrevalidationLimiter(lambda: self.now[0], b"\xa0" * 32))
-        opening = client.start(context["scid"], bytes.fromhex(identities["client_x25519_secret_hex"]),
-                               bytes.fromhex(context["client_nonce_hex"]))
+        opening = client.start(
+            context["scid"], bytes.fromhex(identities["client_x25519_secret_hex"]),
+            bytes.fromhex(context["client_nonce_hex"]),
+            _authority=session._HANDSHAKE_MATERIAL_AUTHORITY)
         auth = client.receive_verify(server.receive_open_packet(opening, self.binding0, context["cookie_bucket"]))
-        ack = server.receive_open_auth(auth, self.binding0, context["cookie_bucket"],
-                                       bytes.fromhex(identities["server_x25519_secret_hex"]),
-                                       bytes.fromhex(context["server_nonce_hex"]))
+        ack = server.receive_open_auth(
+            auth, self.binding0, context["cookie_bucket"],
+            bytes.fromhex(identities["server_x25519_secret_hex"]),
+            bytes.fromhex(context["server_nonce_hex"]),
+            _authority=session._HANDSHAKE_MATERIAL_AUTHORITY)
         server.receive_protected(client.receive_ack(ack))
         client_bootstrap = client.take_profile3()
         server_bootstrap = server.take_profile3(context["scid"])
         self.client_bootstrap_alias, self.server_bootstrap_alias = client_bootstrap, server_bootstrap
-        self.client_slot0_alias, self.server_slot0_alias = client_bootstrap.outbound, server_bootstrap.outbound
+        authority = session._PROFILE3_CONSUMER_AUTHORITY
+        self.client_slot0_alias, self.server_slot0_alias = client_bootstrap._context(authority)[4], server_bootstrap._context(authority)[4]
         self.a = redundant.RedundantSession(client_bootstrap, self.binding0, 1280, 11, lambda: self.now[0])
         self.b = redundant.RedundantSession(server_bootstrap, self.binding0, 1280, 91,
                                             lambda: self.now[0])
@@ -59,12 +64,13 @@ class RedundantStateTests(unittest.TestCase):
     def test_constructor_exclusively_invalidates_retained_bootstrap_alias(self):
         for alias, machine in ((self.client_bootstrap_alias, self.a),
                                (self.server_bootstrap_alias, self.b)):
-            self.assertEqual(alias.scid, 0)
-            self.assertIsNone(alias.outbound)
-            self.assertIsNone(alias.inbound)
-            self.assertIsNone(alias._prk)
+            for attribute in ("scid", "outbound", "inbound", "_prk", "_thash"):
+                with self.assertRaises(AttributeError):
+                    getattr(alias, attribute)
+            with self.assertRaises(AttributeError):
+                getattr(alias, "take_slot1")
             with self.assertRaises(session.SessionError):
-                alias.take_slot1()
+                alias._context(object())
             alias.close()
             self.assertFalse(machine.closed)
             self.assertTrue(machine.send(b"alias cannot close owner").packets[0])
@@ -172,7 +178,37 @@ class RedundantStateTests(unittest.TestCase):
         carry(self.b, self.a, a, b.take_results()[0], self.binding1)
         self._mobility_managers = (a, b)
         return a.take_profile3_admissions()[0], b.take_profile3_admissions()[0]
+    def test_mobility_manager_does_not_expose_signing_identity(self):
+        self._admissions()
+        for manager in self._mobility_managers:
+            self.assertFalse(hasattr(manager, "identity"))
+            with self.assertRaises(AttributeError):
+                manager.identity
 
+    def test_mobility_requires_its_exact_carrier_preview(self):
+        alice = session.Identity.from_seed(b"\x11" * 32)
+        bob = session.Identity.from_seed(b"\x22" * 32)
+        source = mobility.MobilityManager(
+            alice, session.PeerPin(2, bob.eid, bob.public), 1, 3, VECTORS["context"]["scid"], 3,
+            str(self.client_loc), str(self.server_loc), self.binding0, b"c" * 32, lambda: self.now[0],
+            self.a.commit_receive, self.a.issue_profile3_admission_owner(3))
+        destination = mobility.MobilityManager(
+            bob, session.PeerPin(1, alice.eid, alice.public), 2, 3, VECTORS["context"]["scid"], 3,
+            str(self.server_loc), str(self.client_loc), self.binding0, b"d" * 32, lambda: self.now[0],
+            self.b.commit_receive, self.b.issue_profile3_admission_owner(3))
+        update = source.propose_local("8::3", 1, b"z" * 16, slot=1, carrier=self.binding1)
+        packet = self.a.send(update).packets[0]
+        ordinary = self.b.preview_receive(0, self.binding0, packet)
+        with self.assertRaisesRegex(mobility.MobilityError, "E-REPLAY"):
+            destination.preview(ordinary.plaintext, self.binding0, ordinary)
+        with self.assertRaisesRegex(mobility.MobilityError, "E-REPLAY"):
+            source.preview(ordinary.plaintext, self.binding0, ordinary)
+        self.b.abort_receive(ordinary)
+        preview = self.b.preview_mobility(destination, 0, self.binding0, packet)
+        self.b.abort_mobility(preview)
+        core = redundant._REDUNDANT_CORES[self.b]
+        self.assertEqual(core._mobility_associations, {})
+        self.assertEqual(core._mobility_previews, {})
     def test_profile3_owner_rejects_different_policy_manager(self):
         owner = self.a.issue_profile3_admission_owner(3)
         with self.assertRaisesRegex(mobility.MobilityError, "E-CANDIDATE"):
@@ -197,6 +233,16 @@ class RedundantStateTests(unittest.TestCase):
         self.assertTrue(redundant._REDUNDANT_CORES[self.a]._out[1] is None)
         self.assertTrue(redundant._REDUNDANT_CORES[self.a]._in[1] is None)
         self.assertTrue(redundant._REDUNDANT_CORES[self.a]._bindings[1] is None)
+        original_schedule = session._key_schedule_prk
+        def fail_schedule(*_args):
+            raise RuntimeError("injected")
+        session._key_schedule_prk = fail_schedule
+        try:
+            self.assert_error("E-CANDIDATE", self.a.activate_slot1, admission_a, self.binding1, 1280)
+        finally:
+            session._key_schedule_prk = original_schedule
+        self.assertEqual(redundant._REDUNDANT_CORES[self.a].states[1], redundant.ABSENT)
+        self.assertEqual(len(session._PROFILE3_SLOT1_PREPARATIONS), 0)
         self.a.activate_slot1(admission_a, self.binding1, 1280)
         self.b.activate_slot1(admission_b, self.binding1, 1280)
         self.assertEqual(redundant._REDUNDANT_CORES[self.a].states, [redundant.ACTIVE, redundant.ACTIVE])
@@ -243,7 +289,6 @@ class RedundantStateTests(unittest.TestCase):
         for retained in (outbound, inbound):
             self.assertTrue(retained._released)
             self.assertIsNone(retained._key)
-            self.assertNotIn(retained, redundant._REDUNDANT_CORES[self.a]._bootstrap._sessions)
         self.assert_error("E-CANDIDATE", self.a.activate_slot1, object(), self.binding1, 1280)
         self.a.remove_path(1)
 
@@ -255,8 +300,8 @@ class RedundantStateTests(unittest.TestCase):
         packet = session.seal_profile3_data(redundant._REDUNDANT_CORES[self.b]._out[0], incoming, 7, b"pending-secret")
         entered, proceed, result = threading.Event(), threading.Event(), []
         original = session.Profile3DataPreview.__init__
-        def paused_init(preview, *args):
-            original(preview, *args)
+        def paused_init(preview, *args, **kwargs):
+            original(preview, *args, **kwargs)
             entered.set()
             proceed.wait()
         session.Profile3DataPreview.__init__ = paused_init
@@ -272,8 +317,10 @@ class RedundantStateTests(unittest.TestCase):
         finally:
             session.Profile3DataPreview.__init__ = original
         self.assertEqual(len(result), 1)
-        self.assertIsNone(result[0]._session)
-        self.assertIsNone(result[0]._plaintext)
+        with self.assertRaises(session.SessionError):
+            _ = result[0].plaintext
+        with self.assertRaises(session.SessionError):
+            session.commit_profile3_data(inbound, result[0])
     def test_terminal_release_revokes_retained_sessions_and_previews(self):
         outbound, inbound = redundant._REDUNDANT_CORES[self.a]._out[0], redundant._REDUNDANT_CORES[self.a]._in[0]
         outgoing = session.Header(session.NH_SES, self.client_loc, self.server_loc, profile=3,
@@ -282,7 +329,7 @@ class RedundantStateTests(unittest.TestCase):
                                   flags=1, pslot=0, scid=VECTORS["context"]["scid"])
         packet = session.seal_profile3_data(redundant._REDUNDANT_CORES[self.b]._out[0], incoming, 7, b"pending-secret")
         preview = session.preview_profile3_data(inbound, packet)
-        session_preview = preview._session_preview
+        self.assertEqual(preview.plaintext, b"pending-secret")
         self.a.close()
         self.a.close()
         for retained in (outbound, inbound):
@@ -291,10 +338,10 @@ class RedundantStateTests(unittest.TestCase):
             self.assertEqual(retained.send_counter, 0)
             self.assertEqual(retained.replay.highest, 0)
             self.assertEqual(retained.replay.bits, 0)
-        self.assertIsNone(preview._session)
-        self.assertIsNone(preview._session_preview)
-        self.assertIsNone(preview._plaintext)
-        self.assertIsNone(session_preview._session)
+        with self.assertRaises(session.SessionError):
+            _ = preview.plaintext
+        with self.assertRaises(session.SessionError):
+            session.commit_profile3_data(inbound, preview)
         with self.assertRaises(session.SessionError):
             session.seal_profile3_data(outbound, outgoing, 8, b"secret")
         with self.assertRaises(session.SessionError):

@@ -121,7 +121,7 @@ class RedundantNativeTests(unittest.TestCase):
         self.assertIn("endpoint_accepts_exact_maximum_frame_but_rejects_an_appended_tail", source)
     def test_source_closures_bind_launchers_and_manifests_and_match_workflow(self):
         native_paths = (
-            "tests/native_netns.py", "tests/vectors/session-v0.1.json",
+            "tests/native_netns.py", "tests/vectors/session-v0.1.json", "requirements-dev.txt",
             "spec/0004-wire-format-v0.2.md", "spec/0005-session-security-v0.1.md",
             "spec/0007-native-binding-v0.1.md", "spec/parameters-v0.1.md",
             "reference/r8ref.py", "reference/r8session.py",
@@ -135,7 +135,7 @@ class RedundantNativeTests(unittest.TestCase):
             ".github/workflows/native-full.yml", ".github/workflows/ci.yml",
         )
         redundant_paths = (
-            "tests/redundant_netns.py", "tests/vectors/session-v0.1.json",
+            "tests/redundant_netns.py", "tests/vectors/session-v0.1.json", "requirements-dev.txt",
             "spec/0004-wire-format-v0.2.md", "spec/0005-session-security-v0.1.md",
             "spec/0006-mobility-v0.1.md", "spec/0007-native-binding-v0.1.md",
             "spec/0008-redundant-v0.1.md", "spec/parameters-v0.1.md",

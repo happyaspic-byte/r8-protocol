@@ -30,7 +30,7 @@ const LOCAL_MAC: [u8; 6] = [2, 0, 0, 0, 0, 2];
 
 fn runtime() -> NativeRuntime {
     let manifest = validate_manifest_json(
-        br#"{"local_locs":[[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]],"interfaces":[{"descriptor_id":1,"interface_name":"r8a","allowed_source_macs":[[2,0,0,0,0,1]],"local_delivery":true,"transit":true}],"routes":[]}"#,
+        br#"{"local_locs":[],"interfaces":[{"descriptor_id":1,"interface_name":"r8a","allowed_source_macs":[[2,0,0,0,0,1]],"local_delivery":false,"transit":true}],"routes":[]}"#,
         ["r8a"],
     )
     .unwrap();
@@ -94,9 +94,9 @@ fn echo_route_miss_is_a_drop_and_runtime_remains_live() {
     assert_eq!(runtime.telemetry().dropped(), 1);
 }
 #[test]
-fn echo_reply_over_egress_budget_is_a_drop_and_runtime_remains_live() {
+fn transit_over_egress_budget_is_a_drop_and_runtime_remains_live() {
     let manifest = validate_manifest_json(
-        br#"{"local_locs":[[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1]],"interfaces":[{"descriptor_id":1,"interface_name":"r8a","allowed_source_macs":[[2,0,0,0,0,1]],"local_delivery":true,"transit":true},{"descriptor_id":2,"interface_name":"r8b","allowed_source_macs":[[2,0,0,0,0,3]],"local_delivery":true,"transit":true}],"routes":[{"destination_prefix":{"network":[3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3],"prefix_length":128},"egress_descriptor_id":2,"next_hop_mac":[2,0,0,0,0,4]}]}"#,
+        br#"{"local_locs":[],"interfaces":[{"descriptor_id":1,"interface_name":"r8a","allowed_source_macs":[[2,0,0,0,0,1]],"local_delivery":false,"transit":true},{"descriptor_id":2,"interface_name":"r8b","allowed_source_macs":[[2,0,0,0,0,3]],"local_delivery":false,"transit":true}],"routes":[{"destination_prefix":{"network":[3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3],"prefix_length":128},"egress_descriptor_id":2,"next_hop_mac":[2,0,0,0,0,4]}]}"#,
         ["r8a", "r8b"],
     ).unwrap();
     let budgets = DescriptorBudgets::new(&manifest, [(1, 1280), (2, 48)]).unwrap();
@@ -106,7 +106,7 @@ fn echo_reply_over_egress_budget_is_a_drop_and_runtime_remains_live() {
         vec![(1, LOCAL_MAC), (2, [2, 0, 0, 0, 0, 5])],
     )
     .unwrap();
-    let header = Header::new(NH_CTL, [3; 16], LOCAL);
+    let header = Header::new(NH_CTL, [4; 16], [3; 16]);
     let packet = build_ctl_with_budget(&header, CTL_ECHO_REQUEST, 0, &[0, 0, 0, 0], 1280).unwrap();
     let frame = build_ethernet_frame(LOCAL_MAC, SOURCE, &packet).unwrap();
     let mut io = Io(Some(Ok(frame)));

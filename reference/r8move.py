@@ -128,7 +128,7 @@ def _validate(a):
 def _handshake(a, identity, pin, old, peer, bind, target):
     client = ClientMachine(identity,pin,a.service_context,0,old,peer,time.monotonic,a.binding_budget)
     sock = _udp_socket(); sock.bind(bind); scid = int.from_bytes(_nonzero_random(8), "big")
-    packet = client.start(scid, _random(32), _random(32)); phase = 0
+    packet = client.start(scid); phase = 0
     opened_at = time.monotonic(); deadline = opened_at + min(a.timeout, 5)
     retry_waits = (0.5, 1.0, 2.0); retry_index = 0
     retry_deadlines = (opened_at + 0.5, opened_at + 1.5, opened_at + 3.5)
@@ -390,7 +390,7 @@ def _serve_role1(a,identity,pin,old,peer,new,bind,candidate_bind,unused):
             packet,endpoint=_receive(sock,receive_deadline,a.binding_budget); header,payload=parse_packet(packet,a.binding_budget); typ=decode(payload)[0]; binding=_binding(endpoint,selector); record=None; out=None; out_endpoint=endpoint
             if typ==1: out=server.receive_open_packet(packet,binding,int(time.monotonic()//10))
             elif typ==3:
-                out=server.receive_open_auth(packet,binding,int(time.monotonic()//10),_random(32),_random(32))
+                out=server.receive_open_auth(packet,binding,int(time.monotonic()//10))
                 sessions[header.scid]={"endpoint":endpoint,"binding":binding,"old_endpoint":None,"old_binding":None,"manager":None,"promoted":False,"post":0,"established":False}
             elif typ==5:
                 record=sessions.get(header.scid)
@@ -469,7 +469,7 @@ def _serve_role2(a,identity,pin,old,peer,new,bind,candidate_bind,unused):
                 out=server.receive_open_packet(packet,binding,int(time.monotonic()//10))
             elif typ==3:
                 if input_sock is not sock: continue
-                out=server.receive_open_auth(packet,binding,int(time.monotonic()//10),_random(32),_random(32))
+                out=server.receive_open_auth(packet,binding,int(time.monotonic()//10))
                 sessions[header.scid]={"scid":header.scid,"endpoint":endpoint,"binding":binding,"manager":None,"established":False,"candidate_sock":None,"carrier":None,"local_promoted":False,"post":0}
             elif typ==5:
                 record=sessions.get(header.scid)

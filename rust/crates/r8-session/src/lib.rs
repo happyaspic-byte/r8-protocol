@@ -1034,6 +1034,21 @@ impl ProtectedPreview {
 
 static NEXT_SESSION_OWNER: AtomicU64 = AtomicU64::new(1);
 
+fn allocate_session_owner() -> u64 {
+    loop {
+        let owner = NEXT_SESSION_OWNER.load(Ordering::Relaxed);
+        if owner == 0 || owner == u64::MAX {
+            panic!("session proof-owner space exhausted");
+        }
+        if NEXT_SESSION_OWNER
+            .compare_exchange_weak(owner, owner + 1, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+        {
+            return owner;
+        }
+    }
+}
+
 impl DirectionalSession {
     pub fn new(
         send_key: Zeroizing<[u8; 32]>,
@@ -1048,7 +1063,7 @@ impl DirectionalSession {
             replay: ReplayWindow::new(),
             transcript_hash,
             receive_budget,
-            receive_owner: NEXT_SESSION_OWNER.fetch_add(1, Ordering::Relaxed),
+            receive_owner: allocate_session_owner(),
             receive_lease: Arc::new(AtomicBool::new(true)),
         }
     }
@@ -1391,7 +1406,15 @@ impl Profile3Bootstrap {
         self.slot0.take().ok_or(SessionError::UnexpectedMessage)
     }
 
-    pub fn take_slot1(&mut self) -> Result<DirectionalSession, SessionError> {
+    /// Derive slot one only after the caller has consumed the exact Profile-3 mobility admission.
+    ///
+    /// # Safety
+    /// The caller must own this bootstrap and must have atomically validated and consumed the
+    /// one-shot admission bound to its SCID, slot-zero replay owner, policy, and locations.
+    #[doc(hidden)]
+    pub unsafe fn take_slot1_after_admission(
+        &mut self,
+    ) -> Result<DirectionalSession, SessionError> {
         let schedule = self
             .schedule
             .take()

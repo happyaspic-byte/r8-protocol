@@ -29,7 +29,7 @@ fn bpf_requires_r8_ethertype_and_version_nibble() {
     assert_eq!((filter[0].code, filter[0].k), (0x28, 12));
     assert_eq!(
         (filter[1].code, filter[1].jt, filter[1].jf, filter[1].k),
-        (0x15, 0, 3, 0x88b5)
+        (0x15, 0, 4, 0x88b5)
     );
     assert_eq!((filter[2].code, filter[2].k), (0x30, 14));
     assert_eq!((filter[3].code, filter[3].k), (0x54, 0xf0));

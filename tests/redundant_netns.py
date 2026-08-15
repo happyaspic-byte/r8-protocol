@@ -76,7 +76,7 @@ def proc_status(pid):
 
 def source_records():
     paths = (
-        "tests/redundant_netns.py", "tests/vectors/session-v0.1.json",
+        "tests/redundant_netns.py", "tests/vectors/session-v0.1.json", "requirements-dev.txt",
         "spec/0004-wire-format-v0.2.md", "spec/0005-session-security-v0.1.md",
         "spec/0006-mobility-v0.1.md", "spec/0007-native-binding-v0.1.md",
         "spec/0008-redundant-v0.1.md", "spec/parameters-v0.1.md",
@@ -150,9 +150,9 @@ class Lab:
         destination_bindings = (session.NativeBinding(4, mac(5)), session.NativeBinding(5, mac(14)))
         client = session.ClientMachine(ci, session.PeerPin(2, si.eid, si.public), context["service_context"], 3, cl, sl, lambda: now[0])
         server = session.ServerMachine(session.ServerConfig(si, session.PeerPin(1, ci.eid, ci.public), context["service_context"], context["server_context_id"], 3, sl, cl, 1280, 2, 2), bytes.fromhex(context["server_boot_instance_hex"]), bytes.fromhex(context["cookie_key_hex"]), None, 0, lambda: now[0], session.PrevalidationLimiter(lambda: now[0], b"a" * 32))
-        opening = client.start(context["scid"], bytes.fromhex(ids["client_x25519_secret_hex"]), bytes.fromhex(context["client_nonce_hex"]))
+        opening = client.start(context["scid"])
         auth = client.receive_verify(server.receive_open_packet(opening, destination_bindings[0], context["cookie_bucket"]))
-        ack = server.receive_open_auth(auth, destination_bindings[0], context["cookie_bucket"], bytes.fromhex(ids["server_x25519_secret_hex"]), bytes.fromhex(context["server_nonce_hex"]))
+        ack = server.receive_open_auth(auth, destination_bindings[0], context["cookie_bucket"])
         server.receive_protected(client.receive_ack(ack))
         source = redundant.RedundantSession(client.take_profile3(), source_bindings[0], 1280, 1, lambda: now[0])
         destination = redundant.RedundantSession(server.take_profile3(context["scid"]), destination_bindings[0], 1280, 9, lambda: now[0])

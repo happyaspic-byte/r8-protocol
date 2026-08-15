@@ -96,7 +96,7 @@ fn header(slot: u8, scid: u64, source: [u8; 16], destination: [u8; 16]) -> Heade
 }
 
 #[test]
-fn bootstrap_transfers_slot0_and_derives_slot1_once() {
+fn bootstrap_transfers_slot0_without_safe_slot1_derivation() {
     let (mut client, mut server, scid) = established(3);
     let mut client_bootstrap = client.take_profile3_bootstrap().unwrap();
     let mut server_bootstrap = server.take_profile3_bootstrap(scid).unwrap();
@@ -131,32 +131,6 @@ fn bootstrap_transfers_slot0_and_derives_slot1_once() {
     assert_eq!(
         server_slot0.decrypt_profile3_data(&packet).unwrap().1,
         b"slot0"
-    );
-
-    let mut client_slot1 = client_bootstrap.take_slot1().unwrap();
-    let mut server_slot1 = server_bootstrap.take_slot1().unwrap();
-    assert!(matches!(
-        client_bootstrap.take_slot1(),
-        Err(SessionError::UnexpectedMessage)
-    ));
-    let c1 = header(
-        1,
-        scid,
-        *client_bootstrap.local_loc(),
-        *client_bootstrap.peer_loc(),
-    );
-    let _s1 = header(
-        1,
-        scid,
-        *server_bootstrap.local_loc(),
-        *server_bootstrap.peer_loc(),
-    );
-    let packet = client_slot1
-        .encrypt_profile3_data(&c1, NonZeroU64::new(2).unwrap(), b"slot1", 1280)
-        .unwrap();
-    assert_eq!(
-        server_slot1.decrypt_profile3_data(&packet).unwrap().1,
-        b"slot1"
     );
 }
 

@@ -10,6 +10,7 @@ import shutil
 import signal
 import socket
 import subprocess
+import struct
 import sys
 import tempfile
 import time
@@ -66,6 +67,10 @@ def parse_frame(value):
     if len(value) < 14 or value[12:14] != ETHERTYPE.to_bytes(2, "big"):
         raise ValueError("frame")
     return value[:6], value[6:12], r8ref.Header.unpack(value[14:])
+def forwarded_packet(packet, hops):
+    expected = bytearray(packet)
+    expected[5] -= hops
+    return bytes(expected)
 
 
 def ctl(source, destination, hop=8):
@@ -76,6 +81,31 @@ def ctl(source, destination, hop=8):
 def dgram(source, destination, data_len, hop=8):
     h = r8ref.Header(r8ref.NH_DGRAM, loc(source), loc(destination), hop=hop)
     return r8ref.build_dgram(h, 7, 9, b"d" * data_len)
+def oversized_dgram(source, destination, hop=8):
+    """Build an internally consistent 1,281-byte R8 DGRAM for ingress-budget proof."""
+    header = r8ref.Header(r8ref.NH_DGRAM, loc(source), loc(destination), hop=hop)
+    data = b"d" * 1225
+    length = r8ref.DGRAM_HDR.size + len(data)
+    zeroed = r8ref.DGRAM_HDR.pack(7, 9, length, 0) + data
+    checksum = r8ref.checksum16(
+        r8ref.pseudo_header(header, length, r8ref.NH_DGRAM), zeroed
+    ) or 0xffff
+    payload = r8ref.DGRAM_HDR.pack(7, 9, length, checksum) + data
+    fixed = struct.pack(
+        "!BBHBBBBQ",
+        (r8ref.VERSION << 4) | header.profile,
+        header.tc,
+        len(payload),
+        header.nh,
+        header.hop,
+        header.flags,
+        header.pslot,
+        header.scid,
+    )
+    packet = fixed + header.src.packed + header.dst.packed + payload
+    if len(packet) != 1281:
+        raise RuntimeError("oversized fixture")
+    return packet
 
 
 def ses_packet():
@@ -197,7 +227,7 @@ def descriptor_ids(hops):
 
 def source_records():
     paths = (
-        "tests/native_netns.py", "tests/vectors/session-v0.1.json",
+        "tests/native_netns.py", "tests/vectors/session-v0.1.json", "requirements-dev.txt",
         "spec/0004-wire-format-v0.2.md", "spec/0005-session-security-v0.1.md",
         "spec/0007-native-binding-v0.1.md", "spec/parameters-v0.1.md",
         "reference/r8ref.py", "reference/r8session.py",
@@ -252,7 +282,7 @@ def receive(s, timeout):
 
 
 def status(pid):
-    wanted = {"Uid", "Gid", "Groups", "CapEff", "NoNewPrivs"}; out = {}
+    wanted = {"Uid", "Gid", "Groups", "CapEff", "CapPrm", "CapInh", "CapAmb", "CapBnd", "NoNewPrivs"}; out = {}
     for line in Path(f"/proc/{pid}/status").read_text().splitlines():
         key, _, value = line.partition(":")
         if key in wanted: out[key] = value.split()
@@ -314,13 +344,28 @@ class Lab:
                 category = startup_error(p.stderr.read()) if p.poll() is not None else "READY"
                 raise RuntimeError(category)
             snap = status(p.pid)
-            if snap.get("Uid", ["0"])[0] != str(UID) or snap.get("Gid", ["0"])[0] != str(GID) or snap.get("Groups") != [] or snap.get("CapEff") != ["0000000000000000"] or snap.get("NoNewPrivs") != ["1"]: raise RuntimeError("PRIVILEGE")
+            zero = ["0000000000000000"]
+            if snap.get("Uid") != [str(UID)] * 4 or snap.get("Gid") != [str(GID)] * 4 or snap.get("Groups") != [] or any(snap.get(key) != zero for key in ("CapEff", "CapPrm", "CapInh", "CapAmb", "CapBnd")) or snap.get("NoNewPrivs") != ["1"]: raise RuntimeError("PRIVILEGE")
+    def assert_live(self):
+        if any(process.poll() is not None for process in self.procs):
+            raise RuntimeError("NEGATIVE")
+
+    def health_probe(self):
+        watcher = subprocess.Popen(["ip", "netns", "exec", self.name(self.hops + 1), sys.executable, str(Path(__file__).resolve()), "worker", "watch", "--interface", f"e{self.hops}", "--kind", "ctl", "--hops", str(self.hops), "--reply"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
+        self.workers.append(watcher)
+        if not wait_worker_stage(watcher, "receive"):
+            raise RuntimeError(worker_process_error(watcher))
+        probe = _run(["ip", "netns", "exec", self.name(0), sys.executable, str(Path(__file__).resolve()), "worker", "send", "--interface", "e0", "--packet", ctl(0, self.hops + 1).hex(), "--reply", "--hops", str(self.hops)], check=False)
+        if probe.returncode or watcher.wait(timeout=4):
+            raise RuntimeError("NEGATIVE")
+        self.assert_live()
 
 
     def proof(self):
         # Endpoint workers send and observe each packet over real Ethernet; no local parse is evidence.
         for kind, packet in (("ctl", ctl(0, self.hops + 1)), ("dgram", dgram(0, self.hops + 1, 1224)), ("ses", ses_packet()[0])):
             emit_stage(f"proof-{kind}")
+            self.assert_live()
             watcher = subprocess.Popen(["ip", "netns", "exec", self.name(self.hops + 1), sys.executable, str(Path(__file__).resolve()), "worker", "watch", "--interface", f"e{self.hops}", "--kind", kind, "--hops", str(self.hops), "--reply" if kind == "ctl" else "--no-reply"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
             self.workers.append(watcher)
             if not wait_worker_stage(watcher, "receive"):
@@ -333,26 +378,45 @@ class Lab:
                 raise RuntimeError(worker_error(sender.stderr))
             if watcher.wait(timeout=4):
                 raise RuntimeError("FORWARD")
+            self.assert_live()
             self.counts["frames_sent"] += 1; self.counts["frames_received"] += 1
         # Every negative is sent and B's independent watcher must time out.
-        negatives = [b"\0", eth(mac(1), b"\x02\0\0\0\0\xff", ctl(0, self.hops + 1)), ctl(0, self.hops + 1, 1), ctl(0, 0xffff)]
+        negatives = [b"\0", eth(mac(1), b"\x02\0\0\0\0\xff", ctl(0, self.hops + 1)), ctl(0, self.hops + 1, 1), ctl(0, 0xffff), dgram(0, self.hops + 1, 10) + b"\0"]
         for packet in negatives:
             emit_stage("proof-negative")
+            self.assert_live()
             watcher = subprocess.Popen(["ip", "netns", "exec", self.name(self.hops + 1), sys.executable, str(Path(__file__).resolve()), "worker", "absent", "--interface", f"e{self.hops}"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
             self.workers.append(watcher)
             if not wait_worker_stage(watcher, "receive"):
                 raise RuntimeError(worker_process_error(watcher))
             raw = packet if len(packet) >= 14 and packet[12:14] == ETHERTYPE.to_bytes(2, "big") else eth(mac(1), mac(0), packet)
-            if _run(["ip", "netns", "exec", self.name(0), sys.executable, str(Path(__file__).resolve()), "worker", "send", "--interface", "e0", "--frame", raw.hex()], check=False).returncode or watcher.wait(timeout=3): raise RuntimeError("NEGATIVE")
+            if _run(["ip", "netns", "exec", self.name(0), sys.executable, str(Path(__file__).resolve()), "worker", "send", "--interface", "e0", "--frame", raw.hex()], check=False).returncode or watcher.wait(timeout=3):
+                raise RuntimeError("NEGATIVE")
+            self.assert_live()
+            self.health_probe()
             self.counts["negative_timeouts"] += 1
-        try: dgram(0, self.hops + 1, 1225)
-        except r8ref.WireError: self.counts["local_budget_rejects"] += 1
-        else: raise RuntimeError("BUDGET")
+        over_budget = oversized_dgram(0, self.hops + 1)
+        watcher = subprocess.Popen(["ip", "netns", "exec", self.name(self.hops + 1), sys.executable, str(Path(__file__).resolve()), "worker", "absent", "--interface", f"e{self.hops}"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
+        self.workers.append(watcher)
+        if not wait_worker_stage(watcher, "receive"):
+            raise RuntimeError(worker_process_error(watcher))
+        result = _run(["ip", "netns", "exec", self.name(0), sys.executable, str(Path(__file__).resolve()), "worker", "send", "--interface", "e0", "--frame", eth(mac(1), mac(0), over_budget).hex()], check=False)
+        if result.returncode or watcher.wait(timeout=3):
+            raise RuntimeError("BUDGET")
+        self.assert_live()
+        self.health_probe()
+        self.counts["local_budget_rejects"] += 1
 
     def revoke(self):
-        for n, p in enumerate(self.procs, 1):
+        self.assert_live()
+        for n, process in enumerate(self.procs, 1):
+            if process.poll() is not None:
+                raise RuntimeError("REVOCATION")
             ip("link", "set", f"e{n - 1}", "down", ns=self.name(n))
-            if p.wait(timeout=5) == 0: raise RuntimeError("REVOCATION")
+            if process.wait(timeout=5) == 0:
+                raise RuntimeError("REVOCATION")
+            if any(remaining.poll() is not None for remaining in self.procs[n:]):
+                raise RuntimeError("REVOCATION")
             self.counts["daemon_exits"] += 1
 
     def cleanup(self):
@@ -376,7 +440,12 @@ class Lab:
                 except ProcessLookupError: pass
             if ip("netns", "pids", namespace, check=False).stdout.split() or ip("netns", "del", namespace, check=False).returncode: self.counts["cleanup_failures"] += 1
         if any(n in ip("netns", "list", check=False).stdout for n in self.names): self.counts["cleanup_failures"] += 1
-        shutil.rmtree(self.temp, ignore_errors=True)
+        try:
+            shutil.rmtree(self.temp)
+        except OSError:
+            self.counts["cleanup_failures"] += 1
+        if self.temp.exists():
+            self.counts["cleanup_failures"] += 1
 
 
 def worker(args):
@@ -389,27 +458,38 @@ def worker(args):
         if not args.reply: return 0
         emit_worker_stage("reply")
         data = receive(s, 2)
-        if data is None or len(data) < 14: return 1
-        h, payload = r8ref.Header.unpack(data[14:])
-        return 0 if h.hop == 8 - args.hops and r8ref.parse_ctl(h, payload)[0] == r8ref.CTL_ECHO_REPLY else 1
+        if data is None:
+            return 1
+        request_header, request_payload = r8ref.Header.unpack(bytes.fromhex(args.packet))
+        reply = r8ref.Header(r8ref.NH_CTL, request_header.dst, request_header.src, hop=8)
+        expected = eth(mac(0), mac(1), forwarded_packet(r8ref.build_ctl(reply, r8ref.CTL_ECHO_REPLY, 0, r8ref.parse_ctl(request_header, request_payload)[2]), args.hops))
+        return 0 if data == expected else 1
     emit_worker_stage("receive")
     data = receive(s, 1.5)
-    if args.mode == "absent": return 0 if data is None else 1
-    if data is None or len(data) < 14: return 1
-    packet = data[14:]; h, payload = r8ref.Header.unpack(packet)
+    if args.mode == "absent":
+        return 0 if data is None else 1
+    if data is None:
+        return 1
+    expected_packet = {
+        "ctl": ctl(0, args.hops + 1),
+        "dgram": dgram(0, args.hops + 1, 1224),
+        "ses": ses_packet()[0],
+    }[args.kind]
+    if data != eth(mac(args.hops + 1), mac(args.hops), forwarded_packet(expected_packet, args.hops)):
+        return 1
+    _, _, (h, payload) = parse_frame(data)
     if args.kind == "ctl":
-        if h.hop != 8 - args.hops or r8ref.parse_ctl(h, payload)[0] != r8ref.CTL_ECHO_REQUEST: return 1
+        if r8ref.parse_ctl(h, payload)[0] != r8ref.CTL_ECHO_REQUEST:
+            return 1
         if args.reply:
             reply = r8ref.Header(r8ref.NH_CTL, h.dst, h.src, hop=8)
             s.send(eth(data[6:12], data[:6], r8ref.build_ctl(reply, r8ref.CTL_ECHO_REPLY, 0, r8ref.parse_ctl(h, payload)[2])))
     elif args.kind == "dgram":
-        if h.hop != 8 - args.hops or len(packet) != 1280: return 1
         r8ref.parse_dgram(h, payload)
     else:
         key = ses_packet()[1]; prefix = payload[:4]; counter = int.from_bytes(payload[4:12], "big")
-        canonical = bytearray(packet[:48]); canonical[5] = 0
+        canonical = bytearray(data[14:62]); canonical[5] = 0
         r8session.Session(key).decrypt(bytes(canonical), prefix, counter, payload[12:])
-        if h.hop != 64 - args.hops: return 1
     return 0
 
 

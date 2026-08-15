@@ -536,19 +536,19 @@ class MobilityManager:
             if old_carrier != carrier:
                 self._advance_generation()
             return Probe(candidate_id, _loc_view(new_loc), epoch, slot, nonce).build()
-    def _validate_profile3_replay(self, replay_token, plaintext):
+    def _validate_profile3_replay(self, replay_token, plaintext, observed_binding):
         c = _mobility_core(self)
         if c.profile != 3:
             return
         from r8redundant import profile3_receive_matches
-        if not profile3_receive_matches(c.authorized_session, self, replay_token, plaintext):
+        if not profile3_receive_matches(c.authorized_session, self, replay_token, plaintext, observed_binding):
             _fail("E-REPLAY")
     def preview(self, control_bytes, observed_binding, replay_token):
         c = _mobility_core(self)
         with c.lock:
             if c.closed or (c.profile == 3 and c._profile3_admitted): _fail()
             observed_binding = _binding(observed_binding); control = parse_control(control_bytes); now = self._now()
-            self._validate_profile3_replay(replay_token, bytes(control_bytes))
+            self._validate_profile3_replay(replay_token, bytes(control_bytes), observed_binding)
             def register(action, control, binding, replay_token, response, prepared=(), deadline=None):
                 preview = Preview(_PREVIEW_AUTHORITY)
                 c._previews[preview] = (c.generation, min(now + 5000, deadline if deadline is not None else now + 5000),
@@ -674,7 +674,7 @@ class MobilityManager:
             if (action not in prepared_lengths or (action not in ("noop", "response") and
                     (type(prepared) is not tuple or len(prepared) != prepared_lengths[action]))):
                 _fail("E-REPLAY")
-            self._validate_profile3_replay(replay_token, control)
+            self._validate_profile3_replay(replay_token, control, binding)
             (c.authorized_session.commit_receive if c.profile == 3 else c.session_commit)(replay_token)
             if action in ("noop", "response"):
                 return response
@@ -820,10 +820,6 @@ class MobilityManager:
     @property
     def lock(self):
         return threading.RLock()
-    @property
-    def identity(self):
-        identity = _mobility_core(self).identity
-        return Identity(identity.private, bytes(identity.public), bytes(identity.eid))
     @property
     def peer_pin(self):
         peer = _mobility_core(self).peer_pin

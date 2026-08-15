@@ -102,6 +102,13 @@ where
     verify_ipv6_disabled(&names)?;
     verify_no_default_route()?;
     let addresses = interface_addresses()?;
+    let observed: BTreeSet<_> = addresses.iter().map(|entry| entry.name.as_str()).collect();
+    let expected: BTreeSet<_> = std::iter::once("lo")
+        .chain(names.iter().map(String::as_str))
+        .collect();
+    if observed != expected {
+        return Err(LinuxError::Interface);
+    }
     let loopback = addresses
         .iter()
         .find(|entry| entry.name == "lo")
@@ -200,9 +207,10 @@ pub fn drop_privileges(uid: libc::uid_t, gid: libc::gid_t) -> Result<(), LinuxEr
     if uid == 0 || gid == 0 {
         return Err(LinuxError::Privilege);
     }
-    if unsafe { libc::setgroups(0, std::ptr::null()) } != 0
-        || unsafe { libc::setgid(gid) } != 0
-        || unsafe { libc::setuid(uid) } != 0
+    if drop_bounding_capabilities() != 0
+        || unsafe { libc::setgroups(0, std::ptr::null()) } != 0
+        || unsafe { libc::setresgid(gid, gid, gid) } != 0
+        || unsafe { libc::setresuid(uid, uid, uid) } != 0
     {
         return Err(LinuxError::Privilege);
     }
@@ -218,7 +226,7 @@ pub fn drop_privileges(uid: libc::uid_t, gid: libc::gid_t) -> Result<(), LinuxEr
         return Err(LinuxError::Privilege);
     }
     set_nondumpable()?;
-    validate_privilege_snapshot(&current_privilege_snapshot()?, uid, gid)
+    validate_full_privilege_snapshot(&current_full_privilege_snapshot()?, uid, gid)
 }
 /// Make process memory nondumpable and verify that kernel state immediately.
 pub fn set_nondumpable() -> Result<(), LinuxError> {
@@ -345,7 +353,7 @@ pub fn r8_bpf_program() -> [libc::sock_filter; 7] {
         libc::sock_filter {
             code: 0x15,
             jt: 0,
-            jf: 3,
+            jf: 4,
             k: ETH_P_R8 as u32,
         },
         libc::sock_filter {
@@ -604,7 +612,49 @@ struct CapUserData {
     inheritable: u32,
 }
 
-fn current_privilege_snapshot() -> Result<PrivilegeSnapshot, LinuxError> {
+fn drop_bounding_capabilities() -> libc::c_int {
+    let last = fs::read_to_string("/proc/sys/kernel/cap_last_cap")
+        .ok()
+        .and_then(|value| value.trim().parse::<libc::c_ulong>().ok());
+    let Some(last) = last else {
+        return -1;
+    };
+    for capability in 0..=last {
+        if unsafe { libc::prctl(libc::PR_CAPBSET_DROP, capability, 0, 0, 0) } != 0 {
+            return -1;
+        }
+    }
+    0
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct FullPrivilegeSnapshot {
+    uid: [libc::uid_t; 4],
+    gid: [libc::gid_t; 4],
+    groups: Vec<libc::gid_t>,
+    capabilities: [u64; 5],
+    no_new_privs: bool,
+}
+
+fn validate_full_privilege_snapshot(
+    snapshot: &FullPrivilegeSnapshot,
+    uid: libc::uid_t,
+    gid: libc::gid_t,
+) -> Result<(), LinuxError> {
+    if uid == 0
+        || gid == 0
+        || snapshot.uid != [uid; 4]
+        || snapshot.gid != [gid; 4]
+        || !snapshot.groups.is_empty()
+        || snapshot.capabilities != [0; 5]
+        || !snapshot.no_new_privs
+    {
+        return Err(LinuxError::Privilege);
+    }
+    Ok(())
+}
+
+fn current_full_privilege_snapshot() -> Result<FullPrivilegeSnapshot, LinuxError> {
     let group_count = unsafe { libc::getgroups(0, std::ptr::null_mut()) };
     if group_count < 0 {
         return Err(LinuxError::Privilege);
@@ -615,21 +665,42 @@ fn current_privilege_snapshot() -> Result<PrivilegeSnapshot, LinuxError> {
     {
         return Err(LinuxError::Privilege);
     }
+    let mut uid = [0; 4];
+    let mut gid = [0; 4];
+    if unsafe { libc::getresuid(&mut uid[0], &mut uid[1], &mut uid[2]) } != 0
+        || unsafe { libc::getresgid(&mut gid[0], &mut gid[1], &mut gid[2]) } != 0
+    {
+        return Err(LinuxError::Privilege);
+    }
+    uid[3] = unsafe { libc::syscall(libc::SYS_setfsuid, !0 as libc::uid_t) as libc::uid_t };
+    gid[3] = unsafe { libc::syscall(libc::SYS_setfsgid, !0 as libc::gid_t) as libc::gid_t };
     let status = fs::read_to_string("/proc/self/status").map_err(|_| LinuxError::Privilege)?;
-    let cap_eff = status
-        .lines()
-        .find_map(|line| line.strip_prefix("CapEff:\t"))
-        .and_then(|value| u64::from_str_radix(value.trim(), 16).ok())
-        .ok_or(LinuxError::Privilege)?;
+    let mut capabilities = [0; 5];
+    for (index, name) in [
+        "CapEff:\t",
+        "CapPrm:\t",
+        "CapInh:\t",
+        "CapAmb:\t",
+        "CapBnd:\t",
+    ]
+    .iter()
+    .enumerate()
+    {
+        capabilities[index] = status
+            .lines()
+            .find_map(|line| line.strip_prefix(name))
+            .and_then(|value| u64::from_str_radix(value.trim(), 16).ok())
+            .ok_or(LinuxError::Privilege)?;
+    }
     let no_new_privs = unsafe { libc::prctl(PR_GET_NO_NEW_PRIVS, 0, 0, 0, 0) };
     if no_new_privs < 0 {
         return Err(LinuxError::Privilege);
     }
-    Ok(PrivilegeSnapshot {
-        uid: unsafe { libc::geteuid() },
-        gid: unsafe { libc::getegid() },
+    Ok(FullPrivilegeSnapshot {
+        uid,
+        gid,
         groups,
-        cap_eff,
+        capabilities,
         no_new_privs: no_new_privs == 1,
     })
 }

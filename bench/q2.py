@@ -154,6 +154,7 @@ def validate(trials, packets, evidence, *, require_complete=True):
         trial_rows[key] = row; states[key] = {"indexes": set(), "rows": {}}
         try:
             expected = canonical_plan[row["execution_ordinal"]]
+            # `warmup` is not a row field: it is uniquely derived from the canonical seed (`seed < 20`).
             if any(row.get(k) != v for k, v in expected.items() if k != "warmup"): add(f"trial row {n}: row does not equal canonical plan")
         except (KeyError, StopIteration, TypeError): add(f"trial row {n}: invalid canonical execution ordinal")
     for n, row in numbered(packets):

@@ -30,6 +30,11 @@ jobs:
           test "$(jq -r .name <<<"$RUN")" = "Native full"
           test "$(jq -r .conclusion <<<"$RUN")" = "success"
           test "$(jq -r .head_sha <<<"$RUN")" = "$GITHUB_SHA"
+          test "$(jq -r .path <<<"$RUN")" = ".github/workflows/native-full.yml"
+          test "$(jq -r .event <<<"$RUN")" = "workflow_dispatch"
+          ARTIFACTS="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GATE5_RUN/artifacts")"
+          ARTIFACT="$(jq -ce '[.artifacts[] | select(.name == "native-full-diagnostics" and .expired == false)] | if length == 1 then .[0] else error("missing exact native artifact") end' <<<"$ARTIFACTS")"
+          [[ "$(jq -r .digest <<<"$ARTIFACT")" =~ ^sha256:[0-9a-f]{64}$ ]]
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with: {python-version: '3.12'}
       - name: Install isolated-network prerequisites
@@ -59,7 +64,8 @@ jobs:
       - name: Validate package hashes and cardinalities
         run: |
           sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/q2-full"
-          python3 -c 'import pathlib; from bench import q2; p=pathlib.Path("'"$RUNNER_TEMP"'/q2-full"); assert not q2.validate_files(p/"trial.jsonl",p/"logical-packet.jsonl",p/"evidence.jsonl")'
+          python3 -c 'import sys; sys.exit(0 if sys.flags.optimize == 0 else 2)'
+          python3 bench/q2.py validate --input "$RUNNER_TEMP/q2-full"
       - name: Bind final package manifest
         run: |
           SHA="$(sha256sum "$RUNNER_TEMP/q2-full/manifest.json" | cut -d' ' -f1)"

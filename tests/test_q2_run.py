@@ -142,8 +142,9 @@ class Q2RunTests(unittest.TestCase):
     def test_live_security_material_is_fresh_and_admission_is_authenticated(self):
         plan = next(row for row in q2_run.q2.plan_rows()
                     if row["mechanism"] == "REDUNDANT")
-        original_token, original_below = (
-            q2_run.secrets.token_bytes, q2_run.secrets.randbelow)
+        original_token, original_below, original_session_random = (
+            q2_run.secrets.token_bytes, q2_run.secrets.randbelow,
+            q2_run.session._random)
         calls = []
         seeds = iter((100, 200))
         def token_bytes(length):
@@ -151,6 +152,7 @@ class Q2RunTests(unittest.TestCase):
             return bytes([len(calls) % 255 or 1]) * length
         q2_run.secrets.token_bytes = token_bytes
         q2_run.secrets.randbelow = lambda bound: next(seeds)
+        q2_run.session._random = token_bytes
         source = destination = None
         try:
             class FakeTransport:
@@ -170,6 +172,7 @@ class Q2RunTests(unittest.TestCase):
         finally:
             q2_run.secrets.token_bytes, q2_run.secrets.randbelow = (
                 original_token, original_below)
+            q2_run.session._random = original_session_random
             if source is not None: source.close()
             if destination is not None: destination.close()
         self.assertGreaterEqual(calls.count(32), 8)

@@ -9,7 +9,8 @@ def _auth_wait(r):
  destination=s.ipaddress.IPv6Address(r.randbytes(16))
  machine=s.ClientMachine(client,s.PeerPin(2,server.eid,server.public),r.randrange(1<<32),r.randrange(4),
                          source,destination,lambda: 0)
- machine.start(r.randrange(1,1<<64),r.randbytes(32),r.randbytes(32))
+ machine.start(r.randrange(1,1<<64),r.randbytes(32),r.randbytes(32),
+               _authority=s._HANDSHAKE_MATERIAL_AUTHORITY)
  verify=s.VerifyCookie(2,1,machine.service_context,client.public,s.hashlib.sha256(machine.ephemeral).digest(),
                        r.randbytes(16),r.randbytes(32))
  packet=s.build_packet(s.Header(s.NH_SES,destination,source,profile=machine.profile,scid=machine.scid),
@@ -43,5 +44,8 @@ def run(seed=0x52385345):
   except s.SessionError as e: assert e.category=="AUTH_FAILED"
   else: raise AssertionError("accepted VerifyCookie at its deadline")
   assert machine.state==machine.RELEASED
-  assert machine.ephemeral_secret is None and machine.auth_payload is None
+  assert not hasattr(machine,"ephemeral_secret") and machine.auth_payload is None
+  secrets=s._client_secrets(machine)
+  assert all(value is None for value in (
+      secrets.ephemeral_secret,secrets.transcript_hash,secrets.prk,secrets.c2s,secrets.s2c))
 if __name__=='__main__': run()

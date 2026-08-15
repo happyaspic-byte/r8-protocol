@@ -135,7 +135,12 @@ impl NativeRuntime {
         budgets: DescriptorBudgets,
         local_macs: Vec<(u32, [u8; 6])>,
     ) -> Result<Self, NativeError> {
-        if local_macs.len() != manifest.interfaces().len()
+        if !manifest.local_locs().is_empty()
+            || manifest
+                .interfaces()
+                .iter()
+                .any(|interface| interface.local_delivery())
+            || local_macs.len() != manifest.interfaces().len()
             || local_macs.iter().any(|(id, mac)| {
                 manifest.interface(*id).is_none()
                     || *mac == [0; 6]
@@ -215,11 +220,12 @@ impl NativeRuntime {
                 Err(error) => return self.fatal(error),
             };
             let Some(length) = received else { continue };
-            if length > ETHERNET_HEADER_LEN + SERIALIZED_R8_MAX {
-                return self.fatal(NativeError::Receive);
-            }
             self.telemetry.received = self.telemetry.received.saturating_add(1);
             self.telemetry.descriptor_high_water = self.telemetry.descriptor_high_water.max(id);
+            if length > ETHERNET_HEADER_LEN + SERIALIZED_R8_MAX {
+                self.telemetry.dropped = self.telemetry.dropped.saturating_add(1);
+                continue;
+            }
             match process_frame(&self.manifest, &self.budgets, id, &buffer[..length]) {
                 FrameAction::Drop(_) => {
                     self.telemetry.dropped = self.telemetry.dropped.saturating_add(1)

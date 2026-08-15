@@ -26,6 +26,31 @@ class NativeNetnsTests(unittest.TestCase):
         self.assertEqual(native.r8ref.parse_ctl(header, payload)[0], native.r8ref.CTL_ECHO_REQUEST)
         with self.assertRaises(ValueError):
             native.parse_frame(b"bad")
+    def test_frame_parser_rejects_truncated_and_wrong_ethertype(self):
+        packet = native.ctl(0, 2)
+        with self.assertRaises(ValueError):
+            native.parse_frame(b"\0" * 13)
+        with self.assertRaises(ValueError):
+            native.parse_frame(native.mac(2) + native.mac(0) + b"\x08\x00" + packet)
+
+    def test_forwarded_packet_changes_only_hop(self):
+        packet = native.ctl(0, 2, hop=8)
+        forwarded = native.forwarded_packet(packet, 2)
+        self.assertEqual(forwarded[5], 6)
+        self.assertEqual(forwarded[:5] + forwarded[6:], packet[:5] + packet[6:])
+    def test_oversized_dgram_is_internally_consistent_max_plus_one(self):
+        packet = native.oversized_dgram(0, 2)
+        self.assertEqual(len(packet), 1281)
+        payload = packet[48:]
+        self.assertEqual(int.from_bytes(packet[2:4], "big"), len(payload))
+        sport, dport, length, received = native.r8ref.DGRAM_HDR.unpack(payload[:8])
+        self.assertEqual((sport, dport, length), (7, 9, len(payload)))
+        header = native.r8ref.Header(native.r8ref.NH_DGRAM, native.loc(0), native.loc(2))
+        zeroed = payload[:6] + b"\0\0" + payload[8:]
+        expected = native.r8ref.checksum16(
+            native.r8ref.pseudo_header(header, length, native.r8ref.NH_DGRAM), zeroed
+        ) or 0xffff
+        self.assertEqual(received, expected)
 
     def test_packet_socket_ignores_outgoing(self):
         sock = MagicMock()
@@ -47,6 +72,24 @@ class NativeNetnsTests(unittest.TestCase):
         with patch.object(native, "worker", return_value=7) as worker:
             self.assertEqual(native.main(["worker", "absent", "--interface", "e0"]), 7)
         worker.assert_called_once()
+    def test_revoke_allows_only_prior_causally_stopped_daemons(self):
+        class Process:
+            def __init__(self):
+                self.result = None
+            def poll(self):
+                return self.result
+            def wait(self, timeout):
+                self.result = 1
+                return self.result
+        lab = object.__new__(native.Lab)
+        lab.procs = [Process(), Process()]
+        lab.hops = 2
+        lab.token = "test"
+        lab.counts = {"daemon_exits": 0}
+        with patch.object(native, "ip") as ip:
+            lab.revoke()
+        self.assertEqual(lab.counts["daemon_exits"], 2)
+        self.assertEqual(ip.call_count, 2)
     def test_nonroot_main_refuses(self):
         with patch.object(os, "geteuid", return_value=1000):
             self.assertEqual(native.main(["--binary", "/missing"]), 1)

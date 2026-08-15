@@ -74,7 +74,7 @@ impl NativeIo for LinuxIo {
                 fd,
                 buffer.as_mut_ptr() as *mut _,
                 buffer.len(),
-                libc::MSG_DONTWAIT,
+                libc::MSG_DONTWAIT | libc::MSG_TRUNC,
             )
         };
         if n >= 0 {
@@ -120,6 +120,15 @@ impl EventSource for Watch {
             Ok(false)
         } else {
             Err(NativeError::Revoked)
+        }
+    }
+}
+impl Watch {
+    fn reject_pending(&mut self) -> Result<(), NativeError> {
+        if self.event()? {
+            Err(NativeError::Revoked)
+        } else {
+            Ok(())
         }
     }
 }
@@ -175,6 +184,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let manifest = validate_manifest_json(&read_immutable_manifest(&sealed)?, &args.interfaces)?;
     drop(sealed);
     drop(raw);
+    if !manifest.local_locs().is_empty()
+        || manifest
+            .interfaces()
+            .iter()
+            .any(|interface| interface.local_delivery())
+    {
+        return Err("manifest local delivery rejected".into());
+    }
     let declared: BTreeSet<_> = manifest
         .interfaces()
         .iter()
@@ -184,6 +201,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if declared != supplied {
         return Err("manifest allowlist rejected".into());
     }
+    eprintln!("r8-native startup=watch");
+    let mut watch = route_watch(args.interfaces.clone())?;
     eprintln!("r8-native startup=isolation");
     if let Err(error) = verify_isolated_namespace(&args.interfaces) {
         let category = match error {
@@ -209,8 +228,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         fds.push((interface.descriptor_id(), descriptor.into_fd()));
     }
     let budgets = DescriptorBudgets::new(&manifest, budgets)?;
-    eprintln!("r8-native startup=watch");
-    let mut watch = route_watch(args.interfaces.clone())?;
+    if watch.reject_pending().is_err() || verify_isolated_namespace(&args.interfaces).is_err() {
+        return Err("startup isolation revoked".into());
+    }
     eprintln!("r8-native startup=privilege");
     drop_privileges(args.uid, args.gid)?;
     set_nondumpable()?;
@@ -220,6 +240,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut io = LinuxIo { fds };
     let mut sessions = DropSessions::default();
     let mut clock = MonotonicClock;
+    if watch.reject_pending().is_err() || verify_isolated_namespace(&args.interfaces).is_err() {
+        return Err("readiness isolation revoked".into());
+    }
     println!("r8-native ready descriptors={descriptor_count}");
     loop {
         let mut poll = io

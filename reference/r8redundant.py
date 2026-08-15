@@ -104,11 +104,15 @@ def _redundant_core(session):
         _fail("E-REPLAY")
     return core
 
-def profile3_receive_matches(session, manager, preview, plaintext):
+def profile3_receive_matches(session, manager, preview, plaintext, binding):
     core = _redundant_core(session)
-    record = core._receive_previews.get(preview)
-    return (record is not None and (plaintext is None or record[4] == plaintext) and record[0] == core._receive_generation
-            and core._mobility_manager is manager)
+    with core._lock:
+        record = core._receive_previews.get(preview)
+        association = core._mobility_associations.get(preview)
+        return (record is not None and association is not None
+                and record[0] == core._receive_generation
+                and record[4] == plaintext and record[8] == binding
+                and association == (manager, binding))
 
 class ReceivePreview:
     __slots__ = ("__weakref__",)
@@ -156,8 +160,12 @@ class RedundantSession:
         c = _RedundantCore(); _REDUNDANT_CORES[self] = c
         if not isinstance(bootstrap, r8session.Profile3Bootstrap):
             _fail("E-CANDIDATE")
-        if (bootstrap.outbound is None or bootstrap.inbound is None or bootstrap.scid == 0
-                or bootstrap._prk is None or bootstrap._thash is None):
+        try:
+            bootstrap_context = bootstrap._context(r8session._PROFILE3_CONSUMER_AUTHORITY)
+        except r8session.SessionError:
+            _fail("E-CANDIDATE")
+        if (bootstrap_context[4] is None or bootstrap_context[5] is None or bootstrap_context[0] == 0
+                or bootstrap_context[6] is None or bootstrap_context[7] is None):
             _fail("E-CANDIDATE")
         if type(delivery_seed) is not int or not 0 < delivery_seed < _MAX or not callable(clock):
             _fail("E-COUNTER")
@@ -169,14 +177,15 @@ class RedundantSession:
         if type(now) is not int or now < 0:
             _fail("E-TIMEOUT")
         try:
-            bootstrap = bootstrap._transfer()
-        except Exception:
+            bootstrap = bootstrap._transfer(r8session._PROFILE3_CONSUMER_AUTHORITY)
+            bootstrap_context = bootstrap._context(r8session._PROFILE3_CONSUMER_AUTHORITY)
+        except r8session.SessionError:
             _fail("E-CANDIDATE")
         c._lock = threading.RLock()
-        c._bootstrap, c._scid, c._clock = bootstrap, bootstrap.scid, clock
-        c._local_locs, c._peer_locs = [_loc(bootstrap.local_loc), None], [_loc(bootstrap.peer_loc), None]
-        c._out = [bootstrap.outbound, None]
-        c._in = [bootstrap.inbound, None]
+        c._bootstrap, c._scid, c._clock = bootstrap, bootstrap_context[0], clock
+        c._local_locs, c._peer_locs = [_loc(bootstrap_context[2]), None], [_loc(bootstrap_context[3]), None]
+        c._out = [bootstrap_context[4], None]
+        c._in = [bootstrap_context[5], None]
         c._bindings, c.budgets = [slot0_binding, None], [slot0_budget, None]
         c.states = [ACTIVE, ABSENT]
         c._queues = [deque(), deque()]
@@ -184,7 +193,7 @@ class RedundantSession:
         c._next_delivery_id, c._high_water = delivery_seed, None
         c._dedup, c.events, c._queue_overflow_packets = {}, [Event("degraded", 1)], 0
         c._delivery, c._profile3_owner_issued, c._profile3_owner = {}, False, None
-        c._receive_generation, c._receive_previews, c._mobility_previews, c._mobility_manager, c.closed = 0, {}, {}, None, False
+        c._receive_generation, c._receive_previews, c._mobility_previews, c._mobility_associations, c.closed = 0, {}, {}, {}, False
 
     def __repr__(self):
         return "<RedundantSession>"
@@ -258,6 +267,7 @@ class RedundantSession:
                     pass
             _RECEIVE_OWNERS.pop(preview, None)
         c._receive_previews.clear()
+        c._mobility_associations.clear()
         for preview in tuple(c._mobility_previews):
             _MOBILITY_OWNERS.pop(preview, None)
         c._mobility_previews.clear()
@@ -265,7 +275,7 @@ class RedundantSession:
         for slot in (0, 1):
             outbound, inbound = c._out[slot], c._in[slot]
             if c._bootstrap is not None:
-                c._bootstrap.release_sessions(outbound, inbound)
+                c._bootstrap.release_sessions(outbound, inbound, _authority=r8session._PROFILE3_CONSUMER_AUTHORITY)
             else:
                 if outbound is not None:
                     outbound.release()
@@ -303,34 +313,57 @@ class RedundantSession:
 
     def activate_slot1(self, admission, binding, budget):
         c = _redundant_core(self)
-        """Consume one proved mobility admission after all non-consuming checks pass."""
+        """Atomically consume one proved mobility admission after reversible preparation."""
         with c._lock:
             if c._receive_previews:
                 _fail("E-CAPACITY")
-            if c.closed or c.states[1] != ABSENT or c._bootstrap is None or c._bootstrap._prk is None:
+            bootstrap = c._bootstrap
+            if c.closed or c.states[1] != ABSENT or bootstrap is None:
+                _fail("E-CANDIDATE")
+            preparation = None
+            try:
+                context = bootstrap._context(r8session._PROFILE3_CONSUMER_AUTHORITY)
+                if context[6] is None or context[7] is None:
+                    _fail("E-CANDIDATE")
+                binding = _binding(binding)
+                _budget(budget)
+                semantics, policy = r8mobility.profile3_admission_details(admission, self)
+                if (
+                    semantics[7] is not c._profile3_owner or semantics[1] != c._scid
+                    or semantics[3] != 1 or semantics[6] != binding
+                ):
+                    _fail("E-CANDIDATE")
+                local_loc, peer_loc = _loc(semantics[4]), _loc(semantics[5])
+                preparation = bootstrap._prepare_slot1(r8session._PROFILE3_CONSUMER_AUTHORITY)
+            except Exception:
+                if preparation is not None:
+                    try:
+                        bootstrap._abort_slot1(preparation, r8session._PROFILE3_CONSUMER_AUTHORITY)
+                    except r8session.SessionError:
+                        pass
                 _fail("E-CANDIDATE")
             c.states[1] = CANDIDATE
+            c.states[1] = VALIDATED
             try:
-                binding = _binding(binding); _budget(budget)
-                semantics, policy = r8mobility.profile3_admission_details(admission, self)
-                if (semantics[7] is not c._profile3_owner or semantics[1] != c._scid
-                        or semantics[3] != 1 or semantics[6] != binding):
-                    _fail("E-CANDIDATE")
-                c.states[1] = VALIDATED
-                r8mobility.consume_profile3_admission(admission, self, policy)
-                c._profile3_owner = None
-                outbound, inbound = c._bootstrap.take_slot1()
-                local_loc, peer_loc = _loc(semantics[4]), _loc(semantics[5])
+                outbound, inbound = bootstrap._consume_slot1(
+                    preparation,
+                    lambda: r8mobility.consume_profile3_admission(admission, self, policy),
+                    r8session._PROFILE3_CONSUMER_AUTHORITY,
+                )
             except Exception:
+                try:
+                    bootstrap._abort_slot1(preparation, r8session._PROFILE3_CONSUMER_AUTHORITY)
+                except r8session.SessionError:
+                    pass
                 c.states[1] = ABSENT
                 _fail("E-CANDIDATE")
+            c._profile3_owner = None
             c._out[1], c._in[1] = outbound, inbound
             c._bindings[1], c.budgets[1] = binding, budget
             c._local_locs[1], c._peer_locs[1] = local_loc, peer_loc
             c.states[1] = ACTIVE
             self._emit("recovered", 1)
             c._receive_generation += 1
-
     def send(self, plaintext):
         c = _redundant_core(self)
         try:
@@ -415,7 +448,7 @@ class RedundantSession:
                     _fail("E-REPLAY")
             preview = ReceivePreview(_HANDLE_AUTHORITY)
             c._receive_previews[preview] = (c._receive_generation, slot, session_preview,
-                                               ident, plaintext, digest, existing, now)
+                                               ident, plaintext, digest, existing, now, binding)
             _RECEIVE_OWNERS[preview] = self
             return preview
 
@@ -430,8 +463,9 @@ class RedundantSession:
                 or manager_core.scid != c._scid or manager_core.authorized_session is not self):
             _fail("E-CANDIDATE")
         binding = _binding(binding)
-        c._mobility_manager = manager
         receive_preview = self._preview_receive(slot, binding, packet, False)
+        with c._lock:
+            c._mobility_associations[receive_preview] = (manager, binding)
         try:
             mobility_preview = manager.preview(receive_preview.plaintext, _binding_view(binding), receive_preview)
         except Exception:
@@ -475,6 +509,7 @@ class RedundantSession:
     def _finish_receive_preview(self, preview):
         c = _redundant_core(self)
         c._receive_previews.pop(preview, None)
+        c._mobility_associations.pop(preview, None)
         _RECEIVE_OWNERS.pop(preview, None)
         self._drop_mobility_preview(preview)
     def _drop_mobility_preview(self, receive_preview):
@@ -495,6 +530,7 @@ class RedundantSession:
                     pass
             _RECEIVE_OWNERS.pop(preview, None)
         c._receive_previews.clear()
+        c._mobility_associations.clear()
         for preview in tuple(c._mobility_previews):
             _MOBILITY_OWNERS.pop(preview, None)
         c._mobility_previews.clear()
@@ -505,11 +541,12 @@ class RedundantSession:
             if not isinstance(preview, ReceivePreview) or _RECEIVE_OWNERS.get(preview) is not self:
                 _fail("E-REPLAY")
             record = c._receive_previews.pop(preview, None)
+            c._mobility_associations.pop(preview, None)
             _RECEIVE_OWNERS.pop(preview, None)
             self._drop_mobility_preview(preview)
             if record is None:
                 _fail("E-REPLAY")
-            generation, slot, session_preview, ident, plaintext, digest, existing, now = record
+            generation, slot, session_preview, ident, plaintext, digest, existing, now, _carrier_binding = record
             if (generation != c._receive_generation or c.closed
                     or slot not in (0, 1) or c.states[slot] != ACTIVE):
                 _fail("E-REPLAY")
@@ -546,6 +583,7 @@ class RedundantSession:
             if not isinstance(preview, ReceivePreview) or _RECEIVE_OWNERS.get(preview) is not self:
                 _fail("E-REPLAY")
             record = c._receive_previews.pop(preview, None)
+            c._mobility_associations.pop(preview, None)
             _RECEIVE_OWNERS.pop(preview, None)
             self._drop_mobility_preview(preview)
             if record is None:
@@ -582,7 +620,7 @@ class RedundantSession:
             c.states[slot] = DEGRADED
             outbound, inbound = c._out[slot], c._in[slot]
             if c._bootstrap is not None:
-                c._bootstrap.release_sessions(outbound, inbound)
+                c._bootstrap.release_sessions(outbound, inbound, _authority=r8session._PROFILE3_CONSUMER_AUTHORITY)
             else:
                 outbound.release()
                 if inbound is not outbound:

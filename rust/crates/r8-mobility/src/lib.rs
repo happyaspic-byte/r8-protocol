@@ -122,8 +122,8 @@ impl Control {
             Self::CandidateResult { .. } => CANDIDATE_RESULT,
         }
     }
-    pub fn encode(&self) -> Result<Vec<u8>, MobilityError> {
-        let mut out = b"R8M1".to_vec();
+    pub fn encode(&self) -> Result<Zeroizing<Vec<u8>>, MobilityError> {
+        let mut out = Zeroizing::new(b"R8M1".to_vec());
         out.extend_from_slice(&[self.typ(), 1, 0, 0]);
         match self {
             Self::LocUpdate {
@@ -471,7 +471,7 @@ pub struct Policy {
 }
 #[derive(Clone)]
 struct Proposal {
-    bytes: Vec<u8>,
+    bytes: Zeroizing<Vec<u8>>,
     candidate_id: [u8; 16],
     loc: [u8; 16],
     epoch: u64,
@@ -748,16 +748,14 @@ fn result_entry(
         candidate_id: proposal.candidate_id,
         epoch: proposal.epoch,
         slot: proposal.slot,
-        bytes: Zeroizing::new(
-            Control::CandidateResult {
-                candidate_id: proposal.candidate_id,
-                epoch: proposal.epoch,
-                path_slot: proposal.slot,
-                result,
-            }
-            .encode()
-            .expect("fixed-width candidate result is valid"),
-        ),
+        bytes: Control::CandidateResult {
+            candidate_id: proposal.candidate_id,
+            epoch: proposal.epoch,
+            path_slot: proposal.slot,
+            result,
+        }
+        .encode()
+        .expect("fixed-width candidate result is valid"),
         expiry_ms: now_ms.saturating_add(10_000),
         response,
         origin: ResultOrigin::Emitted,
@@ -1479,7 +1477,7 @@ impl CandidateManager {
                             && now_ms < candidate.expiry_ms
                     })
                     .ok_or(MobilityError::Candidate)?;
-                Action::Respond(Zeroizing::new(
+                Action::Respond(
                     Control::BindResponse {
                         candidate_id: candidate.candidate_id,
                         loc: candidate.loc,
@@ -1489,7 +1487,7 @@ impl CandidateManager {
                         token: *token,
                     }
                     .encode()?,
-                ))
+                )
             }
             Control::CandidateResult {
                 candidate_id,
@@ -1520,6 +1518,7 @@ impl CandidateManager {
                                 && candidate.epoch == *epoch
                                 && candidate.slot == *path_slot
                                 && candidate.binding.as_ref() == Some(binding)
+                                && now_ms < candidate.expiry_ms
                         })
                         .ok_or(MobilityError::Candidate)?;
                     if state.results.len().saturating_add(frozen_slots(&state))
@@ -1539,7 +1538,7 @@ impl CandidateManager {
                             candidate_id: *candidate_id,
                             epoch: *epoch,
                             slot: *path_slot,
-                            bytes: Zeroizing::new(control.encode()?),
+                            bytes: control.encode()?,
                             expiry_ms: now_ms.saturating_add(10_000),
                             response: None,
                             origin: ResultOrigin::Received,
@@ -2202,7 +2201,7 @@ mod corpus_negative_state_machine {
             let slot = entry.get("slot").and_then(Value::as_u64).unwrap_or(0) as u8;
             let encoded = entry
                 .get("canonical_input_hex")
-                .map(|v| hex(v.as_str().expect("input")))
+                .map(|v| Zeroizing::new(hex(v.as_str().expect("input"))))
                 .unwrap_or_else(|| {
                     Control::LocUpdate {
                         candidate_id: id,
@@ -2237,16 +2236,14 @@ mod corpus_negative_state_machine {
                 candidate_id: id,
                 epoch,
                 slot,
-                bytes: Zeroizing::new(
-                    Control::CandidateResult {
-                        candidate_id: id,
-                        epoch,
-                        path_slot: slot,
-                        result: 2,
-                    }
-                    .encode()
-                    .expect("result"),
-                ),
+                bytes: Control::CandidateResult {
+                    candidate_id: id,
+                    epoch,
+                    path_slot: slot,
+                    result: 2,
+                }
+                .encode()
+                .expect("result"),
                 expiry_ms: entry
                     .get("expiry_ms")
                     .and_then(Value::as_u64)

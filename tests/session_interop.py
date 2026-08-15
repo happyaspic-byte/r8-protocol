@@ -208,7 +208,9 @@ def scripted_adversarial_server(server_program, actions, assertions, label):
         machine = REF.ClientMachine(identity, pin, int(SERVICE), 0, REF.ipaddress.IPv6Address(CLIENT_LOC),
                                     REF.ipaddress.IPv6Address(SERVER_LOC), time.monotonic, 1252)
         peer = ("127.0.0.1", server_port)
-        opened = machine.start(1, b"\x01" * 32, b"\x02" * 32)
+        opened = machine.start(
+            1, b"\x01" * 32, b"\x02" * 32,
+            _authority=REF._HANDSHAKE_MATERIAL_AUTHORITY)
         started = time.monotonic()
         verify = receive_verify_with_retries(client_socket, opened, peer)
         auth = machine.receive_verify(verify)

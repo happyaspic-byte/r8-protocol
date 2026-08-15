@@ -109,7 +109,9 @@ class Q3Tests(unittest.TestCase):
             "bench/fixtures/q3-cert.pem",
             "bench/fixtures/q3-key.pem",
             "bench/protocols/q3.json",
+            "bench/protocols/manifest.json",
             "bench/q3.py",
+            "reference/r8ref.py",
             "reference/r8session.py",
             "requirements-dev.txt",
             "spec/0004-wire-format-v0.2.md",
@@ -239,7 +241,7 @@ class Q3Tests(unittest.TestCase):
         self.assertLess(tls_setup.index("context = ssl.create_default_context"), tls_setup.index("def client"))
         self.assertNotIn("ClientMachine", r8_client)
         self.assertNotIn("create_default_context", tls_client)
-        self.assertIn("machine.start(_random_scid(), r8._random(32), r8._random(32))", r8_client)
+        self.assertIn("machine.start(_random_scid())", r8_client)
         self.assertIn("socket.create_connection", tls_client)
         self.assertIn("context.wrap_socket", tls_client)
     def test_trial_uses_the_same_post_readiness_boundary_for_both_mechanisms(self):
@@ -435,7 +437,7 @@ class Q3Tests(unittest.TestCase):
     def test_setup_categories_are_prefixed_once(self):
         result = q3._measurement_result("failure", "worker_marker_invalid", None, None, None)
         self.assertEqual(result["error_category"], "setup:worker_marker_invalid")
-    def test_historical_source_bound_package_is_not_resummarized(self):
+    def test_noncurrent_source_bound_package_is_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)
             source_identity = "source-A"
@@ -451,9 +453,8 @@ class Q3Tests(unittest.TestCase):
             (directory / "summary.json").write_text('{"historical":"v8"}\n')
             manifest = {"schema": "q3-run-manifest-v1", "status": q3.SMOKE_STATUS, "runtime_outcome": q3.SMOKE_STATUS, "source_identity": source_identity, "implementation_sources": historical_sources, "implementation_source_identity": implementation_identity, "host_epoch": "epoch-A", "git_commit": None, "isolated_netns_proof": True, "group_counts": [{"series": series, "mechanism": mechanism, "warmups": 0, "measured": 2, "rows": 2, "failures": 0} for series in ("cold-process-primary", "warm-process") for mechanism in q3.MECHANISMS], "row_count": 8, "failures": 0, "post_hoc_exclusions": 0, "sha256": {name: q3.digest(directory / name) for name in ("raw.jsonl", "environment.json", "summary.json")}}
             (directory / "run-manifest.json").write_text(json.dumps(manifest, sort_keys=True) + "\n")
-            before = (directory / "summary.json").read_bytes()
-            q3.regenerate(type("Args", (), {"output": str(directory)})())
-            self.assertEqual((directory / "summary.json").read_bytes(), before)
+            with self.assertRaisesRegex(ValueError, "current implementation"):
+                q3.regenerate(type("Args", (), {"output": str(directory)})())
 
     def test_preregistration_has_no_results_and_fixed_counts(self):
         prereg = json.loads(q3.PROTOCOL.read_text())
@@ -556,7 +557,7 @@ class Q3Tests(unittest.TestCase):
             environment_text = environment_path.read_text()
             manifest_path = destination / "run-manifest.json"
             manifest_text = manifest_path.read_text()
-            for source in ("requirements-dev.txt", "reference/r8session.py"):
+            for source in ("requirements-dev.txt", "reference/r8ref.py", "reference/r8session.py"):
                 tampered = json.loads(environment_text)
                 tampered["implementation_sources"][source] = "0" * 64
                 environment_path.write_text(json.dumps(tampered, sort_keys=True, indent=2) + "\n")
@@ -582,6 +583,19 @@ class Q3Tests(unittest.TestCase):
             manifest_path.write_text(json.dumps(changed_manifest, sort_keys=True, indent=2) + "\n")
             with self.assertRaises(ValueError):
                 q3.regenerate(type("Args", (), {"output": str(destination)})())
+    def test_clean_repository_gate_includes_tracked_and_untracked_changes(self):
+        command = ["status", "--porcelain", "--untracked-files=all"]
+        for status in (" M reference/r8ref.py", "?? untracked-evidence"):
+            with self.subTest(status=status), mock.patch.object(
+                q3, "_git", return_value=status
+            ) as git:
+                with self.assertRaisesRegex(ValueError, "clean repository"):
+                    q3.require_clean_repository(
+                        "full package regeneration requires a clean repository")
+                git.assert_called_once_with(command)
+        with mock.patch.object(q3, "_git", return_value="") as git:
+            q3.require_clean_repository("full run requires a clean repository")
+            git.assert_called_once_with(command)
     def test_isolation_and_labels_fail_closed(self):
         for source_identity, host_epoch in (("unsafe label", "epoch-A"), ("source.label", "epoch-A"), ("source-A", "epoch/A")):
             args = type("Args", (), {"source_identity": source_identity, "host_epoch": host_epoch, "git_commit": None, "smoke": True})()
@@ -673,6 +687,8 @@ class Q3Tests(unittest.TestCase):
 
     def test_strict_source_key_sets_and_full_public_binding_are_required(self):
         source = inspect.getsource(q3.regenerate)
-        self.assertIn("recorded_keys not in (set(SOURCE_INPUTS), set(HISTORICAL_V8_SOURCE_INPUTS))", source)
+        self.assertIn("recorded_keys != set(SOURCE_INPUTS)", source)
+        self.assertIn("package is not bound to the current implementation", source)
+        self.assertIn("require_frozen_protocol()", source)
         self.assertIn("full package public source identity binding verification failed", source)
         self.assertIn("recorded component hash verification failed", source)

@@ -115,7 +115,6 @@ impl core::fmt::Debug for SendOutcome {
 pub enum ReceiveOutcome {
     Delivered(Vec<u8>),
     Suppressed,
-    Closed,
 }
 
 impl core::fmt::Debug for ReceiveOutcome {
@@ -126,7 +125,6 @@ impl core::fmt::Debug for ReceiveOutcome {
                 .field(&format_args!("[REDACTED; {} bytes]", bytes.len()))
                 .finish(),
             Self::Suppressed => f.write_str("ReceiveOutcome::Suppressed"),
-            Self::Closed => f.write_str("ReceiveOutcome::Closed"),
         }
     }
 }
@@ -134,7 +132,6 @@ impl core::fmt::Debug for ReceiveOutcome {
 enum ReceiveDecision {
     New,
     Equal,
-    Divergent,
 }
 
 struct InboundLease {
@@ -168,10 +165,10 @@ impl InboundPreview {
     fn into_mobility_commit(
         mut self,
         transition: Transition,
+        delivery_id: NonZeroU64,
+        plaintext: Zeroizing<Vec<u8>>,
     ) -> Result<MobilityInboundCommit, RedundantError> {
-        if matches!(self.decision, ReceiveDecision::Divergent) {
-            return Err(RedundantError::DivergentDelivery);
-        }
+        let decision = self.decision;
         let lease = self.lease.take().expect("inbound preview has a lease");
         Ok(MobilityInboundCommit {
             lease: InboundReplayLease {
@@ -181,6 +178,10 @@ impl InboundPreview {
                 lease,
             },
             transition,
+            delivery_id,
+            plaintext,
+            decision,
+            now_ms: self.now_ms,
         })
     }
 }
@@ -196,6 +197,10 @@ impl Drop for InboundPreview {
 pub struct MobilityInboundCommit {
     lease: InboundReplayLease,
     transition: Transition,
+    delivery_id: NonZeroU64,
+    plaintext: Zeroizing<Vec<u8>>,
+    decision: ReceiveDecision,
+    now_ms: u64,
 }
 
 #[must_use]
@@ -616,7 +621,9 @@ impl RedundantSession {
             {
                 return Err(RedundantError::AdmissionInvalid);
             }
-            let session = bootstrap.take_slot1().map_err(map_session)?;
+            // SAFETY: the checks above bind the unique live issuer, SCID, and slot-zero replay
+            // owner; `admission` is moved into this call and cannot be reused after activation.
+            let session = unsafe { bootstrap.take_slot1_after_admission() }.map_err(map_session)?;
             if !session.can_reserve() {
                 return Err(RedundantError::CounterExhausted);
             }
@@ -787,7 +794,9 @@ impl RedundantSession {
             if self.delivered.matches(id, session_preview.plaintext()) {
                 ReceiveDecision::Equal
             } else {
-                ReceiveDecision::Divergent
+                self.event(RedundantEvent::Divergence);
+                self.close();
+                return Err(RedundantError::DivergentDelivery);
             }
         } else {
             if let Some(high) = self.delivered.high_water() {
@@ -863,12 +872,6 @@ impl RedundantSession {
                 bytes.zeroize();
                 Ok(ReceiveOutcome::Suppressed)
             }
-            ReceiveDecision::Divergent => {
-                bytes.zeroize();
-                self.event(RedundantEvent::Divergence);
-                self.close();
-                Ok(ReceiveOutcome::Closed)
-            }
             ReceiveDecision::New => {
                 let evict = (self.dedup.len() >= DEDUP_IDS).then(|| {
                     self.dedup
@@ -914,17 +917,21 @@ impl RedundantSession {
         if !self.accepts_preview(&preview) {
             return Err(RedundantError::Replay);
         }
-        let mut plaintext = preview.plaintext()?.to_vec();
+        let delivery_id = preview
+            .session_preview
+            .as_ref()
+            .ok_or(RedundantError::Replay)?
+            .delivery_id();
+        let plaintext = Zeroizing::new(preview.plaintext()?.to_vec());
         let proof = preview
             .session_preview
             .take()
             .ok_or(RedundantError::Replay)?
             .into_replay_proof();
         let transition = manager
-            .preview_profile3(&plaintext, observed_binding, proof, now_ms)
-            .map_err(|_| RedundantError::Replay);
-        plaintext.zeroize();
-        preview.into_mobility_commit(transition?)
+            .preview_profile3(plaintext.as_slice(), observed_binding, proof, now_ms)
+            .map_err(|_| RedundantError::Replay)?;
+        preview.into_mobility_commit(transition, delivery_id, plaintext)
     }
 
     pub fn mobility_response(
@@ -963,7 +970,31 @@ impl RedundantSession {
             .map_err(|_| RedundantError::Replay)?;
         self.receive_preview.take();
         self.receive_generation = next_generation;
-        Ok(())
+        self.expire(commit.now_ms);
+        match commit.decision {
+            ReceiveDecision::Equal => Ok(()),
+            ReceiveDecision::New => {
+                let evict = (self.dedup.len() >= DEDUP_IDS).then(|| {
+                    self.dedup
+                        .iter()
+                        .min_by_key(|(old_id, entry)| (entry.expiry_ms, old_id.get()))
+                        .map(|(old_id, _)| *old_id)
+                        .expect("full dedup cache is non-empty")
+                });
+                if let Some(old_id) = evict {
+                    self.dedup.remove(&old_id);
+                }
+                self.delivered.insert(commit.delivery_id, &commit.plaintext);
+                self.dedup.insert(
+                    commit.delivery_id,
+                    Dedup {
+                        bytes: commit.plaintext.to_vec(),
+                        expiry_ms: commit.now_ms.saturating_add(DEDUP_LIFETIME_MS),
+                    },
+                );
+                Ok(())
+            }
+        }
     }
     pub fn inbound(
         &mut self,
@@ -1100,8 +1131,16 @@ impl RedundantSession {
         self.events.push_back(event);
     }
 
-    fn expire(&mut self, now_ms: u64) {
+    pub fn expire(&mut self, now_ms: u64) {
         self.dedup.retain(|_, entry| entry.expiry_ms > now_ms);
+    }
+
+    /// Expires plaintext deduplication entries during idle or mobility-only operation.
+    pub fn tick(&mut self, now_ms: u64) -> Result<(), RedundantError> {
+        self.live()?;
+        self.reap_preview();
+        self.expire(now_ms);
+        Ok(())
     }
 
     fn commit(

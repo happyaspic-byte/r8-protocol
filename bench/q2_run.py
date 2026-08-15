@@ -353,9 +353,9 @@ def _states(plan, control_transport=None):
     path_b_source = _binding(5, _mac(seed, 5))
     path_b_destination = _binding(8, _mac(seed, 6))
     observed = path_a_destination if mechanism != "single-B" else path_b_destination
-    opening = client.start(scid, _secret(), _secret())
+    opening = client.start(scid)
     auth = client.receive_verify(server.receive_open_packet(opening, observed, 1))
-    ack = server.receive_open_auth(auth, observed, 1, _secret(), _secret())
+    ack = server.receive_open_auth(auth, observed, 1)
     server.receive_protected(client.receive_ack(ack))
     source_binding = path_b_source if mechanism == "single-B" else path_a_source
     destination_binding = path_b_destination if mechanism == "single-B" else path_a_destination

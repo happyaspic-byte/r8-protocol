@@ -26,9 +26,9 @@ class Profile3BootstrapTests(unittest.TestCase):
                                  self.x["service_context"], self.x["server_context_id"], profile, self.server_loc, self.client_loc, 1280, 2, 2),
                                  bytes.fromhex(self.x["server_boot_instance_hex"]), bytes.fromhex(self.x["cookie_key_hex"]), None, 0,
                                  lambda: self.now[0], s.PrevalidationLimiter(lambda: self.now[0], b"\xa0" * 32))
-        opening = client.start(self.x["scid"], bytes.fromhex(self.i["client_x25519_secret_hex"]), bytes.fromhex(self.x["client_nonce_hex"]))
+        opening = client.start(self.x["scid"], bytes.fromhex(self.i["client_x25519_secret_hex"]), bytes.fromhex(self.x["client_nonce_hex"]), _authority=s._HANDSHAKE_MATERIAL_AUTHORITY)
         auth = client.receive_verify(server.receive_open_packet(opening, self.binding, self.x["cookie_bucket"]))
-        ack = server.receive_open_auth(auth, self.binding, self.x["cookie_bucket"], bytes.fromhex(self.i["server_x25519_secret_hex"]), bytes.fromhex(self.x["server_nonce_hex"]))
+        ack = server.receive_open_auth(auth, self.binding, self.x["cookie_bucket"], bytes.fromhex(self.i["server_x25519_secret_hex"]), bytes.fromhex(self.x["server_nonce_hex"]), _authority=s._HANDSHAKE_MATERIAL_AUTHORITY)
         accept = client.receive_ack(ack)
         server.receive_protected(accept)
         return client, server
@@ -37,29 +37,38 @@ class Profile3BootstrapTests(unittest.TestCase):
         preview = s.preview_profile3_data(session, packet)
         return s.commit_profile3_data(session, preview)
 
-    def test_transfer_slot0_and_one_interoperate_and_dispose_machines(self):
+    def test_transfer_is_opaque_and_disposes_machines(self):
         client, server = self.handshake()
+        client_aliases = (client.c2s_session, client.s2c_session)
+        server_entry = server.established[self.x["scid"]]
+        server_aliases = (server_entry["s2c"], server_entry["c2s"])
         client_bootstrap, server_bootstrap = client.take_profile3(), server.take_profile3(self.x["scid"])
         self.assertEqual(client.state, client.RELEASED)
         self.assertIsNone(client.c2s_session)
         self.assertNotIn(self.x["scid"], server.established)
+        for alias in (*client_aliases, *server_aliases):
+            self.assertTrue(alias._released)
+            self.assertIsNone(alias._key)
+            with self.assertRaises(s.SessionError):
+                alias.__init__(b"\xff" * 32)
+            with self.assertRaises(s.SessionError):
+                s.seal_profile3_data(
+                    alias,
+                    s.Header(s.NH_SES, self.client_loc, self.server_loc,
+                             profile=3, flags=1, pslot=0, scid=self.x["scid"]),
+                    1,
+                    b"forbidden",
+                )
         self.assertNotIn(self.x["scid"].to_bytes(8, "big").hex(), repr(client_bootstrap))
         self.assertNotIn(str(self.client_loc), repr(client_bootstrap))
-        slot0_client_header = s.Header(s.NH_SES, self.client_loc, self.server_loc, profile=3, flags=1, pslot=0, scid=self.x["scid"])
-        slot0_server_header = s.Header(s.NH_SES, self.server_loc, self.client_loc, profile=3, flags=1, pslot=0, scid=self.x["scid"])
-        packet0 = s.seal_profile3_data(client_bootstrap.outbound, slot0_client_header, 9, b"same plaintext")
-        self.assertEqual(self.receive(server_bootstrap.inbound, packet0), (9, b"same plaintext"))
-        reply0 = s.seal_profile3_data(server_bootstrap.outbound, slot0_server_header, 10, b"reply")
-        self.assertEqual(self.receive(client_bootstrap.inbound, reply0), (10, b"reply"))
-        c1out, c1in = client_bootstrap.take_slot1()
-        s1out, s1in = server_bootstrap.take_slot1()
-        slot1_client_header = s.Header(s.NH_SES, self.client_loc, self.server_loc, profile=3, flags=3, pslot=1, scid=self.x["scid"])
-        packet1 = s.seal_profile3_data(c1out, slot1_client_header, 11, b"same plaintext")
-        self.assertEqual(self.receive(s1in, packet1), (11, b"same plaintext"))
-        self.assertNotEqual(packet0[68:-16], packet1[68:-16])
-        with self.assertRaises(s.SessionError): client_bootstrap.take_slot1()
-        client_bootstrap.close()
-        self.assertIsNone(client_bootstrap.outbound)
+        for bootstrap in (client_bootstrap, server_bootstrap):
+            for attribute in ("scid", "outbound", "inbound", "take_slot1", "_prk", "_thash"):
+                with self.assertRaises(AttributeError):
+                    getattr(bootstrap, attribute)
+            with self.assertRaises(s.SessionError):
+                bootstrap._context(object())
+            bootstrap.close()
+            bootstrap.close()
 
     def test_accept_counter_one_is_replayed_before_data_decryption(self):
         client, server = self.handshake()
@@ -104,49 +113,44 @@ class Profile3BootstrapTests(unittest.TestCase):
         packet = s.seal_profile3_data(client.c2s_session, header, 1, b"pending-secret")
         inbound = server.established[self.x["scid"]]["c2s"]
         preview = s.preview_profile3_data(inbound, packet)
-        session_preview = preview._session_preview
+        self.assertEqual(preview.plaintext, b"pending-secret")
+        with self.assertRaises(s.SessionError):
+            preview.__init__(inbound, object(), 99, b"forged")
         server.restart(b"r" * 16, b"k" * 32)
-        self.assertIsNone(preview._session)
-        self.assertIsNone(preview._session_preview)
-        self.assertIsNone(preview._plaintext)
-        self.assertIsNone(session_preview._session)
+        with self.assertRaises(s.SessionError):
+            _ = preview.plaintext
         with self.assertRaises(s.SessionError):
             s.commit_profile3_data(inbound, preview)
 
 
-    def test_close_releases_retained_sessions_and_profile3_preview(self):
+    def test_close_releases_owned_and_prepared_sessions_and_preview(self):
         client, server = self.handshake(3)
         client_bootstrap, server_bootstrap = client.take_profile3(), server.take_profile3(self.x["scid"])
-        outbound, inbound = client_bootstrap.outbound, client_bootstrap.inbound
-        slot1_outbound, slot1_inbound = client_bootstrap.take_slot1()
-        outgoing = s.Header(s.NH_SES, self.client_loc, self.server_loc, profile=3,
-                            flags=1, pslot=0, scid=self.x["scid"])
+        authority = s._PROFILE3_CONSUMER_AUTHORITY
+        client_context = client_bootstrap._context(authority)
+        server_context = server_bootstrap._context(authority)
+        outbound, inbound = client_context[4], client_context[5]
+        preparation = client_bootstrap._prepare_slot1(authority)
+        prepared = s._PROFILE3_SLOT1_PREPARATIONS[preparation][1:]
         incoming = s.Header(s.NH_SES, self.server_loc, self.client_loc, profile=3,
                             flags=1, pslot=0, scid=self.x["scid"])
-        packet = s.seal_profile3_data(server_bootstrap.outbound, incoming, 7, b"pending-secret")
+        packet = s.seal_profile3_data(server_context[4], incoming, 7, b"pending-secret")
         preview = s.preview_profile3_data(inbound, packet)
-        session_preview = preview._session_preview
+        self.assertEqual(preview.plaintext, b"pending-secret")
         client_bootstrap.close()
         client_bootstrap.close()
-        for retained in (outbound, inbound, slot1_outbound, slot1_inbound):
+        for retained in (outbound, inbound, *prepared):
             self.assertTrue(retained._released)
             self.assertIsNone(retained._key)
             self.assertEqual(retained.send_counter, 0)
             self.assertEqual(retained.replay.highest, 0)
             self.assertEqual(retained.replay.bits, 0)
-        self.assertIsNone(preview._session)
-        self.assertIsNone(preview._session_preview)
-        self.assertIsNone(preview._plaintext)
-        self.assertIsNone(session_preview._session)
         with self.assertRaises(s.SessionError):
-            s.seal_profile3_data(outbound, outgoing, 8, b"secret")
-        with self.assertRaises(s.SessionError):
-            s.preview_profile3_data(inbound, packet)
+            _ = preview.plaintext
         with self.assertRaises(s.SessionError):
             s.commit_profile3_data(inbound, preview)
         with self.assertRaises(s.SessionError):
-            inbound.decrypt(incoming, b"\x06\x01\x03\x00", 1, b"")
-        self.assertIsNone(client_bootstrap._prk)
-        self.assertIsNone(client_bootstrap._thash)
+            client_bootstrap._context(authority)
+        server_bootstrap.close()
 if __name__ == "__main__":
     unittest.main()

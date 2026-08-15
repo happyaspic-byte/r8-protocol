@@ -108,6 +108,15 @@ fn random<const N: usize>() -> Result<[u8; N], ()> {
 }
 
 fn credentials(role: u8) -> Result<Credentials, ()> {
+    if unsafe { libc::fcntl(KEY_FD, libc::F_GETFD) } == -1 {
+        return Err(());
+    }
+    let mut stat: libc::stat = unsafe { zeroed() };
+    if unsafe { libc::fstat(KEY_FD, &mut stat) } != 0
+        || (stat.st_mode & libc::S_IFMT) == libc::S_IFSOCK
+    {
+        return Err(());
+    }
     let fd = unsafe { OwnedFd::from_raw_fd(KEY_FD) };
     let mut material = [0u8; KEY_MATERIAL_LEN];
     let mut filled = 0;
@@ -229,12 +238,28 @@ fn client_session(
             0,
         )
         .map_err(|_| ())?;
+    let started = Instant::now();
+    let deadline = started.checked_add(Duration::from_secs(5)).ok_or(())?;
+    let mut next_retry = 0;
+    let carrier = ClientCarrier {
+        fd,
+        index,
+        local,
+        peer,
+        descriptor_id: 2,
+    };
     transmit(fd, index, local, peer, &open).map_err(|_| ())?;
-    let (verify, _) = receive_control(fd, index, local, peer, 2)?;
-    let auth = client.receive_verify(&verify, 1).map_err(|_| ())?;
+    let (verify, _) =
+        receive_client_control(&mut client, &carrier, started, deadline, &mut next_retry)?;
+    let auth = client
+        .receive_verify(&verify, elapsed_ms(started)?)
+        .map_err(|_| ())?;
     transmit(fd, index, local, peer, &auth).map_err(|_| ())?;
-    let (ack, _) = receive_control(fd, index, local, peer, 2)?;
-    let accept = client.receive_ack(&ack, 2).map_err(|_| ())?;
+    let (ack, _) =
+        receive_client_control(&mut client, &carrier, started, deadline, &mut next_retry)?;
+    let accept = client
+        .receive_ack(&ack, elapsed_ms(started)?)
+        .map_err(|_| ())?;
     transmit(fd, index, local, peer, &accept).map_err(|_| ())?;
     let bootstrap = client.take_profile3_bootstrap().map_err(|_| ())?;
     let delivery = NonZeroU64::new(random_scid()?).ok_or(())?;
@@ -251,6 +276,8 @@ fn server_session(
     local: [u8; 6],
     peer: [u8; 6],
 ) -> Result<(RedundantSession, u64), ()> {
+    let started = Instant::now();
+    let listen_deadline = deadline_after(Duration::from_secs(5))?;
     let config = HandshakeConfig {
         local: credentials.local.clone(),
         peer: credentials.peer.clone(),
@@ -273,23 +300,27 @@ fn server_session(
         },
     )
     .map_err(|_| ())?;
-    let (open, observed) = receive_control(fd, index, local, peer, 4)?;
+    let (open, observed) = receive_control(fd, index, local, peer, 4, listen_deadline)?;
     let scid = Header::unpack(&open).map_err(|_| ())?.0.scid;
     let verify = server.receive_open(&open, &observed, 0).map_err(|_| ())?;
     transmit(fd, index, local, peer, &verify).map_err(|_| ())?;
-    let (auth, observed) = receive_control(fd, index, local, peer, 4)?;
+    let auth_deadline = deadline_after(Duration::from_secs(5))?;
+    let (auth, observed) = receive_control(fd, index, local, peer, 4, auth_deadline)?;
     let ack = server
         .receive_open_auth(
             &auth,
             &observed,
-            1,
+            elapsed_ms(started)?,
             0,
             Some(ServerMaterial::handshake_material(random()?, random()?)),
         )
         .map_err(|_| ())?;
+    let pending_deadline = deadline_after(Duration::from_secs(5))?;
     transmit(fd, index, local, peer, &ack).map_err(|_| ())?;
-    let (accept, _) = receive_control(fd, index, local, peer, 4)?;
-    server.receive_accept(&accept, 2).map_err(|_| ())?;
+    let (accept, _) = receive_control(fd, index, local, peer, 4, pending_deadline)?;
+    server
+        .receive_accept(&accept, elapsed_ms(started)?)
+        .map_err(|_| ())?;
     let bootstrap = server.take_profile3_bootstrap(scid).map_err(|_| ())?;
     let delivery = NonZeroU64::new(random_scid()?).ok_or(())?;
     Ok((
@@ -470,15 +501,91 @@ fn receive_control(
     local: [u8; 6],
     peer: [u8; 6],
     descriptor_id: u32,
+    deadline: Instant,
 ) -> Result<(Vec<u8>, ObservedBinding), ()> {
-    for retry in CONTROL_RETRY_DELAYS {
-        match receive(fd, index, local, peer, Instant::now() + retry) {
-            Ok((packet, source)) => return Ok((packet, binding(descriptor_id, source))),
-            Err(error) if error.raw_os_error() == Some(libc::ETIMEDOUT) => continue,
+    let (packet, source) = receive(fd, index, local, peer, deadline).map_err(|_| ())?;
+    Ok((packet, binding(descriptor_id, source)))
+}
+fn control_retry_offset(index: usize) -> Result<Duration, ()> {
+    CONTROL_RETRY_DELAYS[..=index]
+        .iter()
+        .try_fold(Duration::ZERO, |total, delay| total.checked_add(*delay))
+        .ok_or(())
+}
+struct ClientCarrier<'a> {
+    fd: &'a OwnedFd,
+    index: i32,
+    local: [u8; 6],
+    peer: [u8; 6],
+    descriptor_id: u32,
+}
+
+fn receive_client_control(
+    client: &mut ClientMachine,
+    carrier: &ClientCarrier<'_>,
+    started: Instant,
+    deadline: Instant,
+    next_retry: &mut usize,
+) -> Result<(Vec<u8>, ObservedBinding), ()> {
+    while *next_retry < CONTROL_RETRY_DELAYS.len()
+        && started
+            .checked_add(control_retry_offset(*next_retry)?)
+            .ok_or(())?
+            <= Instant::now()
+    {
+        *next_retry += 1;
+    }
+    loop {
+        let retry_deadline = if *next_retry < CONTROL_RETRY_DELAYS.len() {
+            started
+                .checked_add(control_retry_offset(*next_retry)?)
+                .ok_or(())?
+                .min(deadline)
+        } else {
+            deadline
+        };
+        match receive(
+            carrier.fd,
+            carrier.index,
+            carrier.local,
+            carrier.peer,
+            retry_deadline,
+        ) {
+            Ok((packet, source)) => {
+                return Ok((packet, binding(carrier.descriptor_id, source)));
+            }
+            Err(error)
+                if error.raw_os_error() == Some(libc::ETIMEDOUT)
+                    && *next_retry < CONTROL_RETRY_DELAYS.len()
+                    && retry_deadline < deadline =>
+            {
+                let retry = client.retry(elapsed_ms(started)?).map_err(|_| ())?;
+                transmit(
+                    carrier.fd,
+                    carrier.index,
+                    carrier.local,
+                    carrier.peer,
+                    &retry,
+                )
+                .map_err(|_| ())?;
+                *next_retry += 1;
+            }
             Err(_) => return Err(()),
         }
     }
-    Err(())
+}
+
+fn elapsed_ms(start: Instant) -> Result<u64, ()> {
+    u64::try_from(start.elapsed().as_millis()).map_err(|_| ())
+}
+fn deadline_after(duration: Duration) -> Result<Instant, ()> {
+    Instant::now().checked_add(duration).ok_or(())
+}
+
+fn deadline_at_ms(start: Instant, absolute_ms: u64) -> Result<Instant, ()> {
+    start
+        .checked_add(Duration::from_millis(absolute_ms))
+        .ok_or(())
 }
 
 fn send_control(
@@ -508,11 +615,16 @@ fn run(args: Args) -> Result<(), ()> {
     if unsafe { libc::geteuid() } != 0 {
         return Err(());
     }
+    let credentials = credentials(if matches!(&args.mode, Mode::Send) {
+        1
+    } else {
+        2
+    })?;
+    let started = Instant::now();
     let (fd0, index0) = socket(&args.interfaces[0]).map_err(|_| ())?;
     let (fd1, index1) = socket(&args.interfaces[1]).map_err(|_| ())?;
     match args.mode {
         Mode::Send => {
-            let credentials = credentials(1)?;
             let (mut state, scid) =
                 client_session(&credentials, &fd0, index0, args.local[0], args.peer[0])?;
             let owner = state.issue_profile3_admission_owner(9).map_err(|_| ())?;
@@ -526,8 +638,11 @@ fn run(args: Args) -> Result<(), ()> {
             )?;
             let candidate_loc = random()?;
             let candidate_id = random()?;
+            let proposal_now_ms = elapsed_ms(started)?;
+            let candidate_deadline =
+                deadline_at_ms(started, proposal_now_ms.checked_add(5_000).ok_or(())?)?;
             let update = mover
-                .propose_local(candidate_loc, candidate_id, 1, 1, 100)
+                .propose_local(candidate_id, candidate_loc, 1, 1, proposal_now_ms)
                 .map_err(|_| ())?;
             send_control(
                 &mut state,
@@ -538,7 +653,12 @@ fn run(args: Args) -> Result<(), ()> {
                 &update,
             )?;
             let probe = mover
-                .make_probe(candidate_loc, binding(3, args.peer[1]), random()?, 101)
+                .make_probe(
+                    candidate_id,
+                    binding(3, args.peer[1]),
+                    random()?,
+                    elapsed_ms(started)?,
+                )
                 .map_err(|_| ())?;
             send_control(
                 &mut state,
@@ -548,10 +668,22 @@ fn run(args: Args) -> Result<(), ()> {
                 args.peer[1],
                 &probe,
             )?;
-            let (challenge, challenge_binding) =
-                receive_control(&fd1, index1, args.local[1], args.peer[1], 3)?;
-            let response = commit_control(&mut state, &mover, &challenge_binding, &challenge, 102)?
-                .ok_or(())?;
+            let (challenge, challenge_binding) = receive_control(
+                &fd1,
+                index1,
+                args.local[1],
+                args.peer[1],
+                3,
+                candidate_deadline,
+            )?;
+            let response = commit_control(
+                &mut state,
+                &mover,
+                &challenge_binding,
+                &challenge,
+                elapsed_ms(started)?,
+            )?
+            .ok_or(())?;
             send_control(
                 &mut state,
                 &fd1,
@@ -560,9 +692,23 @@ fn run(args: Args) -> Result<(), ()> {
                 args.peer[1],
                 &response,
             )?;
-            let (result, result_binding) =
-                receive_control(&fd1, index1, args.local[1], args.peer[1], 3)?;
-            if commit_control(&mut state, &mover, &result_binding, &result, 103)?.is_some() {
+            let (result, result_binding) = receive_control(
+                &fd1,
+                index1,
+                args.local[1],
+                args.peer[1],
+                3,
+                candidate_deadline,
+            )?;
+            if commit_control(
+                &mut state,
+                &mover,
+                &result_binding,
+                &result,
+                elapsed_ms(started)?,
+            )?
+            .is_some()
+            {
                 return Err(());
             }
             let mut admissions = mover.take_profile3_admissions();
@@ -595,7 +741,6 @@ fn run(args: Args) -> Result<(), ()> {
             println!("R8-ENDPOINT-SENT copies=2 handshake=5 candidate=5 application=2 total=12");
         }
         Mode::Receive => {
-            let credentials = credentials(2)?;
             println!("R8-ENDPOINT-LISTENING");
             let (mut state, scid) =
                 server_session(&credentials, &fd0, index0, args.local[0], args.peer[0])?;
@@ -608,15 +753,51 @@ fn run(args: Args) -> Result<(), ()> {
                 binding(4, args.peer[0]),
                 owner,
             )?;
-            let (update, update_binding) =
-                receive_control(&fd0, index0, args.local[0], args.peer[0], 4)?;
-            if commit_control(&mut state, &receiver, &update_binding, &update, 100)?.is_some() {
+            let update_receive_deadline = deadline_after(Duration::from_secs(5))?;
+            let (update, update_binding) = receive_control(
+                &fd0,
+                index0,
+                args.local[0],
+                args.peer[0],
+                4,
+                update_receive_deadline,
+            )?;
+            let update_now_ms = elapsed_ms(started)?;
+            if commit_control(
+                &mut state,
+                &receiver,
+                &update_binding,
+                &update,
+                update_now_ms,
+            )?
+            .is_some()
+            {
                 return Err(());
             }
-            let (probe, probe_binding) =
-                receive_control(&fd1, index1, args.local[1], args.peer[1], 5)?;
-            let challenge =
-                commit_control(&mut state, &receiver, &probe_binding, &probe, 101)?.ok_or(())?;
+            let candidate_deadline =
+                deadline_at_ms(started, update_now_ms.checked_add(5_000).ok_or(())?)?;
+            let (probe, probe_binding) = receive_control(
+                &fd1,
+                index1,
+                args.local[1],
+                args.peer[1],
+                5,
+                candidate_deadline,
+            )?;
+            let challenge_now_ms = elapsed_ms(started)?;
+            let challenge = commit_control(
+                &mut state,
+                &receiver,
+                &probe_binding,
+                &probe,
+                challenge_now_ms,
+            )?
+            .ok_or(())?;
+            let challenge_expiry_ms = match &challenge {
+                Control::BindChallenge { expiry_ms, .. } => *expiry_ms,
+                _ => return Err(()),
+            };
+            let challenge_deadline = deadline_at_ms(started, challenge_expiry_ms)?;
             send_control(
                 &mut state,
                 &fd1,
@@ -625,9 +806,23 @@ fn run(args: Args) -> Result<(), ()> {
                 args.peer[1],
                 &challenge,
             )?;
-            let (response, response_binding) =
-                receive_control(&fd1, index1, args.local[1], args.peer[1], 5)?;
-            if commit_control(&mut state, &receiver, &response_binding, &response, 102)?.is_some() {
+            let (response, response_binding) = receive_control(
+                &fd1,
+                index1,
+                args.local[1],
+                args.peer[1],
+                5,
+                challenge_deadline,
+            )?;
+            if commit_control(
+                &mut state,
+                &receiver,
+                &response_binding,
+                &response,
+                elapsed_ms(started)?,
+            )?
+            .is_some()
+            {
                 return Err(());
             }
             let mut results = receiver.take_results();
@@ -651,15 +846,28 @@ fn run(args: Args) -> Result<(), ()> {
                 .activate(admissions.pop().ok_or(())?, 1280)
                 .map_err(|_| ())?;
             println!("R8-ENDPOINT-READY handshake=5 candidate=5 application=2 total=12");
-            let (first, first_binding) =
-                receive_control(&fd0, index0, args.local[0], args.peer[0], 4)?;
-            let (second, second_binding) =
-                receive_control(&fd1, index1, args.local[1], args.peer[1], 5)?;
+            let application_deadline = deadline_after(Duration::from_secs(5))?;
+            let (first, first_binding) = receive_control(
+                &fd0,
+                index0,
+                args.local[0],
+                args.peer[0],
+                4,
+                application_deadline,
+            )?;
+            let (second, second_binding) = receive_control(
+                &fd1,
+                index1,
+                args.local[1],
+                args.peer[1],
+                5,
+                application_deadline,
+            )?;
             let one = state
-                .inbound(0, &first_binding, &first, 1)
+                .inbound(0, &first_binding, &first, elapsed_ms(started)?)
                 .map_err(|_| ())?;
             let two = state
-                .inbound(1, &second_binding, &second, 2)
+                .inbound(1, &second_binding, &second, elapsed_ms(started)?)
                 .map_err(|_| ())?;
             if !matches!((one, two), (ReceiveOutcome::Delivered(ref text), ReceiveOutcome::Suppressed) if text.as_slice() == [0x5a; 64])
             {
@@ -687,6 +895,12 @@ mod tests {
     #[test]
     fn endpoint_uses_a_single_truncation_sentinel() {
         assert_eq!(MAX_FRAME_LEN, 14 + 1280);
+    }
+    #[test]
+    fn client_retry_schedule_uses_absolute_offsets() {
+        assert_eq!(control_retry_offset(0).unwrap().as_millis(), 500);
+        assert_eq!(control_retry_offset(1).unwrap().as_millis(), 1_500);
+        assert_eq!(control_retry_offset(2).unwrap().as_millis(), 3_500);
     }
     #[test]
     fn endpoint_accepts_exact_maximum_frame_but_rejects_an_appended_tail() {

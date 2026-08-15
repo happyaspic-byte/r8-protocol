@@ -26,11 +26,16 @@ def make_pair(now):
         context["server_context_id"], 3, server_loc, client_loc, 1280, 2, 2),
         bytes.fromhex(context["server_boot_instance_hex"]), bytes.fromhex(context["cookie_key_hex"]), None, 0,
         lambda: now[0], session.PrevalidationLimiter(lambda: now[0], b"\xa0" * 32))
-    opening = client.start(context["scid"], bytes.fromhex(identities["client_x25519_secret_hex"]),
-                           bytes.fromhex(context["client_nonce_hex"]))
+    opening = client.start(
+        context["scid"], bytes.fromhex(identities["client_x25519_secret_hex"]),
+        bytes.fromhex(context["client_nonce_hex"]),
+        _authority=session._HANDSHAKE_MATERIAL_AUTHORITY)
     auth = client.receive_verify(server.receive_open_packet(opening, binding, context["cookie_bucket"]))
-    ack = server.receive_open_auth(auth, binding, context["cookie_bucket"],
-        bytes.fromhex(identities["server_x25519_secret_hex"]), bytes.fromhex(context["server_nonce_hex"]))
+    ack = server.receive_open_auth(
+        auth, binding, context["cookie_bucket"],
+        bytes.fromhex(identities["server_x25519_secret_hex"]),
+        bytes.fromhex(context["server_nonce_hex"]),
+        _authority=session._HANDSHAKE_MATERIAL_AUTHORITY)
     server.receive_protected(client.receive_ack(ack))
     return (redundant.RedundantSession(client.take_profile3(), binding, 1280, 1, lambda: now[0]),
             redundant.RedundantSession(server.take_profile3(context["scid"]), binding, 1280, 9, lambda: now[0]),

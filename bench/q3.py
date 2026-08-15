@@ -29,6 +29,7 @@ sys.path.insert(0, str(ROOT / "reference"))
 import r8session as r8
 
 PROTOCOL = ROOT / "bench/protocols/q3.json"
+MANIFEST = ROOT / "bench/protocols/manifest.json"
 CERT = ROOT / "bench/fixtures/q3-cert.pem"
 KEY = ROOT / "bench/fixtures/q3-key.pem"
 MECHANISMS = ("R8-cookie-pinned-full-handshake", "TLS-1.3-full-handshake")
@@ -46,21 +47,16 @@ SOURCE_INPUTS = {
     "bench/fixtures/q3-cert.pem": CERT,
     "bench/fixtures/q3-key.pem": KEY,
     "bench/protocols/q3.json": PROTOCOL,
+    "bench/protocols/manifest.json": MANIFEST,
     "bench/q3.py": Path(__file__).resolve(),
+    "reference/r8ref.py": ROOT / "reference/r8ref.py",
     "reference/r8session.py": ROOT / "reference/r8session.py",
     "requirements-dev.txt": ROOT / "requirements-dev.txt",
     "spec/0004-wire-format-v0.2.md": ROOT / "spec/0004-wire-format-v0.2.md",
     "spec/0005-session-security-v0.1.md": ROOT / "spec/0005-session-security-v0.1.md",
     "spec/parameters-v0.1.md": ROOT / "spec/parameters-v0.1.md",
 }
-HISTORICAL_V8_SOURCE_INPUTS = frozenset({
-    "bench/fixtures/q3-cert.pem",
-    "bench/fixtures/q3-key.pem",
-    "bench/protocols/q3.json",
-    "bench/q3.py",
-    "reference/r8session.py",
-    "requirements-dev.txt",
-})
+
 
 
 def digest(path):
@@ -85,6 +81,37 @@ def strict_json(text):
 
 def source_identity():
     return implementation_source_identity(source_hashes())
+def require_frozen_protocol():
+    manifest_data = strict_json(MANIFEST.read_text())
+    if (
+        manifest_data.get("contract_version") != "r8-benchmark-preregistration-manifest-v1"
+        or manifest_data.get("status") != "frozen-preregistrations-with-evidence-history"
+        or manifest_data.get("scope") != "private-experimental-closed-lab"
+    ):
+        raise ValueError("invalid preregistration manifest")
+    entries = [
+        item for item in manifest_data.get("preregistrations", ())
+        if isinstance(item, dict) and item.get("protocol_id") == "Q3"
+    ]
+    if len(entries) != 1:
+        raise ValueError("missing unique Q3 preregistration")
+    protocol_bytes = PROTOCOL.read_bytes()
+    protocol_data = strict_json(protocol_bytes.decode())
+    expected = {
+        "path": "bench/protocols/q3.json",
+        "size_bytes": len(protocol_bytes),
+        "sha256": hashlib.sha256(protocol_bytes).hexdigest(),
+        "status": "frozen-preregistered-no-current-source-results",
+    }
+    if any(entries[0].get(key) != value for key, value in expected.items()):
+        raise ValueError("Q3 preregistration drift")
+    if (
+        protocol_data.get("protocol_id") != "Q3"
+        or protocol_data.get("contract_version") != "r8-benchmark-preregistration-v1"
+        or protocol_data.get("status") != "preregistered-no-results"
+        or protocol_data.get("scope") != "private-experimental-closed-lab"
+    ):
+        raise ValueError("invalid Q3 protocol contract")
 
 
 
@@ -208,7 +235,7 @@ def _r8_server_ready():
                     binding = r8.UdpBinding.from_endpoint(addr[0], addr[1], 1, binding_selector)
                     typ = r8.decode(payload)[0]
                     if typ == 1: reply = server.receive_open_packet(packet, binding, cookie_bucket(clock))
-                    elif typ == 3: reply = server.receive_open_auth(packet, binding, cookie_bucket(clock), r8._random(32), r8._random(32))
+                    elif typ == 3: reply = server.receive_open_auth(packet, binding, cookie_bucket(clock))
                     elif typ == 5: server.receive_protected(packet); continue
                     elif typ == 6:
                         if server.receive_protected(packet) != b"x": raise ValueError("application byte mismatch")
@@ -245,7 +272,7 @@ def _r8_server_ready():
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
             sockets.append(s)
             s.settimeout(TIMEOUT)
-            packet = machine.start(_random_scid(), r8._random(32), r8._random(32)); s.sendto(packet, ("127.0.0.1", port[0]))
+            packet = machine.start(_random_scid()); s.sendto(packet, ("127.0.0.1", port[0]))
             packet = machine.receive_verify(s.recv(R8_BINDING_BUDGET)); s.sendto(packet, ("127.0.0.1", port[0]))
             packet = machine.receive_ack(s.recv(R8_BINDING_BUDGET)); s.sendto(packet, ("127.0.0.1", port[0]))
             packet = machine.send_data(b"x"); s.sendto(packet, ("127.0.0.1", port[0]))
@@ -558,6 +585,7 @@ def environment(source_label):
         "implementation_source_identity": source_identity(),
         "implementation_sources": sources,
         "protocol_sha256": sources["bench/protocols/q3.json"],
+        "preregistration_manifest_sha256": sources["bench/protocols/manifest.json"],
         "fixture_certificate_sha256": sources["bench/fixtures/q3-cert.pem"],
         "fixture_key_sha256": sources["bench/fixtures/q3-key.pem"],
         "reference_sha256": sources["reference/r8session.py"],
@@ -614,8 +642,12 @@ def manifest(args, rows, directory):
 
 def _git(command):
     return subprocess.run(["git", *command], cwd=ROOT, text=True, capture_output=True, check=True).stdout.strip()
+def require_clean_repository(error):
+    if _git(["status", "--porcelain", "--untracked-files=all"]):
+        raise ValueError(error)
 
 def require_labels(args):
+    require_frozen_protocol()
     if not SOURCE_LABEL.fullmatch(args.source_identity) or not SAFE_LABEL.fullmatch(args.host_epoch):
         raise ValueError("source identity and host epoch must be safe labels")
     if args.smoke:
@@ -630,8 +662,7 @@ def require_labels(args):
         raise ValueError("full run git commit must match HEAD")
     if os.environ.get("GITHUB_SHA") != args.git_commit:
         raise ValueError("full run git commit must match GITHUB_SHA")
-    if _git(["status", "--porcelain"]):
-        raise ValueError("full run requires a clean repository")
+    require_clean_repository("full run requires a clean repository")
 
 def run(args):
     require_isolated_netns()
@@ -712,6 +743,7 @@ def _validate_rows(manifest_data, saved, rows):
         require_loopback_delta(row["network"])
 
 def regenerate(args):
+    require_frozen_protocol()
     directory = Path(args.output)
     manifest_data = strict_json((directory / "run-manifest.json").read_text())
     if manifest_data.get("schema") != "q3-run-manifest-v1":
@@ -730,18 +762,21 @@ def regenerate(args):
     if type(recorded_sources) is not dict or any(type(path) is not str or type(value) is not str or not re.fullmatch(r"[0-9a-f]{64}", value) for path, value in recorded_sources.items()):
         raise ValueError("recorded implementation sources verification failed")
     recorded_keys = set(recorded_sources)
-    if recorded_keys not in (set(SOURCE_INPUTS), set(HISTORICAL_V8_SOURCE_INPUTS)):
+    if recorded_keys != set(SOURCE_INPUTS):
         raise ValueError("recorded implementation source key-set verification failed")
     if saved.get("implementation_sources") != recorded_sources or saved.get("implementation_source_identity") != recorded_identity:
         raise ValueError("recorded implementation source binding verification failed")
     if implementation_source_identity(recorded_sources) != recorded_identity:
         raise ValueError("recorded implementation source identity verification failed")
+    if recorded_sources != current_sources or recorded_identity != current_identity:
+        raise ValueError("package is not bound to the current implementation")
     smoke = manifest_data.get("status") == SMOKE_STATUS
     if not smoke and (manifest_data.get("source_identity") != recorded_identity or saved.get("source_identity") != recorded_identity):
         raise ValueError("full package public source identity binding verification failed")
     if not smoke:
         component_fields = {
             "protocol_sha256": "bench/protocols/q3.json",
+            "preregistration_manifest_sha256": "bench/protocols/manifest.json",
             "fixture_certificate_sha256": "bench/fixtures/q3-cert.pem",
             "fixture_key_sha256": "bench/fixtures/q3-key.pem",
             "reference_sha256": "reference/r8session.py",
@@ -754,11 +789,15 @@ def regenerate(args):
                 raise ValueError("recorded component hash verification failed: " + field)
         if manifest_data.get("toolchain_provenance", {}).get("requirements_dev_sha256") != recorded_sources["requirements-dev.txt"]:
             raise ValueError("requirements toolchain hash verification failed")
-    current_package = recorded_sources == current_sources and recorded_identity == current_identity
+        if manifest_data.get("git_commit") != _git(["rev-parse", "HEAD"]):
+            raise ValueError("full package git commit does not match current HEAD")
+        require_clean_repository(
+            "full package regeneration requires a clean repository")
+        github_sha = os.environ.get("GITHUB_SHA")
+        if github_sha is not None and manifest_data.get("git_commit") != github_sha:
+            raise ValueError("full package git commit does not match GITHUB_SHA")
     rows = [strict_json(line) for line in (directory / "raw.jsonl").read_text().splitlines()]
     _validate_rows(manifest_data, saved, rows)
-    if not current_package:
-        return
     rendered = json.dumps(summary(rows), sort_keys=True, indent=2) + "\n"
     if hashlib.sha256(rendered.encode()).hexdigest() != hashes["summary.json"]:
         raise ValueError("manifest summary verification failed")

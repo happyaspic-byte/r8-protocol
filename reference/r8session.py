@@ -15,6 +15,7 @@ import sys
 import time
 import threading
 from dataclasses import dataclass
+import weakref
 from cryptography.exceptions import InvalidSignature, InvalidTag
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
@@ -340,183 +341,341 @@ class ReplayWindow:
             self.bits |= 1 << (self.highest - counter)
         self.generation += 1
 
+_DECRYPT_PREVIEWS = weakref.WeakKeyDictionary()
+_SESSION_PREVIEW_AUTHORITY = object()
+
 class _DecryptPreview:
-    __slots__ = ("_session", "_generation", "_counter", "_used", "_owner")
-    def __init__(self, session, generation, counter):
-        self._session, self._generation, self._counter, self._used, self._owner = session, generation, counter, False, None
+    __slots__ = ("__weakref__",)
+    def __init__(self, session, generation, counter, *, _authority=None):
+        if _authority is not _SESSION_PREVIEW_AUTHORITY or self in _DECRYPT_PREVIEWS:
+            _fail("REPLAY")
+        _DECRYPT_PREVIEWS[self] = (session, generation, counter, None)
     def __repr__(self):
         return "<DecryptPreview>"
     def _invalidate(self):
-        owner, self._owner = self._owner, None
-        self._session, self._generation, self._counter, self._used = None, -1, 0, True
-        if owner is not None:
-            owner._purge()
+        record = _DECRYPT_PREVIEWS.pop(self, None)
+        if record is not None and record[3] is not None:
+            record[3]._purge()
+
+_SESSION_CORES = weakref.WeakKeyDictionary()
+
+class _SessionCore:
+    __slots__ = ("key", "send_counter", "replay", "lock", "previews", "released")
+    def __init__(self, key, send_counter):
+        self.key = key
+        self.send_counter = send_counter
+        self.replay = ReplayWindow()
+        self.lock = threading.RLock()
+        self.previews = set()
+        self.released = False
+
+def _session_core(session):
+    core = _SESSION_CORES.get(session)
+    if core is None:
+        _fail("UNEXPECTED_MESSAGE")
+    return core
+
+def _replay_snapshot(replay):
+    snapshot = ReplayWindow()
+    snapshot.highest = replay.highest
+    snapshot.bits = replay.bits
+    snapshot.generation = replay.generation
+    return snapshot
 
 class Session:
+    __slots__ = ("__weakref__",)
     def __init__(self, key, send_counter=1):
-        self._key, self.send_counter, self.replay = key, send_counter, ReplayWindow()
-        self._lock, self._previews, self._released = threading.RLock(), set(), False
-    def _move_unlocked(self):
-        if self._released or self._previews or self._key is None:
+        if self in _SESSION_CORES:
             _fail("UNEXPECTED_MESSAGE")
-        owned = Session(self._key, self.send_counter)
-        owned.replay.highest, owned.replay.bits, owned.replay.generation = (
-            self.replay.highest, self.replay.bits, self.replay.generation
-        )
-        self._key, self.send_counter, self.replay, self._released = None, 0, ReplayWindow(), True
+        _exact(key, 32)
+        if type(send_counter) is not int:
+            _fail("COUNTER_RANGE")
+        _SESSION_CORES[self] = _SessionCore(bytes(key), send_counter)
+    @property
+    def send_counter(self):
+        return _session_core(self).send_counter
+    @property
+    def replay(self):
+        return _replay_snapshot(_session_core(self).replay)
+    @property
+    def _previews(self):
+        return frozenset(_session_core(self).previews)
+    @property
+    def _released(self):
+        return _session_core(self).released
+    @property
+    def _key(self):
+        return None
+    def _move_unlocked(self):
+        core = _session_core(self)
+        if core.released or core.previews or core.key is None:
+            _fail("UNEXPECTED_MESSAGE")
+        owned = Session(core.key, core.send_counter)
+        owned_core = _session_core(owned)
+        owned_core.replay.highest = core.replay.highest
+        owned_core.replay.bits = core.replay.bits
+        owned_core.replay.generation = core.replay.generation
+        core.key = None
+        core.send_counter = 0
+        core.replay = ReplayWindow()
+        core.released = True
         return owned
     def encrypt(self, header, prefix, plaintext):
-        with self._lock:
-            if self._released or self._key is None:
+        core = _session_core(self)
+        with core.lock:
+            if core.released or core.key is None:
                 _fail("UNEXPECTED_MESSAGE")
-            if not 1 <= self.send_counter < 0xffffffffffffffff: _fail("COUNTER_EXHAUSTED")
-            counter = self.send_counter; self.send_counter += 1
-            return counter, seal(self._key, header, prefix, counter, plaintext)
+            if not 1 <= core.send_counter < 0xffffffffffffffff:
+                _fail("COUNTER_EXHAUSTED")
+            counter = core.send_counter
+            core.send_counter += 1
+            return counter, seal(core.key, header, prefix, counter, plaintext)
     def preview_decrypt(self, header, prefix, counter, ciphertext):
-        with self._lock:
-            if self._released or self._key is None:
+        core = _session_core(self)
+        with core.lock:
+            if core.released or core.key is None:
                 _fail("UNEXPECTED_MESSAGE")
-            if len(self._previews) >= 64: _fail("CAPACITY")
-            generation = self.replay.preview(counter)
-            plaintext = open_sealed(self._key, header, prefix, counter, ciphertext)
-            preview = _DecryptPreview(self, generation, counter)
-            self._previews.add(preview)
+            if len(core.previews) >= 64:
+                _fail("CAPACITY")
+            generation = core.replay.preview(counter)
+            plaintext = open_sealed(core.key, header, prefix, counter, ciphertext)
+            preview = _DecryptPreview(
+                self, generation, counter, _authority=_SESSION_PREVIEW_AUTHORITY)
+            core.previews.add(preview)
             return plaintext, preview
     def commit_decrypt(self, preview):
-        with self._lock:
-            if (not isinstance(preview, _DecryptPreview) or preview._session is not self
-                    or preview._used or preview not in self._previews
-                    or preview._generation != self.replay.generation):
-                self._previews.discard(preview)
+        core = _session_core(self)
+        with core.lock:
+            if not isinstance(preview, _DecryptPreview):
+                _fail("REPLAY")
+            record = _DECRYPT_PREVIEWS.get(preview)
+            if (
+                record is None
+                or record[0] is not self
+                or preview not in core.previews
+                or record[1] != core.replay.generation
+            ):
+                core.previews.discard(preview)
                 if isinstance(preview, _DecryptPreview):
                     preview._invalidate()
                 _fail("REPLAY")
-            self.replay.check_and_mark(preview._counter)
-            for stale in tuple(self._previews):
+            core.replay.check_and_mark(record[2])
+            for stale in tuple(core.previews):
                 stale._invalidate()
-            self._previews.clear()
+            core.previews.clear()
     def abort_decrypt(self, preview):
-        with self._lock:
-            valid = (isinstance(preview, _DecryptPreview) and preview._session is self
-                     and not preview._used and preview in self._previews
-                     and preview._generation == self.replay.generation)
+        core = _session_core(self)
+        with core.lock:
+            if not isinstance(preview, _DecryptPreview):
+                _fail("REPLAY")
+            record = _DECRYPT_PREVIEWS.get(preview)
+            valid = (
+                record is not None
+                and record[0] is self
+                and preview in core.previews
+                and record[1] == core.replay.generation
+            )
             if not valid:
-                if isinstance(preview, _DecryptPreview) and preview._session is self:
-                    self._previews.discard(preview)
+                if record is not None and record[0] is self:
+                    core.previews.discard(preview)
                     preview._invalidate()
                 _fail("REPLAY")
-            self._previews.remove(preview)
+            core.previews.remove(preview)
             preview._invalidate()
     def _discard_previews(self):
-        with self._lock:
-            for preview in tuple(self._previews):
+        core = _session_core(self)
+        with core.lock:
+            for preview in tuple(core.previews):
                 preview._invalidate()
-            self._previews.clear()
+            core.previews.clear()
     def release(self):
         """Irreversibly purge this session under its own lock."""
-        with self._lock:
-            if self._released:
+        core = _session_core(self)
+        with core.lock:
+            if core.released:
                 return
-            for preview in tuple(self._previews):
+            for preview in tuple(core.previews):
                 preview._invalidate()
-            self._previews.clear()
-            self._key = None
-            self.send_counter = 0
-            self.replay = ReplayWindow()
-            self._released = True
+            core.previews.clear()
+            core.key = None
+            core.send_counter = 0
+            core.replay = ReplayWindow()
+            core.released = True
     def decrypt(self, header, prefix, counter, ciphertext):
-        with self._lock:
+        core = _session_core(self)
+        with core.lock:
             plaintext, preview = self.preview_decrypt(header, prefix, counter, ciphertext)
             self.commit_decrypt(preview)
             return plaintext
+_PROFILE3_BOOTSTRAPS = weakref.WeakKeyDictionary()
+_PROFILE3_SLOT1_PREPARATIONS = weakref.WeakKeyDictionary()
+_PROFILE3_SLOT1_AUTHORITY = object()
+_PROFILE3_CONSUMER_AUTHORITY = object()
+def _move_session_pair(outbound, inbound):
+    if not isinstance(outbound, Session) or not isinstance(inbound, Session) or outbound is inbound:
+        _fail("UNEXPECTED_MESSAGE")
+    first, second = sorted((outbound, inbound), key=id)
+    first_core, second_core = _session_core(first), _session_core(second)
+    with first_core.lock:
+        with second_core.lock:
+            if (
+                first_core.released or second_core.released
+                or first_core.previews or second_core.previews
+                or first_core.key is None or second_core.key is None
+            ):
+                _fail("UNEXPECTED_MESSAGE")
+            return outbound._move_unlocked(), inbound._move_unlocked()
+
+class _Profile3Slot1Preparation:
+    __slots__ = ("__weakref__",)
+    def __init__(self, bootstrap, outbound, inbound, *, _authority):
+        if _authority is not _PROFILE3_SLOT1_AUTHORITY or self in _PROFILE3_SLOT1_PREPARATIONS:
+            _fail("UNEXPECTED_MESSAGE")
+        _PROFILE3_SLOT1_PREPARATIONS[self] = (bootstrap, outbound, inbound)
+    def __repr__(self):
+        return "<Profile3Slot1Preparation>"
+
 class Profile3Bootstrap:
-    """Sole owner of transferred Profile-3 session material."""
-    __slots__ = ("scid", "role", "local_loc", "peer_loc", "outbound", "inbound", "_prk", "_thash",
-                 "_lock", "_sessions")
+    """Opaque one-shot handle for transferred Profile-3 session material."""
+    __slots__ = ("__weakref__",)
 
     def __init__(self, scid, role, local_loc, peer_loc, outbound, inbound, prk, thash, *, _authority):
-        if _authority is not _PROFILE3_BOOTSTRAP_AUTHORITY:
+        if _authority is not _PROFILE3_BOOTSTRAP_AUTHORITY or self in _PROFILE3_BOOTSTRAPS:
             _fail("UNEXPECTED_MESSAGE")
-        self.scid, self.role = scid, role
-        self.local_loc, self.peer_loc = local_loc, peer_loc
-        self.outbound, self.inbound = outbound, inbound
-        self._prk, self._thash = prk, thash
-        self._lock, self._sessions = threading.RLock(), {outbound, inbound}
+        _PROFILE3_BOOTSTRAPS[self] = (scid, role, local_loc, peer_loc, outbound, inbound, prk, thash,
+                                      {outbound, inbound})
 
     def __repr__(self):
         return "<Profile3Bootstrap>"
 
-    def _transfer(self):
-        with self._lock:
-            if (self.scid == 0 or self.outbound is None or self.inbound is None
-                    or self._prk is None or self._thash is None or self.outbound is self.inbound):
-                _fail("UNEXPECTED_MESSAGE")
-            first, second = sorted((self.outbound, self.inbound), key=id)
-            with first._lock:
-                with second._lock:
-                    if (first._released or second._released or first._previews or second._previews
-                            or first._key is None or second._key is None):
-                        _fail("UNEXPECTED_MESSAGE")
-                    outbound, inbound = self.outbound._move_unlocked(), self.inbound._move_unlocked()
-            owned = Profile3Bootstrap(
-                self.scid, self.role, self.local_loc, self.peer_loc,
-                outbound, inbound, self._prk, self._thash,
-                _authority=_PROFILE3_BOOTSTRAP_AUTHORITY,
-            )
-            self.scid = self.role = 0
-            self.local_loc = self.peer_loc = None
-            self.outbound = self.inbound = self._prk = self._thash = None
-            self._sessions.clear()
-            return owned
 
-    def take_slot1(self):
-        with self._lock:
-            if self._prk is None:
-                _fail("UNEXPECTED_MESSAGE")
-            prk, thash = self._prk, self._thash
-            self._prk = self._thash = None
-            peer_role = 2 if self.role == 1 else 1
-            outbound = Session(_key_schedule_prk(prk, thash, self.role, peer_role, 3, 1))
-            inbound = Session(_key_schedule_prk(prk, thash, peer_role, self.role, 3, 1))
-            self._sessions.update((outbound, inbound))
-            return outbound, inbound
+    def _transfer(self, _authority):
+        if _authority is not _PROFILE3_CONSUMER_AUTHORITY:
+            _fail("UNEXPECTED_MESSAGE")
+        record = _PROFILE3_BOOTSTRAPS.get(self)
+        if record is None:
+            _fail("UNEXPECTED_MESSAGE")
+        scid, role, local_loc, peer_loc, outbound, inbound, prk, thash, _ = record
+        if scid == 0 or outbound is None or inbound is None or prk is None or thash is None or outbound is inbound:
+            _fail("UNEXPECTED_MESSAGE")
+        owned_outbound, owned_inbound = _move_session_pair(outbound, inbound)
+        _PROFILE3_BOOTSTRAPS.pop(self, None)
+        return Profile3Bootstrap(scid, role, local_loc, peer_loc, owned_outbound, owned_inbound, prk, thash,
+                                 _authority=_PROFILE3_BOOTSTRAP_AUTHORITY)
+
+    def _context(self, _authority):
+        if _authority is not _PROFILE3_CONSUMER_AUTHORITY:
+            _fail("UNEXPECTED_MESSAGE")
+        record = _PROFILE3_BOOTSTRAPS.get(self)
+        if record is None:
+            _fail("UNEXPECTED_MESSAGE")
+        return record[:8]
+    def _prepare_slot1(self, _authority):
+        if _authority is not _PROFILE3_CONSUMER_AUTHORITY:
+            _fail("UNEXPECTED_MESSAGE")
+        record = _PROFILE3_BOOTSTRAPS.get(self)
+        if record is None or record[6] is None or record[7] is None:
+            _fail("UNEXPECTED_MESSAGE")
+        if any(item[0] is self for item in _PROFILE3_SLOT1_PREPARATIONS.values()):
+            _fail("CAPACITY")
+        scid, role, local_loc, peer_loc, outbound, inbound, prk, thash, sessions = record
+        peer_role = 2 if role == 1 else 1
+        slot_outbound = Session(_key_schedule_prk(prk, thash, role, peer_role, 3, 1))
+        try:
+            slot_inbound = Session(_key_schedule_prk(prk, thash, peer_role, role, 3, 1))
+        except Exception:
+            slot_outbound.release()
+            raise
+        return _Profile3Slot1Preparation(
+            self, slot_outbound, slot_inbound, _authority=_PROFILE3_SLOT1_AUTHORITY)
+
+    def _consume_slot1(self, preparation, consumer, _authority):
+        if _authority is not _PROFILE3_CONSUMER_AUTHORITY:
+            _fail("UNEXPECTED_MESSAGE")
+        prepared = _PROFILE3_SLOT1_PREPARATIONS.get(preparation)
+        record = _PROFILE3_BOOTSTRAPS.get(self)
+        if (
+            prepared is None or prepared[0] is not self or record is None
+            or record[6] is None or record[7] is None or not callable(consumer)
+        ):
+            _fail("UNEXPECTED_MESSAGE")
+        consumer()
+        _PROFILE3_SLOT1_PREPARATIONS.pop(preparation, None)
+        scid, role, local_loc, peer_loc, outbound, inbound, _prk, _thash, sessions = record
+        slot_outbound, slot_inbound = prepared[1:]
+        _PROFILE3_BOOTSTRAPS[self] = (
+            scid, role, local_loc, peer_loc, outbound, inbound, None, None,
+            sessions | {slot_outbound, slot_inbound})
+        return slot_outbound, slot_inbound
+
+    def _abort_slot1(self, preparation, _authority):
+        if _authority is not _PROFILE3_CONSUMER_AUTHORITY:
+            _fail("UNEXPECTED_MESSAGE")
+        prepared = _PROFILE3_SLOT1_PREPARATIONS.pop(preparation, None)
+        if prepared is None or prepared[0] is not self:
+            _fail("UNEXPECTED_MESSAGE")
+        prepared[1].release()
+        prepared[2].release()
+
+
 
     def close(self):
-        with self._lock:
-            for session in tuple(self._sessions):
+        for preparation, prepared in tuple(_PROFILE3_SLOT1_PREPARATIONS.items()):
+            if prepared[0] is self:
+                _PROFILE3_SLOT1_PREPARATIONS.pop(preparation, None)
+                prepared[1].release()
+                prepared[2].release()
+        record = _PROFILE3_BOOTSTRAPS.pop(self, None)
+        if record is not None:
+            for session in record[8]:
                 session.release()
-            self._sessions.clear()
-            self.scid = self.role = 0
-            self.local_loc = self.peer_loc = None
-            self.outbound = self.inbound = self._prk = self._thash = None
-    def release_sessions(self, *sessions):
-        with self._lock:
-            for session in sessions:
-                if session is not None:
-                    session.release()
-                    self._sessions.discard(session)
-                    if self.outbound is session:
-                        self.outbound = None
-                    if self.inbound is session:
-                        self.inbound = None
+
+    def release_sessions(self, *sessions, _authority):
+        if _authority is not _PROFILE3_CONSUMER_AUTHORITY:
+            _fail("UNEXPECTED_MESSAGE")
+        record = _PROFILE3_BOOTSTRAPS.get(self)
+        if record is None:
+            _fail("UNEXPECTED_MESSAGE")
+        for session in sessions:
+            if session is not None and session in record[8]:
+                session.release()
+                record[8].discard(session)
+_PROFILE3_DATA_PREVIEWS = weakref.WeakKeyDictionary()
+
 class Profile3DataPreview:
-    __slots__ = ("_session", "_session_preview", "_delivery_id", "_plaintext")
-    def __init__(self, session, session_preview, delivery_id, plaintext):
-        self._session, self._session_preview = session, session_preview
-        self._delivery_id, self._plaintext = delivery_id, plaintext
-        session_preview._owner = self
+    __slots__ = ("__weakref__",)
+    def __init__(self, session, session_preview, delivery_id, plaintext, *, _authority=None):
+        if _authority is not _SESSION_PREVIEW_AUTHORITY or self in _PROFILE3_DATA_PREVIEWS:
+            _fail("REPLAY")
+        try:
+            session_record = _DECRYPT_PREVIEWS.get(session_preview)
+        except TypeError:
+            _fail("REPLAY")
+        if (
+            session_record is None
+            or session_record[0] is not session
+            or session_record[3] is not None
+        ):
+            _fail("REPLAY")
+        _PROFILE3_DATA_PREVIEWS[self] = (
+            session, session_preview, delivery_id, bytes(plaintext))
+        _DECRYPT_PREVIEWS[session_preview] = (*session_record[:3], self)
     @property
     def delivery_id(self):
-        return self._delivery_id
+        record = _PROFILE3_DATA_PREVIEWS.get(self)
+        if record is None:
+            _fail("REPLAY")
+        return record[2]
     @property
     def plaintext(self):
-        return self._plaintext
+        record = _PROFILE3_DATA_PREVIEWS.get(self)
+        if record is None:
+            _fail("REPLAY")
+        return record[3]
     def __repr__(self):
         return "<Profile3DataPreview>"
     def _purge(self):
-        self._plaintext = None
-        self._delivery_id = 0
-        self._session = self._session_preview = None
+        _PROFILE3_DATA_PREVIEWS.pop(self, None)
 
 
 def _profile3_data_fields(payload):
@@ -584,14 +743,16 @@ def seal_profile3_data(session, header, delivery_id, plaintext, binding_budget=1
     prefix = b"\x06\x01\x03\x00"
     placeholder = prefix + struct.pack("!QQ", 1, delivery_id) + b"\0" * (len(plaintext) + 16)
     aad_header = _profile3_data_header(header, placeholder, binding_budget)
-    with session._lock:
-        if session._released or session._key is None:
+    core = _session_core(session)
+    with core.lock:
+        if core.released or core.key is None:
             _fail("UNEXPECTED_MESSAGE")
-        if not 1 <= session.send_counter < 0xffffffffffffffff:
+        if not 1 <= core.send_counter < 0xffffffffffffffff:
             _fail("COUNTER_EXHAUSTED")
-        counter = session.send_counter
-        ciphertext = _profile3_seal(session._key, aad_header, counter, delivery_id, plaintext)
-        session.send_counter += 1
+        counter = core.send_counter
+        ciphertext = _profile3_seal(
+            core.key, aad_header, counter, delivery_id, plaintext)
+        core.send_counter += 1
     return aad_header + prefix + struct.pack("!QQ", counter, delivery_id) + ciphertext
 
 
@@ -602,45 +763,76 @@ def preview_profile3_data(session, packet, binding_budget=1280):
     header, payload = parse_packet(packet, binding_budget)
     aad_header = _profile3_data_header(header, payload, binding_budget)
     counter, delivery_id, ciphertext = _profile3_data_fields(payload)
-    with session._lock:
-        if session._released or session._key is None:
+    core = _session_core(session)
+    with core.lock:
+        if core.released or core.key is None:
             _fail("UNEXPECTED_MESSAGE")
-        if len(session._previews) >= 64:
+        if len(core.previews) >= 64:
             _fail("CAPACITY")
-        generation = session.replay.preview(counter)
-        plaintext = _profile3_open(session._key, aad_header, counter, delivery_id, ciphertext)
-        session_preview = _DecryptPreview(session, generation, counter)
-        preview = Profile3DataPreview(session, session_preview, delivery_id, plaintext)
-        session._previews.add(session_preview)
+        generation = core.replay.preview(counter)
+        plaintext = _profile3_open(
+            core.key, aad_header, counter, delivery_id, ciphertext)
+        session_preview = _DecryptPreview(
+            session, generation, counter, _authority=_SESSION_PREVIEW_AUTHORITY)
+        preview = Profile3DataPreview(
+            session, session_preview, delivery_id, plaintext,
+            _authority=_SESSION_PREVIEW_AUTHORITY)
+        core.previews.add(session_preview)
         return preview
 
 
 def commit_profile3_data(session, preview):
     """Mark a previously authenticated Profile-3 DATA counter and return its delivery."""
-    if not isinstance(session, Session) or not isinstance(preview, Profile3DataPreview) or preview._session is not session:
+    if not isinstance(preview, Profile3DataPreview):
         _fail("REPLAY")
-    delivery_id, plaintext, session_preview = preview.delivery_id, preview.plaintext, preview._session_preview
+    record = _PROFILE3_DATA_PREVIEWS.get(preview)
+    if not isinstance(session, Session) or record is None or record[0] is not session:
+        _fail("REPLAY")
+    session_preview, delivery_id, plaintext = record[1:]
     session.commit_decrypt(session_preview)
     return delivery_id, plaintext
 
 
 def abort_profile3_data(session, preview):
     """Discard a Profile-3 DATA preview without changing replay state."""
-    if not isinstance(session, Session) or not isinstance(preview, Profile3DataPreview) or preview._session is not session:
+    if not isinstance(preview, Profile3DataPreview):
         _fail("REPLAY")
-    session.abort_decrypt(preview._session_preview)
+    record = _PROFILE3_DATA_PREVIEWS.get(preview)
+    if not isinstance(session, Session) or record is None or record[0] is not session:
+        _fail("REPLAY")
+    session.abort_decrypt(record[1])
 
+
+_DATA_PREVIEWS = weakref.WeakKeyDictionary()
 
 class _DataPreview:
-    __slots__ = ("_machine", "_session_preview", "_record", "_close", "_used")
-    def __init__(self, machine, session_preview, record, close):
-        self._machine, self._session_preview = machine, session_preview
-        self._record, self._close, self._used = record, close, False
+    __slots__ = ("__weakref__",)
+    def __init__(self, machine, session_preview, record, close, *, _authority=None):
+        if _authority is not _SESSION_PREVIEW_AUTHORITY or self in _DATA_PREVIEWS:
+            _fail("REPLAY")
+        try:
+            session_record = _DECRYPT_PREVIEWS.get(session_preview)
+        except TypeError:
+            _fail("REPLAY")
+        expected_session = record.get("c2s") if type(record) is dict else record
+        if (
+            session_record is None
+            or session_record[0] is not expected_session
+            or session_record[3] is not None
+        ):
+            _fail("REPLAY")
+        _DATA_PREVIEWS[self] = (machine, session_preview, record, bool(close))
+        _DECRYPT_PREVIEWS[session_preview] = (*session_record[:3], self)
     def __repr__(self):
         return "<DataPreview>"
+    def _purge(self):
+        wrapper = _DATA_PREVIEWS.pop(self, None)
+        if wrapper is not None:
+            previews = getattr(wrapper[0], "_previews", None)
+            if previews is not None:
+                previews.discard(self)
     def _invalidate(self):
-        self._machine = self._session_preview = self._record = None
-        self._close, self._used = False, True
+        self._purge()
 
 def _allowed_locs(value, current):
     if value is None:
@@ -656,13 +848,41 @@ def _loc(value):
     if not isinstance(value, ipaddress.IPv6Address):
         raise ValueError("location")
     return value
-@dataclass(repr=False)
+_PENDING_AUTHORITY = object()
+_PENDING_CORES = weakref.WeakKeyDictionary()
+
+class _PendingCore:
+    __slots__ = (
+        "scid", "binding", "client", "created", "cached_ack", "auth_packet",
+        "transcript_hash", "c2s", "s2c", "prk", "accept_replay",
+    )
+    def __init__(
+        self, scid, binding, client, created, cached_ack, auth_packet,
+        transcript_hash, c2s, s2c, prk,
+    ):
+        self.scid = scid
+        self.binding = binding
+        self.client = client
+        self.created = created
+        self.cached_ack = cached_ack
+        self.auth_packet = auth_packet
+        self.transcript_hash = transcript_hash
+        self.c2s = c2s
+        self.s2c = s2c
+        self.prk = prk
+        self.accept_replay = ReplayWindow()
+
+def _pending_core(record):
+    core = _PENDING_CORES.get(record)
+    if core is None:
+        _fail("UNEXPECTED_MESSAGE")
+    return core
+
 class Pending(_Redacted):
-    scid: int
-    binding: bytes
-    client: Open
-    created: float
-    cached_ack: bytes
+    __slots__ = ("__weakref__",)
+    def __init__(self, *, _authority=None):
+        if _authority is not _PENDING_AUTHORITY or self in _PENDING_CORES:
+            _fail("UNEXPECTED_MESSAGE")
 
 
 @dataclass(frozen=True, repr=False)
@@ -754,21 +974,29 @@ class ServerMachine:
         return reply
 
     def _discard_record(self, record):
-        record.cached_ack = b""
-        for name in ("auth_packet", "hash", "c2s", "s2c", "prk", "accept_replay"):
-            if hasattr(record, name):
-                setattr(record, name, None)
+        core = _pending_core(record)
+        core.cached_ack = b""
+        core.auth_packet = None
+        core.transcript_hash = None
+        core.c2s = None
+        core.s2c = None
+        core.prk = None
+        core.accept_replay = None
     def _dispose_established(self, established):
         for preview in tuple(self._previews):
-            if preview._record is established:
+            record = _DATA_PREVIEWS.get(preview)
+            if record is not None and record[2] is established:
                 self._previews.remove(preview)
                 preview._invalidate()
-        established["c2s"]._discard_previews()
-        established["s2c"]._discard_previews()
+        established["c2s"].release()
+        established["s2c"].release()
         self._discard_record(established["record"])
     def _expire(self, now):
         with self._lock:
-            expired_pending = [key for key, record in self.pending.items() if now >= record.created + 5]
+            expired_pending = [
+                key for key, record in self.pending.items()
+                if now >= _pending_core(record).created + 5
+            ]
             for key in expired_pending:
                 self._discard_record(self.pending.pop(key))
             expired_established = [key for key, value in self.established.items() if now >= value["last"] + 120]
@@ -777,7 +1005,10 @@ class ServerMachine:
     def expire(self):
         self._expire(self.clock())
 
-    def receive_open_auth(self, packet, binding, current_bucket, server_ephemeral_secret, server_nonce):
+    def receive_open_auth(
+        self, packet, binding, current_bucket,
+        server_ephemeral_secret=None, server_nonce=None, *, _authority=None,
+    ):
         if len(packet) > self.config.binding_budget: _fail("BUDGET")
         binding_bytes = validate_binding(binding)
         header, payload = parse_packet(packet, self.config.binding_budget)
@@ -788,9 +1019,22 @@ class ServerMachine:
         if existing is None:
             existing = self.established.get(header.scid, {}).get("record")
         if existing is not None:
-            if existing.binding == binding_bytes and existing.auth_packet == bytes(packet):
-                return existing.cached_ack
+            existing_core = _pending_core(existing)
+            if (
+                existing_core.binding == binding_bytes
+                and existing_core.auth_packet == bytes(packet)
+            ):
+                return existing_core.cached_ack
             _fail("SCID_COLLISION")
+        if _authority is _HANDSHAKE_MATERIAL_AUTHORITY:
+            _exact(server_ephemeral_secret, 32)
+            _exact(server_nonce, 32)
+            server_ephemeral_secret, server_nonce = (
+                bytes(server_ephemeral_secret), bytes(server_nonce))
+        elif server_ephemeral_secret is not None or server_nonce is not None:
+            _fail("UNEXPECTED_MESSAGE")
+        else:
+            server_ephemeral_secret, server_nonce = _random(32), _random(32)
         auth = OpenAuth.parse(payload)
         if auth.boot_instance != self.boot_instance or not self._cookies(binding, auth, header.scid, current_bucket):
             _fail("COOKIE_INVALID")
@@ -818,15 +1062,23 @@ class ServerMachine:
         if len(self.pending) >= self.pending_limit:
             _fail("CAPACITY")
         thash = transcript_hash(t0, auth.signature, signature)
-        record = Pending(header.scid, binding_bytes, Open(auth.sender_role, auth.receiver_role,
-            auth.service_context, auth.sender_eid, auth.sender_public_key, auth.sender_ephemeral,
-            auth.sender_nonce), self.clock(), ack_packet)
-        record.auth_packet, record.hash, record.c2s, record.s2c = (bytes(packet), thash,
+        record = Pending(_authority=_PENDING_AUTHORITY)
+        _PENDING_CORES[record] = _PendingCore(
+            header.scid,
+            binding_bytes,
+            Open(
+                auth.sender_role, auth.receiver_role, auth.service_context,
+                auth.sender_eid, auth.sender_public_key, auth.sender_ephemeral,
+                auth.sender_nonce,
+            ),
+            self.clock(),
+            ack_packet,
+            bytes(packet),
+            thash,
             key_schedule(shared, thash, 1, 2, self.config.profile, 0),
-            key_schedule(shared, thash, 2, 1, self.config.profile, 0))
-        if self.config.profile == 3:
-            record.prk = key_prk(shared, thash)
-        record.accept_replay = ReplayWindow()
+            key_schedule(shared, thash, 2, 1, self.config.profile, 0),
+            key_prk(shared, thash) if self.config.profile == 3 else None,
+        )
         self.pending[header.scid] = record
         return ack_packet
     def receive_protected(self, packet):
@@ -839,23 +1091,33 @@ class ServerMachine:
             record = self.established.get(header.scid, {}).get("record")
         if record is None:
             _fail("UNEXPECTED_MESSAGE")
+        record_core = _pending_core(record)
         message = ProtectedMessage.parse(payload)
         if message.typ == 5:
-            plaintext = open_sealed(record.c2s, packet[:48], payload[:4], message.counter, message.ciphertext)
-            if message.counter != 1 or plaintext != b"R8 ACCEPT v1" + record.hash:
+            plaintext = open_sealed(
+                record_core.c2s, packet[:48], payload[:4],
+                message.counter, message.ciphertext)
+            if (
+                message.counter != 1
+                or plaintext != b"R8 ACCEPT v1" + record_core.transcript_hash
+            ):
                 _fail("AUTH_FAILED")
             if header.scid in self.pending:
                 if len(self.established) >= self.established_limit:
                     _fail("CAPACITY")
-                record.accept_replay.check_and_mark(message.counter)
+                record_core.accept_replay.check_and_mark(message.counter)
                 self.pending.pop(header.scid)
-                c2s_session = Session(record.c2s)
-                c2s_session.replay.check_and_mark(message.counter)
-                self.established[header.scid] = {"record": record, "c2s": c2s_session,
-                                                 "s2c": Session(record.s2c), "last": self.clock()}
+                c2s_session = Session(record_core.c2s)
+                _session_core(c2s_session).replay.check_and_mark(message.counter)
+                self.established[header.scid] = {
+                    "record": record,
+                    "c2s": c2s_session,
+                    "s2c": Session(record_core.s2c),
+                    "last": self.clock(),
+                }
             else:
                 try:
-                    record.accept_replay.check_and_mark(message.counter)
+                    record_core.accept_replay.check_and_mark(message.counter)
                 except SessionError as error:
                     if error.category != "REPLAY":
                         raise
@@ -881,45 +1143,56 @@ class ServerMachine:
                 packet[:48], payload[:4], message.counter, message.ciphertext)
             if message.typ == 7:
                 _exact(plaintext, 2)
-            preview = _DataPreview(self, session_preview, established, message.typ == 7)
+            preview = _DataPreview(
+                self, session_preview, established, message.typ == 7,
+                _authority=_SESSION_PREVIEW_AUTHORITY)
             self._previews.add(preview)
             return plaintext, header, message, preview
     def commit_data(self, preview):
         with self._lock:
-            self._expire(self.clock())
-            if (not isinstance(preview, _DataPreview) or preview._machine is not self
-                    or preview._used or preview not in self._previews
-                    or self.established.get(preview._record["record"].scid) is not preview._record):
-                self._previews.discard(preview)
+            now = self.clock()
+            self._expire(now)
+            if not isinstance(preview, _DataPreview):
                 _fail("REPLAY")
+            record = _DATA_PREVIEWS.get(preview)
+            if (record is None or record[0] is not self or preview not in self._previews
+                    or self.established.get(_pending_core(record[2]["record"]).scid) is not record[2]):
+                self._previews.discard(preview)
+                if record is not None:
+                    preview._invalidate()
+                _fail("REPLAY")
+            session_preview, established, close = record[1:]
             try:
-                preview._record["c2s"].commit_decrypt(preview._session_preview)
+                established["c2s"].commit_decrypt(session_preview)
             except SessionError:
                 self._previews.discard(preview)
-                preview._used = True
+                preview._invalidate()
                 raise
-            for stale in self._previews:
-                if stale._session_preview._session is preview._record["c2s"]:
-                    stale._used = True
-            self._previews = {stale for stale in self._previews
-                              if stale._session_preview._session is not preview._record["c2s"]}
-            if preview._close:
-                self._dispose_established(self.established.pop(preview._record["record"].scid))
+            for stale in tuple(self._previews):
+                stale_record = _DATA_PREVIEWS.get(stale)
+                if stale_record is not None and stale_record[2] is established:
+                    self._previews.remove(stale)
+                    stale._invalidate()
+            if close:
+                self._dispose_established(
+                    self.established.pop(_pending_core(established["record"]).scid))
             else:
-                preview._record["last"] = self.clock()
+                established["last"] = now
     def abort_data_preview(self, preview):
         with self._lock:
-            valid = (isinstance(preview, _DataPreview) and preview._machine is self
-                     and not preview._used and preview in self._previews
-                     and self.established.get(preview._record["record"].scid) is preview._record)
-            if not valid:
-                if isinstance(preview, _DataPreview) and preview._machine is self:
-                    self._previews.discard(preview)
-                    preview._used = True
+            if not isinstance(preview, _DataPreview):
                 _fail("REPLAY")
-            preview._record["c2s"].abort_decrypt(preview._session_preview)
-            self._previews.remove(preview)
-            preview._used = True
+            record = _DATA_PREVIEWS.get(preview)
+            valid = (record is not None and record[0] is self and preview in self._previews
+                     and self.established.get(_pending_core(record[2]["record"]).scid) is record[2])
+            if not valid:
+                if record is not None and record[0] is self:
+                    self._previews.discard(preview)
+                    preview._invalidate()
+                _fail("REPLAY")
+            record[2]["c2s"].abort_decrypt(record[1])
+            self._previews.discard(preview)
+            preview._invalidate()
     def promote_local_loc(self, loc):
         with self._lock:
             self.local_loc = _loc(loc)
@@ -932,12 +1205,17 @@ class ServerMachine:
                 _fail("UNEXPECTED_MESSAGE")
             established = self.established.get(scid)
             if (established is None or established["c2s"]._previews or established["s2c"]._previews
-                    or any(preview._record is established for preview in self._previews)):
+                    or any((_DATA_PREVIEWS.get(preview) or (None, None, None))[2] is established
+                           for preview in self._previews)):
                 _fail("UNEXPECTED_MESSAGE")
             record = established["record"]
-            bootstrap = Profile3Bootstrap(scid, self.identity_role, self.local_loc, self.peer_loc,
-                                          established["s2c"], established["c2s"], record.prk, record.hash,
-                                          _authority=_PROFILE3_BOOTSTRAP_AUTHORITY)
+            record_core = _pending_core(record)
+            outbound, inbound = _move_session_pair(
+                established["s2c"], established["c2s"])
+            bootstrap = Profile3Bootstrap(
+                scid, self.identity_role, self.local_loc, self.peer_loc,
+                outbound, inbound, record_core.prk, record_core.transcript_hash,
+                _authority=_PROFILE3_BOOTSTRAP_AUTHORITY)
             self.established.pop(scid)
             self._discard_record(record)
             return bootstrap
@@ -1071,6 +1349,24 @@ class ProtectedMessage(_Redacted):
         counter = struct.unpack("!Q", body[:8])[0]; nonce(counter)
         return cls(typ, profile, counter, body[8:])
 
+_HANDSHAKE_MATERIAL_AUTHORITY = object()
+_CLIENT_SECRETS = weakref.WeakKeyDictionary()
+
+class _ClientSecrets:
+    __slots__ = ("ephemeral_secret", "transcript_hash", "prk", "c2s", "s2c")
+    def __init__(self):
+        self.ephemeral_secret = None
+        self.transcript_hash = None
+        self.prk = None
+        self.c2s = None
+        self.s2c = None
+
+def _client_secrets(client):
+    secrets = _CLIENT_SECRETS.get(client)
+    if secrets is None:
+        _fail("UNEXPECTED_MESSAGE")
+    return secrets
+
 class ClientMachine:
     IDLE, COOKIE_WAIT, AUTH_WAIT, ESTABLISHED, RELEASED = range(5)
     def __init__(self, identity, server_pin, service_context, profile, source, destination, clock,
@@ -1080,9 +1376,23 @@ class ClientMachine:
         self.identity, self.server_pin, self.service_context, self.profile = identity, server_pin, service_context, profile
         self.source, self.destination, self.local_loc, self.peer_loc = source, destination, source, destination
         self.clock, self.binding_budget, self.state, self._lock, self._previews = clock, binding_budget, self.IDLE, threading.RLock(), set()
-    def start(self, scid, ephemeral_secret, nonce_value):
-        if self.state != self.IDLE or not 0 < scid <= 0xffffffffffffffff or len(ephemeral_secret) != 32 or len(nonce_value) != 32: _fail("UNEXPECTED_MESSAGE")
-        self.scid, self.ephemeral_secret = scid, ephemeral_secret
+        _CLIENT_SECRETS[self] = _ClientSecrets()
+    def start(
+        self, scid, ephemeral_secret=None, nonce_value=None, *,
+        _authority=None,
+    ):
+        if self.state != self.IDLE or not 0 < scid <= 0xffffffffffffffff:
+            _fail("UNEXPECTED_MESSAGE")
+        if _authority is _HANDSHAKE_MATERIAL_AUTHORITY:
+            _exact(ephemeral_secret, 32)
+            _exact(nonce_value, 32)
+            ephemeral_secret, nonce_value = bytes(ephemeral_secret), bytes(nonce_value)
+        elif ephemeral_secret is not None or nonce_value is not None:
+            _fail("UNEXPECTED_MESSAGE")
+        else:
+            ephemeral_secret, nonce_value = _random(32), _random(32)
+        self.scid = scid
+        _client_secrets(self).ephemeral_secret = ephemeral_secret
         self.ephemeral = X25519PrivateKey.from_private_bytes(ephemeral_secret).public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
         self.nonce_value, self.deadline = nonce_value, self.clock() + 5
         self.opening = Open(1, self.server_pin.role, self.service_context, self.identity.eid, self.identity.public, self.ephemeral, nonce_value)
@@ -1158,24 +1468,30 @@ class ClientMachine:
                             self.ephemeral, ack.sender_ephemeral, self.nonce_value,
                             ack.sender_nonce, self.boot_instance)
             verify_signature(ack.sender_public_key, b"R8 OPEN_ACK v1", t0, ack.signature)
-            shared = x25519(self.ephemeral_secret, ack.sender_ephemeral)
+            secrets = _client_secrets(self)
+            shared = x25519(secrets.ephemeral_secret, ack.sender_ephemeral)
             client_signature = OpenAuth.parse(self.auth_payload).signature
-            self.transcript_hash = transcript_hash(t0, client_signature, ack.signature)
+            secrets.transcript_hash = transcript_hash(
+                t0, client_signature, ack.signature)
             if self.profile == 3:
-                self._profile3_prk = key_prk(shared, self.transcript_hash)
-            self.c2s = key_schedule(shared, self.transcript_hash, 1, 2, self.profile, 0)
-            self.s2c = key_schedule(shared, self.transcript_hash, 2, 1, self.profile, 0)
+                secrets.prk = key_prk(shared, secrets.transcript_hash)
+            secrets.c2s = key_schedule(
+                shared, secrets.transcript_hash, 1, 2, self.profile, 0)
+            secrets.s2c = key_schedule(
+                shared, secrets.transcript_hash, 2, 1, self.profile, 0)
             prefix = bytes((5, 1, self.profile, 0))
             accept_header = Header(NH_SES, self.source, self.destination, profile=self.profile,
                                    flags=1, pslot=0, scid=self.scid)
             aad_header = accept_header.pack(prefix + struct.pack("!Q", 1) + b"\0" * 60)[:48]
-            ciphertext = seal(self.c2s, aad_header, prefix, 1,
-                              b"R8 ACCEPT v1" + self.transcript_hash)
+            ciphertext = seal(
+                secrets.c2s, aad_header, prefix, 1,
+                b"R8 ACCEPT v1" + secrets.transcript_hash)
             self.accept_payload = ProtectedMessage(5, self.profile, 1, ciphertext).build()
             self.accept_packet = build_packet(accept_header, self.accept_payload)
             self.ack_payload = payload
             self.ack_packet = bytes(packet)
-            self.c2s_session, self.s2c_session = Session(self.c2s, 2), Session(self.s2c)
+            self.c2s_session, self.s2c_session = (
+                Session(secrets.c2s, 2), Session(secrets.s2c))
             self.state = self.ESTABLISHED
             return self.accept_packet
         except SessionError:
@@ -1187,11 +1503,14 @@ class ClientMachine:
             if (self.profile != 3 or self.state != self.ESTABLISHED or self._previews
                     or self.c2s_session._previews or self.s2c_session._previews):
                 _fail("UNEXPECTED_MESSAGE")
-            bootstrap = Profile3Bootstrap(self.scid, 1, self.local_loc, self.peer_loc,
-                                          self.c2s_session, self.s2c_session,
-                                          self._profile3_prk, self.transcript_hash,
-                                          _authority=_PROFILE3_BOOTSTRAP_AUTHORITY)
-            self._clear_state()
+            secrets = _client_secrets(self)
+            outbound, inbound = _move_session_pair(
+                self.c2s_session, self.s2c_session)
+            bootstrap = Profile3Bootstrap(
+                self.scid, 1, self.local_loc, self.peer_loc,
+                outbound, inbound, secrets.prk, secrets.transcript_hash,
+                _authority=_PROFILE3_BOOTSTRAP_AUTHORITY)
+            self._clear_state(release_sessions=False)
             return bootstrap
     def _protected_header(self, outbound, source=None, destination=None):
         return Header(NH_SES, self.local_loc if outbound and source is None else
@@ -1235,45 +1554,53 @@ class ClientMachine:
                 packet[:48], payload[:4], message.counter, message.ciphertext)
             if message.typ == 7:
                 _exact(plaintext, 2)
-            preview = _DataPreview(self, session_preview, self.s2c_session, message.typ == 7)
+            preview = _DataPreview(
+                self, session_preview, self.s2c_session, message.typ == 7,
+                _authority=_SESSION_PREVIEW_AUTHORITY)
             self._previews.add(preview)
             return plaintext, header, message, preview
     def commit_data(self, preview):
         with self._lock:
-            if (not isinstance(preview, _DataPreview) or preview._machine is not self
-                    or preview._used or preview not in self._previews
-                    or preview._record is not self.s2c_session):
+            now = self.clock()
+            if not isinstance(preview, _DataPreview):
+                _fail("REPLAY")
+            record = _DATA_PREVIEWS.get(preview)
+            if (record is None or record[0] is not self or preview not in self._previews
+                    or record[2] is not self.s2c_session):
                 self._previews.discard(preview)
-                if isinstance(preview, _DataPreview) and preview._machine is self:
+                if record is not None:
                     preview._invalidate()
                 _fail("REPLAY")
-            record, close = preview._record, preview._close
+            session_preview, session, close = record[1:]
             try:
-                record.commit_decrypt(preview._session_preview)
+                session.commit_decrypt(session_preview)
             except SessionError:
                 self._previews.discard(preview)
                 preview._invalidate()
                 raise
-            stale_previews = {stale for stale in self._previews if stale._record is record}
-            self._previews.difference_update(stale_previews)
-            for stale in stale_previews:
-                stale._invalidate()
+            for stale in tuple(self._previews):
+                stale_record = _DATA_PREVIEWS.get(stale)
+                if stale_record is not None and stale_record[2] is session:
+                    self._previews.remove(stale)
+                    stale._invalidate()
             if close:
                 self._clear_state()
             else:
-                self.deadline = self.clock()
+                self.deadline = now
     def abort_data_preview(self, preview):
         with self._lock:
-            valid = (isinstance(preview, _DataPreview) and preview._machine is self
-                     and not preview._used and preview in self._previews
-                     and preview._record is self.s2c_session)
+            if not isinstance(preview, _DataPreview):
+                _fail("REPLAY")
+            record = _DATA_PREVIEWS.get(preview)
+            valid = (record is not None and record[0] is self and preview in self._previews
+                     and record[2] is self.s2c_session)
             if not valid:
-                if isinstance(preview, _DataPreview) and preview._machine is self:
+                if record is not None and record[0] is self:
                     self._previews.discard(preview)
                     preview._invalidate()
                 _fail("REPLAY")
-            preview._record.abort_decrypt(preview._session_preview)
-            self._previews.remove(preview)
+            record[2].abort_decrypt(record[1])
+            self._previews.discard(preview)
             preview._invalidate()
     def receive_protected(self, packet):
         plaintext, _, _, preview = self.preview_data(packet)
@@ -1308,16 +1635,25 @@ class ClientMachine:
         if self.state == self.ESTABLISHED and self.clock() > self.deadline + 120:
             self._release()
         return self.state
-    def _clear_state(self):
+    def _clear_state(self, release_sessions=True):
         with self._lock:
             self.state = self.RELEASED
+            secrets = _client_secrets(self)
+            secrets.ephemeral_secret = None
+            secrets.transcript_hash = None
+            secrets.prk = None
+            secrets.c2s = None
+            secrets.s2c = None
             for preview in tuple(self._previews):
                 preview._invalidate()
             self._previews.clear()
             for name in ("c2s_session", "s2c_session"):
                 session = getattr(self, name, None)
                 if session is not None:
-                    session._discard_previews()
+                    if release_sessions:
+                        session.release()
+                    else:
+                        session._discard_previews()
             for name in ("ephemeral_secret", "ephemeral", "nonce_value", "opening", "open_packet",
                          "verify_payload", "boot_instance", "auth_payload", "auth_packet",
                          "ack_payload", "ack_packet", "accept_payload", "accept_packet",
@@ -1425,7 +1761,7 @@ def _connect(args, identity, pin, local, remote, bind, target):
         raise ValueError("invalid arguments")
     client = ClientMachine(identity, pin, args.service_context, 0, local, remote, time.monotonic,
                            args.binding_budget)
-    opened = client.start(scid, _random(32), _random(32))
+    opened = client.start(scid)
     sock = _socket()
     sock.bind(bind)
     deadline = time.monotonic() + args.timeout
@@ -1501,7 +1837,7 @@ def _serve(args, identity, pin, local, remote, bind, unused_target):
             if typ == 1:
                 response = server.receive_open_packet(incoming, binding, int(now() // 10))
             elif typ == 3:
-                response = server.receive_open_auth(incoming, binding, int(now() // 10), _random(32), _random(32))
+                response = server.receive_open_auth(incoming, binding, int(now() // 10))
                 admitted[header.scid] = (endpoint, binding)
             else:
                 expected = admitted.get(header.scid)

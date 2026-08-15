@@ -771,15 +771,13 @@ fn divergent_same_id_after_plaintext_expiry_releases_receiver() {
         ReceiveOutcome::Delivered(bytes) if bytes == b"original"
     ));
     assert!(matches!(
-        receiver
-            .inbound(
-                divergent[1].slot(),
-                divergent[1].binding(),
-                divergent[1].packet(),
-                30_000
-            )
-            .unwrap(),
-        ReceiveOutcome::Closed
+        receiver.inbound(
+            divergent[1].slot(),
+            divergent[1].binding(),
+            divergent[1].packet(),
+            30_000
+        ),
+        Err(RedundantError::DivergentDelivery)
     ));
     assert_eq!(receiver.state(), SessionState::Released);
     assert_eq!(
@@ -809,15 +807,13 @@ fn divergent_authenticated_delivery_releases_the_receiver() {
     let (id, packets) = enqueued(&mut divergent_sender, b"divergent delivery");
     assert_eq!(id.get(), 44);
     assert!(matches!(
-        receiver
-            .inbound(
-                packets[0].slot(),
-                packets[0].binding(),
-                packets[0].packet(),
-                1
-            )
-            .unwrap(),
-        ReceiveOutcome::Closed
+        receiver.preview_inbound(
+            packets[0].slot(),
+            packets[0].binding(),
+            packets[0].packet(),
+            1
+        ),
+        Err(RedundantError::DivergentDelivery)
     ));
     assert_eq!(
         receiver.drain_events(),
@@ -826,6 +822,36 @@ fn divergent_authenticated_delivery_releases_the_receiver() {
     assert_eq!(receiver.state(), SessionState::Released);
     let debug = format!("{sender:?}{receiver:?}{packets:?}");
     assert!(!debug.contains("divergent delivery"));
+}
+#[test]
+fn divergent_mobility_preview_is_terminal_before_abort_or_drop() {
+    let (mut sender, mut receiver) = sessions(41);
+    let (mut divergent_sender, _) = sessions(41);
+    let (_, original) = enqueued(&mut sender, b"original");
+    let (_, divergent) = enqueued(&mut divergent_sender, b"different");
+    assert!(matches!(
+        receiver.inbound(
+            original[0].slot(),
+            original[0].binding(),
+            original[0].packet(),
+            0
+        ),
+        Ok(ReceiveOutcome::Delivered(_))
+    ));
+    assert!(matches!(
+        receiver.preview_mobility_inbound(
+            divergent[1].slot(),
+            divergent[1].binding(),
+            divergent[1].packet(),
+            1
+        ),
+        Err(RedundantError::DivergentDelivery)
+    ));
+    assert_eq!(receiver.state(), SessionState::Released);
+    assert_eq!(
+        receiver.drain_events(),
+        vec![RedundantEvent::Divergence, RedundantEvent::Released]
+    );
 }
 
 #[test]

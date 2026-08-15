@@ -47,7 +47,7 @@ class SessionVectors(unittest.TestCase):
   pin=s.PeerPin(2,server.eid,server.public)
   now=[0]
   machine=s.ClientMachine(client,pin,x['service_context'],0,source,destination,lambda: now[0])
-  opening=machine.start(x['scid'],bytes.fromhex(i['client_x25519_secret_hex']),bytes.fromhex(x['client_nonce_hex']))
+  opening=machine.start(x['scid'],bytes.fromhex(i['client_x25519_secret_hex']),bytes.fromhex(x['client_nonce_hex']),_authority=s._HANDSHAKE_MATERIAL_AUTHORITY)
   self.assertEqual(opening[48:].hex(),V['positive_cases'][0]['payload_hex'])
   verify=s.VerifyCookie(2,1,x['service_context'],client.public,
                         s.hashlib.sha256(bytes.fromhex(i['client_ephemeral_hex'])).digest(),
@@ -60,7 +60,7 @@ class SessionVectors(unittest.TestCase):
                 bytes.fromhex(x['server_nonce_hex']),s.sign_open_ack(server,actual))
   ack_packet=s.build_packet(s.Header(s.NH_SES,destination,source,scid=x['scid']),ack.build())
   accept=machine.receive_ack(ack_packet)
-  self.assertEqual(machine.transcript_hash.hex(),t['transcript_hash_hex'])
+  with self.assertRaises(AttributeError): _=machine.transcript_hash
   self.assertEqual(machine.state,machine.ESTABLISHED)
   self.assertEqual(machine.c2s_session.send_counter,2)
   self.assertEqual(machine.receive_ack(ack_packet),accept)
@@ -102,14 +102,33 @@ class SessionVectors(unittest.TestCase):
   binding=s.UdpBinding.from_endpoint("192.0.2.10",52808,1,b"\x90"*16)
   client_machine=s.ClientMachine(client,s.PeerPin(2,server.eid,server.public),x['service_context'],3,source,destination,lambda:now[0])
   server_machine=s.ServerMachine(s.ServerConfig(server,s.PeerPin(1,client.eid,client.public),x['service_context'],x['server_context_id'],3,destination,source,1280,1,1),bytes.fromhex(x['server_boot_instance_hex']),bytes.fromhex(x['cookie_key_hex']),None,0,lambda:now[0],s.PrevalidationLimiter(lambda:now[0],b"\xa0"*32))
-  opening=client_machine.start(x['scid'],bytes.fromhex(i['client_x25519_secret_hex']),bytes.fromhex(x['client_nonce_hex']))
+  with self.assertRaises(s.SessionError) as caught:
+   client_machine.start(x['scid'],bytes.fromhex(i['client_x25519_secret_hex']),bytes.fromhex(x['client_nonce_hex']))
+  self.assertEqual(caught.exception.category,"UNEXPECTED_MESSAGE")
+  opening=client_machine.start(x['scid'],bytes.fromhex(i['client_x25519_secret_hex']),bytes.fromhex(x['client_nonce_hex']),_authority=s._HANDSHAKE_MATERIAL_AUTHORITY)
   auth=client_machine.receive_verify(server_machine.receive_open_packet(opening,binding,x['cookie_bucket']))
-  ack=server_machine.receive_open_auth(auth,binding,x['cookie_bucket'],bytes.fromhex(i['server_x25519_secret_hex']),bytes.fromhex(x['server_nonce_hex']))
-  client_machine.receive_ack(ack)
-  record=server_machine.pending[x['scid']]
-  self.assertEqual(record.c2s,client_machine.c2s)
-  self.assertEqual(record.s2c,client_machine.s2c)
-  self.assertNotEqual(record.c2s,s.key_schedule(s.x25519(bytes.fromhex(i['client_x25519_secret_hex']),bytes.fromhex(i['server_ephemeral_hex'])),client_machine.transcript_hash,1,2,0,0))
+  with self.assertRaises(s.SessionError) as caught:
+   server_machine.receive_open_auth(auth,binding,x['cookie_bucket'],bytes.fromhex(i['server_x25519_secret_hex']),bytes.fromhex(x['server_nonce_hex']))
+  self.assertEqual(caught.exception.category,"UNEXPECTED_MESSAGE")
+  ack=server_machine.receive_open_auth(auth,binding,x['cookie_bucket'],bytes.fromhex(i['server_x25519_secret_hex']),bytes.fromhex(x['server_nonce_hex']),_authority=s._HANDSHAKE_MATERIAL_AUTHORITY)
+  accept=client_machine.receive_ack(ack)
+  server_machine.receive_protected(accept)
+  record=server_machine.established[x['scid']]["record"]
+  for value,attributes in (
+      (client_machine,("c2s","s2c","transcript_hash","_profile3_prk","ephemeral_secret")),
+      (record,("c2s","s2c","hash","prk","auth_packet","binding","cached_ack"))):
+   for attribute in attributes:
+    with self.assertRaises(AttributeError): getattr(value,attribute)
+  client_bootstrap=client_machine.take_profile3()
+  server_bootstrap=server_machine.take_profile3(x['scid'])
+  client_context=client_bootstrap._context(s._PROFILE3_CONSUMER_AUTHORITY)
+  server_context=server_bootstrap._context(s._PROFILE3_CONSUMER_AUTHORITY)
+  header=s.Header(s.NH_SES,source,destination,profile=3,flags=1,pslot=0,scid=x['scid'])
+  packet=s.seal_profile3_data(client_context[4],header,1,b"private authority")
+  self.assertEqual(
+      s.commit_profile3_data(server_context[5],s.preview_profile3_data(server_context[5],packet)),
+      (1,b"private authority"))
+  client_bootstrap.close(); server_bootstrap.close()
 
  def test_client_ack_fatal_header_and_signature(self):
   i=V['identities']; x=V['context']
@@ -118,7 +137,7 @@ class SessionVectors(unittest.TestCase):
   source=s.ipaddress.IPv6Address("11:2233:4455:6677:8899:aabb:ccdd:eeff")
   destination=s.ipaddress.IPv6Address("ffee:ddcc:bbaa:9988:7766:5544:3322:1100")
   machine=s.ClientMachine(client,s.PeerPin(2,server.eid,server.public),x['service_context'],0,source,destination,lambda: 0)
-  machine.start(x['scid'],bytes.fromhex(i['client_x25519_secret_hex']),bytes.fromhex(x['client_nonce_hex']))
+  machine.start(x['scid'],bytes.fromhex(i['client_x25519_secret_hex']),bytes.fromhex(x['client_nonce_hex']),_authority=s._HANDSHAKE_MATERIAL_AUTHORITY)
   verify=s.VerifyCookie(2,1,x['service_context'],client.public,s.hashlib.sha256(bytes.fromhex(i['client_ephemeral_hex'])).digest(),bytes.fromhex(x['server_boot_instance_hex']),bytes.fromhex(x['cookie_hmac_hex']))
   machine.receive_verify(s.build_packet(s.Header(s.NH_SES,destination,source,scid=x['scid']),verify.build()))
   bad=s.build_packet(s.Header(s.NH_SES,destination,source,scid=x['scid']+1),s.OpenAck(2,1,x['service_context'],server.eid,server.public,bytes.fromhex(i['server_ephemeral_hex']),bytes.fromhex(x['server_nonce_hex']),b"\0"*64).build())
@@ -132,7 +151,7 @@ class SessionVectors(unittest.TestCase):
   destination=s.ipaddress.IPv6Address("ffee:ddcc:bbaa:9988:7766:5544:3322:1100")
   now=[0]
   machine=s.ClientMachine(client,s.PeerPin(2,server.eid,server.public),x['service_context'],0,source,destination,lambda: now[0])
-  machine.start(x['scid'],bytes.fromhex(i['client_x25519_secret_hex']),bytes.fromhex(x['client_nonce_hex']))
+  machine.start(x['scid'],bytes.fromhex(i['client_x25519_secret_hex']),bytes.fromhex(x['client_nonce_hex']),_authority=s._HANDSHAKE_MATERIAL_AUTHORITY)
   verify=s.VerifyCookie(2,1,x['service_context'],client.public,
                         s.hashlib.sha256(bytes.fromhex(i['client_ephemeral_hex'])).digest(),
                         bytes.fromhex(x['server_boot_instance_hex']),bytes.fromhex(x['cookie_hmac_hex']))
@@ -164,7 +183,7 @@ class SessionVectors(unittest.TestCase):
   source=s.ipaddress.IPv6Address("11:2233:4455:6677:8899:aabb:ccdd:eeff"); destination=s.ipaddress.IPv6Address("ffee:ddcc:bbaa:9988:7766:5544:3322:1100"); now=[0]
   def new():
    machine=s.ClientMachine(client,s.PeerPin(2,server.eid,server.public),x["service_context"],0,source,destination,lambda:now[0])
-   machine.start(x["scid"],bytes.fromhex(i["client_x25519_secret_hex"]),bytes.fromhex(x["client_nonce_hex"]))
+   machine.start(x["scid"],bytes.fromhex(i["client_x25519_secret_hex"]),bytes.fromhex(x["client_nonce_hex"]),_authority=s._HANDSHAKE_MATERIAL_AUTHORITY)
    verify=s.VerifyCookie(2,1,x["service_context"],client.public,s.hashlib.sha256(machine.ephemeral).digest(),bytes.fromhex(x["server_boot_instance_hex"]),bytes.fromhex(x["cookie_hmac_hex"]))
    return machine,s.build_packet(s.Header(s.NH_SES,destination,source,scid=x["scid"]),verify.build())
   machine,verify=new(); now[0]=4.999; auth=machine.receive_verify(verify); self.assertEqual(machine.state,machine.AUTH_WAIT)
@@ -205,7 +224,7 @@ class SessionVectors(unittest.TestCase):
   binding=s.UdpBinding.from_endpoint("192.0.2.10",52808,1,b"\x90"*16)
   now=[x["cookie_bucket"]*10]; clock=lambda:now[0]
   machine=s.ClientMachine(client,s.PeerPin(2,server.eid,server.public),x['service_context'],0,source,destination,clock)
-  opening=machine.start(x['scid'],bytes.fromhex(i['client_x25519_secret_hex']),bytes.fromhex(x['client_nonce_hex']))
+  opening=machine.start(x['scid'],bytes.fromhex(i['client_x25519_secret_hex']),bytes.fromhex(x['client_nonce_hex']),_authority=s._HANDSHAKE_MATERIAL_AUTHORITY)
   config=s.ServerConfig(server,s.PeerPin(1,client.eid,client.public),x['service_context'],x['server_context_id'],
                         0,destination,source,1280,1,1024)
   server_machine=s.ServerMachine(config,bytes.fromhex(x['server_boot_instance_hex']),
@@ -213,19 +232,19 @@ class SessionVectors(unittest.TestCase):
                                  s.PrevalidationLimiter(clock,b"\xa0"*32))
   verify_packet=server_machine.receive_open_packet(opening,binding,x["cookie_bucket"])
   auth=machine.receive_verify(verify_packet)
-  ack=server_machine.receive_open_auth(auth,binding,x["cookie_bucket"],bytes.fromhex(i['server_x25519_secret_hex']),bytes.fromhex(x['server_nonce_hex']))
+  ack=server_machine.receive_open_auth(auth,binding,x["cookie_bucket"],bytes.fromhex(i['server_x25519_secret_hex']),bytes.fromhex(x['server_nonce_hex']),_authority=s._HANDSHAKE_MATERIAL_AUTHORITY)
   self.assertEqual(len(server_machine.pending),1)
-  self.assertEqual(server_machine.pending[x["scid"]].binding,binding.encode())
+  with self.assertRaises(AttributeError): _=server_machine.pending[x["scid"]].binding
   native=s.NativeBinding(7,b"\x01"*6)
   with self.assertRaises(s.SessionError) as caught:
-   server_machine.receive_open_auth(auth,native,x["cookie_bucket"],bytes.fromhex(i['server_x25519_secret_hex']),bytes.fromhex(x['server_nonce_hex']))
+   server_machine.receive_open_auth(auth,native,x["cookie_bucket"])
   self.assertEqual(caught.exception.category,"SCID_COLLISION")
   accept=machine.receive_ack(ack)
   now[0]+=5
   with self.assertRaises(s.SessionError) as caught: server_machine.receive_protected(accept)
   self.assertEqual(caught.exception.category,"UNEXPECTED_MESSAGE")
   self.assertNotIn(x["scid"],server_machine.pending)
-  ack=server_machine.receive_open_auth(auth,binding,x["cookie_bucket"],bytes.fromhex(i['server_x25519_secret_hex']),bytes.fromhex(x['server_nonce_hex']))
+  ack=server_machine.receive_open_auth(auth,binding,x["cookie_bucket"],bytes.fromhex(i['server_x25519_secret_hex']),bytes.fromhex(x['server_nonce_hex']),_authority=s._HANDSHAKE_MATERIAL_AUTHORITY)
   self.assertEqual(server_machine.receive_protected(accept),b"")
   self.assertEqual(len(server_machine.established),1)
   data=machine.send_data(b"synthetic session data")
@@ -250,41 +269,42 @@ class SessionVectors(unittest.TestCase):
   config=s.ServerConfig(server,s.PeerPin(1,client.eid,client.public),x["service_context"],x["server_context_id"],0,destination,source,1280,2,1)
   machine=s.ServerMachine(config,bytes.fromhex(x["server_boot_instance_hex"]),bytes.fromhex(x["cookie_key_hex"]),None,0,clock,s.PrevalidationLimiter(clock,b"\xa0"*32))
   peer=s.ClientMachine(client,s.PeerPin(2,server.eid,server.public),x["service_context"],0,source,destination,clock)
-  opening=peer.start(x["scid"],bytes.fromhex(i["client_x25519_secret_hex"]),bytes.fromhex(x["client_nonce_hex"]))
+  opening=peer.start(x["scid"],bytes.fromhex(i["client_x25519_secret_hex"]),bytes.fromhex(x["client_nonce_hex"]),_authority=s._HANDSHAKE_MATERIAL_AUTHORITY)
   auth=peer.receive_verify(machine.receive_open_packet(opening,binding,x["cookie_bucket"]))
-  ack=machine.receive_open_auth(auth,binding,x["cookie_bucket"],bytes.fromhex(i["server_x25519_secret_hex"]),bytes.fromhex(x["server_nonce_hex"]))
+  ack=machine.receive_open_auth(auth,binding,x["cookie_bucket"],bytes.fromhex(i["server_x25519_secret_hex"]),bytes.fromhex(x["server_nonce_hex"]),_authority=s._HANDSHAKE_MATERIAL_AUTHORITY)
   pending_snapshot=dict(machine.__dict__)
-  self.assertEqual(machine.receive_open_auth(auth,binding,x["cookie_bucket"],b"\0"*32,b"\0"*32),ack)
+  self.assertEqual(machine.receive_open_auth(auth,binding,x["cookie_bucket"]),ack)
   self.assertEqual(machine.__dict__,pending_snapshot)
   for packet,candidate_binding in ((auth,other),(auth[:-1]+bytes((auth[-1]^1,)),binding)):
    with self.subTest(packet=packet,binding=candidate_binding):
     with mock.patch.object(machine,"_cookies") as cookies:
-     with self.assertRaises(s.SessionError) as caught: machine.receive_open_auth(packet,candidate_binding,x["cookie_bucket"],b"\0"*32,b"\0"*32)
+     with self.assertRaises(s.SessionError) as caught: machine.receive_open_auth(packet,candidate_binding,x["cookie_bucket"])
     self.assertEqual(caught.exception.category,"SCID_COLLISION"); cookies.assert_not_called()
     self.assertEqual(machine.__dict__,pending_snapshot)
   accept=peer.receive_ack(ack)
   record=machine.pending[x["scid"]]; machine.established[999]={"record":None,"last":now[0]}
   with self.assertRaises(s.SessionError) as caught: machine.receive_protected(accept)
-  self.assertEqual(caught.exception.category,"CAPACITY"); self.assertEqual(record.accept_replay.generation,0); self.assertIn(x["scid"],machine.pending)
+  self.assertEqual(caught.exception.category,"CAPACITY"); self.assertIn(x["scid"],machine.pending)
   machine.established.clear()
   bad=bytearray(accept); bad[-1]^=1
   with self.assertRaises(s.SessionError): machine.receive_protected(bytes(bad))
-  self.assertEqual(record.accept_replay.generation,0); self.assertIn(x["scid"],machine.pending)
+  self.assertIn(x["scid"],machine.pending)
   self.assertEqual(machine.receive_protected(accept),b"")
   accept_snapshot=dict(machine.__dict__)
   self.assertEqual(machine.receive_protected(accept),b"")
   self.assertEqual(machine.__dict__,accept_snapshot)
   established_snapshot=dict(machine.__dict__)
-  self.assertEqual(machine.receive_open_auth(auth,binding,x["cookie_bucket"],b"\0"*32,b"\0"*32),ack)
+  self.assertEqual(machine.receive_open_auth(auth,binding,x["cookie_bucket"]),ack)
   self.assertEqual(machine.__dict__,established_snapshot)
   for packet,candidate_binding in ((auth,other),(auth[:-1]+bytes((auth[-1]^1,)),binding)):
    with mock.patch.object(machine,"_cookies") as cookies:
-    with self.assertRaises(s.SessionError) as caught: machine.receive_open_auth(packet,candidate_binding,x["cookie_bucket"],b"\0"*32,b"\0"*32)
+    with self.assertRaises(s.SessionError) as caught: machine.receive_open_auth(packet,candidate_binding,x["cookie_bucket"])
    self.assertEqual(caught.exception.category,"SCID_COLLISION"); cookies.assert_not_called()
    self.assertEqual(machine.__dict__,established_snapshot)
   now[0]=121; machine.expire()
   self.assertNotIn(x["scid"],machine.established)
-  self.assertIsNone(record.auth_packet); self.assertEqual(record.cached_ack,b"")
+  for attribute in ("auth_packet","cached_ack","c2s","s2c","prk","hash"):
+   with self.assertRaises(AttributeError): getattr(record,attribute)
  def test_binding_cookie_and_prevalidation_limiter(self):
   x=V["context"]; i=V["identities"]
   binding=s.UdpBinding.from_endpoint("192.0.2.10",52808,1,b"\x90"*16)
@@ -309,12 +329,12 @@ class SessionVectors(unittest.TestCase):
   config=s.ServerConfig(server,s.PeerPin(1,client.eid,client.public),x["service_context"],x["server_context_id"],0,local,peer,1280,1,1)
   machine=s.ServerMachine(config,bytes.fromhex(x["server_boot_instance_hex"]),bytes.fromhex(x["cookie_key_hex"]),b"\x81"*32,110,clock,s.PrevalidationLimiter(clock,b"\xa0"*32))
   c=s.ClientMachine(client,s.PeerPin(2,server.eid,server.public),x["service_context"],0,peer,local,clock)
-  opening=c.start(x["scid"],bytes.fromhex(i["client_x25519_secret_hex"]),bytes.fromhex(x["client_nonce_hex"]))
+  opening=c.start(x["scid"],bytes.fromhex(i["client_x25519_secret_hex"]),bytes.fromhex(x["client_nonce_hex"]),_authority=s._HANDSHAKE_MATERIAL_AUTHORITY)
   verify=machine.receive_open_packet(opening,binding,10)
   auth=bytearray(c.receive_verify(verify)); auth[48 + 4 + 134]^=1
   with mock.patch.object(s,"verify_signature") as signature, mock.patch.object(s,"x25519") as shared:
    with self.assertRaises(s.SessionError) as caught:
-    machine.receive_open_auth(bytes(auth),binding,10,bytes.fromhex(i["server_x25519_secret_hex"]),bytes.fromhex(x["server_nonce_hex"]))
+    machine.receive_open_auth(bytes(auth),binding,10,bytes.fromhex(i["server_x25519_secret_hex"]),bytes.fromhex(x["server_nonce_hex"]),_authority=s._HANDSHAKE_MATERIAL_AUTHORITY)
    self.assertEqual(caught.exception.category,"COOKIE_INVALID"); signature.assert_not_called(); shared.assert_not_called()
   wrong=bytearray(opening); wrong[16]^=1
   with self.assertRaises(s.SessionError): machine.receive_open_packet(bytes(wrong),binding,10)
@@ -455,39 +475,79 @@ class SessionVectors(unittest.TestCase):
  def test_server_dispose_established_purges_all_preview_registries(self):
   sender=s.Session(b'\x08'*32); inbound=s.Session(b'\x08'*32); outbound=s.Session(b'\x09'*32); header=b'h'*48; prefix=b'\6\1\0\0'
   machine=object.__new__(s.ServerMachine); machine._previews=set()
-  record=SimpleNamespace(cached_ack=b"")
+  record=s.Pending(_authority=s._PENDING_AUTHORITY)
+  s._PENDING_CORES[record]=s._PendingCore(
+      1,b"",None,0,b"",None,None,None,None,None)
   established={"record":record,"c2s":inbound,"s2c":outbound}
   previews=[]
   for index in range(64):
    counter,ciphertext=sender.encrypt(header,prefix,bytes((index,)))
    _,session_preview=inbound.preview_decrypt(header,prefix,counter,ciphertext)
-   preview=s._DataPreview(machine,session_preview,established,False)
+   preview=s._DataPreview(machine,session_preview,established,False,
+                          _authority=s._SESSION_PREVIEW_AUTHORITY)
    previews.append(preview); machine._previews.add(preview)
   machine._dispose_established(established)
   self.assertEqual(len(machine._previews),0)
   self.assertEqual(len(inbound._previews),0)
   self.assertEqual(len(outbound._previews),0)
-  self.assertTrue(all(preview._used for preview in previews))
-  self.assertTrue(all(preview._machine is None and preview._record is None
-                      and preview._session_preview is None for preview in previews))
+  self.assertTrue(all(not hasattr(preview,"_used") and not hasattr(preview,"_machine")
+                      and not hasattr(preview,"_record") and not hasattr(preview,"_session_preview")
+                      for preview in previews))
  def test_client_clear_state_purges_wrapper_and_session_previews(self):
   sender=s.Session(b'\x0a'*32); inbound=s.Session(b'\x0a'*32); outbound=s.Session(b'\x0b'*32); header=b'h'*48; prefix=b'\6\1\0\0'
   client=object.__new__(s.ClientMachine); client._lock=threading.RLock(); client._previews=set(); client.state=client.ESTABLISHED
+  s._CLIENT_SECRETS[client]=s._ClientSecrets()
   client.s2c_session,client.c2s_session=inbound,outbound
   counter,ciphertext=sender.encrypt(header,prefix,b'x')
   _,session_preview=inbound.preview_decrypt(header,prefix,counter,ciphertext)
-  preview=s._DataPreview(client,session_preview,inbound,False); client._previews.add(preview)
+  preview=s._DataPreview(client,session_preview,inbound,False,
+                         _authority=s._SESSION_PREVIEW_AUTHORITY); client._previews.add(preview)
   client._clear_state()
-  self.assertTrue(preview._used)
-  self.assertEqual(len(client._previews),0)
-  self.assertEqual(len(inbound._previews),0)
-  self.assertEqual(len(outbound._previews),0)
-  self.assertIsNone(preview._machine)
-  self.assertIsNone(preview._record)
-  self.assertIsNone(preview._session_preview)
-  self.assertIsNone(session_preview._session)
+  self.assertFalse(hasattr(preview,"_used"))
+  self.assertFalse(hasattr(preview,"_machine"))
+  self.assertFalse(hasattr(preview,"_record"))
+  self.assertFalse(hasattr(preview,"_session_preview"))
+  self.assertFalse(hasattr(session_preview,"_session"))
   self.assertIsNone(client.c2s_session)
   self.assertIsNone(client.s2c_session)
+ def test_opaque_preview_and_bootstrap_handles_reject_mutation(self):
+  sender=s.Session(b'\x0c'*32); receiver=s.Session(b'\x0c'*32); header=b'h'*48; prefix=b'\6\1\0\0'
+  counter,ciphertext=sender.encrypt(header,prefix,b'x')
+  _,preview=receiver.preview_decrypt(header,prefix,counter,ciphertext)
+  with self.assertRaises(s.SessionError):
+   s.Profile3DataPreview(receiver,preview,7,b'x')
+  with self.assertRaises(s.SessionError):
+   preview.__init__(receiver,receiver.replay.generation,counter)
+  with self.assertRaises(s.SessionError):
+   s._DataPreview(object(),preview,receiver,False)
+  receiver.abort_decrypt(preview)
+  outbound=s.Session(b'\x0d'*32); inbound=s.Session(b'\x0e'*32)
+  bootstrap=s.Profile3Bootstrap(9,1,s.ipaddress.IPv6Address("2001:db8::1"),
+                                s.ipaddress.IPv6Address("2001:db8::2"),outbound,inbound,
+                                b'\x0f'*32,b'\x10'*32,_authority=s._PROFILE3_BOOTSTRAP_AUTHORITY)
+  with self.assertRaises(AttributeError): bootstrap.outbound=s.Session(b'\x11'*32)
+  with self.assertRaises(s.SessionError):
+   bootstrap.__init__(9,1,s.ipaddress.IPv6Address("2001:db8::1"),
+                      s.ipaddress.IPv6Address("2001:db8::2"),outbound,inbound,
+                      b'\x0f'*32,b'\x10'*32,_authority=s._PROFILE3_BOOTSTRAP_AUTHORITY)
+  bootstrap.close()
+  with self.assertRaises(s.SessionError): outbound.encrypt(header,prefix,b'x')
+  with self.assertRaises(s.SessionError): inbound.encrypt(header,prefix,b'x')
+ def test_clock_failure_precedes_client_replay_commit(self):
+  now=[1]; local=s.ipaddress.IPv6Address("2001:db8::1"); peer=s.ipaddress.IPv6Address("2001:db8::2")
+  identity=s.Identity.from_seed(b'\x12'*32)
+  client=s.ClientMachine(identity,s.PeerPin(2,identity.eid,identity.public),1,0,local,peer,lambda:now[0])
+  client.state,client.scid,client.deadline,client.s2c_session,client.c2s_session=client.ESTABLISHED,9,0,s.Session(b'\x13'*32),s.Session(b'\x14'*32)
+  sender=s.Session(b'\x13'*32); prefix=b'\6\1\0\0'; header=s.Header(s.NH_SES,peer,local,profile=0,flags=1,scid=9)
+  counter,ciphertext=sender.encrypt(header.pack(prefix+b'\0'*8+b'\0'*17)[:48],prefix,b'x')
+  _,_,_,preview=client.preview_data(s.build_packet(header,s.ProtectedMessage(6,0,counter,ciphertext).build()))
+  with self.assertRaises(s.SessionError):
+   preview.__init__(client,None,None,False)
+  def broken_clock(): raise RuntimeError("clock")
+  client.clock=broken_clock
+  with self.assertRaises(RuntimeError): client.commit_data(preview)
+  self.assertEqual(client.s2c_session.replay.highest,0)
+  client.abort_data_preview(preview)
  def test_public_session_records_have_finite_redacted_repr(self):
   identity=s.Identity.from_seed(b'm'*32)
   pin=s.PeerPin(1,identity.eid,identity.public)
