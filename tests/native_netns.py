@@ -195,7 +195,7 @@ def status(pid):
 class Lab:
     def __init__(self, hops, binary):
         self.hops, self.binary = hops, binary; self.token = os.urandom(5).hex()
-        self.names = []; self.procs = []; self.docs = []; self.temp = Path(tempfile.mkdtemp(prefix="r8-native-"))
+        self.names = []; self.procs = []; self.workers = []; self.docs = []; self.temp = Path(tempfile.mkdtemp(prefix="r8-native-"))
         self.counts = {"frames_sent": 0, "frames_received": 0, "negative_timeouts": 0,
                        "local_budget_rejects": 0, "daemon_exits": 0, "cleanup_failures": 0}
         self.error_category = self.setup_stage = None
@@ -254,6 +254,7 @@ class Lab:
         # Endpoint workers send and observe each packet over real Ethernet; no local parse is evidence.
         for kind, packet in (("ctl", ctl(0, self.hops + 1)), ("dgram", dgram(0, self.hops + 1, 1224)), ("ses", ses_packet()[0])):
             watcher = subprocess.Popen(["ip", "netns", "exec", self.name(self.hops + 1), sys.executable, str(Path(__file__).resolve()), "worker", "watch", "--interface", f"e{self.hops}", "--kind", kind, "--hops", str(self.hops), "--reply" if kind == "ctl" else "--no-reply"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.workers.append(watcher)
             time.sleep(.05)
             sender = _run(["ip", "netns", "exec", self.name(0), sys.executable, str(Path(__file__).resolve()), "worker", "send", "--interface", "e0", "--packet", packet.hex(), "--reply" if kind == "ctl" else "--no-reply", "--hops", str(self.hops)], check=False)
             if sender.returncode or watcher.wait(timeout=4): raise RuntimeError("FORWARD")
@@ -262,6 +263,7 @@ class Lab:
         negatives = [b"\0", eth(mac(1), b"\x02\0\0\0\0\xff", ctl(0, self.hops + 1)), ctl(0, self.hops + 1, 1), ctl(0, 0xffff)]
         for packet in negatives:
             watcher = subprocess.Popen(["ip", "netns", "exec", self.name(self.hops + 1), sys.executable, str(Path(__file__).resolve()), "worker", "absent", "--interface", f"e{self.hops}"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            self.workers.append(watcher)
             time.sleep(.05)
             raw = packet if len(packet) >= 14 and packet[12:14] == ETHERTYPE.to_bytes(2, "big") else eth(mac(1), mac(0), packet)
             if _run(["ip", "netns", "exec", self.name(0), sys.executable, str(Path(__file__).resolve()), "worker", "send", "--interface", "e0", "--frame", raw.hex()], check=False).returncode or watcher.wait(timeout=3): raise RuntimeError("NEGATIVE")
@@ -277,6 +279,15 @@ class Lab:
             self.counts["daemon_exits"] += 1
 
     def cleanup(self):
+        for process in self.procs + self.workers:
+            if process.poll() is None:
+                try: process.terminate()
+                except ProcessLookupError: pass
+        for process in self.procs + self.workers:
+            try: process.wait(timeout=.5)
+            except subprocess.TimeoutExpired:
+                try: process.kill(); process.wait(timeout=.5)
+                except (ProcessLookupError, subprocess.TimeoutExpired): self.counts["cleanup_failures"] += 1
         for namespace in reversed(self.names):
             first = ip("netns", "pids", namespace, check=False).stdout.split()
             for value in first:

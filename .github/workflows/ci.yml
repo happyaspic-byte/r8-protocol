@@ -160,7 +160,16 @@ jobs:
           command -v ip
           command -v sysctl
       - name: Bounded one-router native smoke
-        run: sudo python3 tests/native_netns.py --smoke --hops 1 --binary rust/target/release/r8-native > "$RUNNER_TEMP/native-smoke.json"
+        run: |
+          set +e
+          sudo python3 tests/native_netns.py --smoke --hops 1 --binary rust/target/release/r8-native > "$RUNNER_TEMP/native-smoke.json"
+          status=$?
+          if [ -e "$RUNNER_TEMP/native-smoke.json" ]; then
+            sudo chown "$(id -u):$(id -g)" "$RUNNER_TEMP/native-smoke.json"
+            category="$(python3 -c 'import json, os, pathlib, re; value=json.loads((pathlib.Path(os.environ["RUNNER_TEMP"])/"native-smoke.json").read_text())["error_category"]; assert value is None or (isinstance(value,str) and re.fullmatch(r"[a-z0-9-]{1,64}",value)); print(value or "none")')"
+            printf 'native-smoke-category=%s\n' "$category"
+          fi
+          exit "$status"
       - name: Q2 root-only native preflight
         run: sudo -E env PATH="$PATH" python3 bench/q2_run.py preflight --smoke --binary rust/target/release/r8-native --endpoint-binary rust/target/release/r8-redundant-native
       - name: Restore diagnostic ownership

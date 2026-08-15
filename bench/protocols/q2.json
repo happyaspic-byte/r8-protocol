@@ -367,7 +367,7 @@
   },
   "implementation_binding": {
     "source_map": {
-      ".github/workflows/ci.yml": "6edb26c3d9e23f227ffb17c293af58a317790093d3f6c351e0a403f3ae55a517",
+      ".github/workflows/ci.yml": "8f08133cfff052c199757d8b54d0775c3e8ca20a920c8bba3e4bddb6e8a0ed1a",
       ".github/workflows/native-full.yml": "8a403726cf9571a5e865192867bebad3510820a647a288dab6aaf1bc7aa2de2b",
       ".github/workflows/q2-full.yml": "47365fdb40f0672d77919a8263036efb550c923f8446010e56be7d093fa1b598",
       "bench/q2.py": "3acbee3e01c82404877e843565d527e36ce7c6b40c18ca79733550004d3d5914",
@@ -383,7 +383,7 @@
       "reference/r8session.py": "f049418c818e301eee3880a1a5d68b9731b311cc0c9e2ed8b9e7952071ee8540",
       "reference/r8mobility.py": "c9da7638a77934d83fa0691a41e9890dc289e41078dd04c36f355c192df4db88",
       "reference/r8redundant.py": "b1ed2b0c190163ad29c7c5461c76eec7b27a348a33ec60ef52bee6a9db9af77c",
-      "tests/native_netns.py": "f58340001776233d3a4008bd92eb873a7ad2cbd483cdb776f537927b28683852",
+      "tests/native_netns.py": "f499be1520b7dad76b5bb6bef2d3d6982b58a4c06914a42f2ef17097c95ae2cd",
       "tests/redundant_netns.py": "d3562103901cd07fa2771067c595fa1c33f27c732708365b253bd1ce598d5013",
       "rust/Cargo.toml": "127425cc73795afaa6c0c8bd4d5c595f37af00546057a0b09e2d1df25808cfde",
       "rust/Cargo.lock": "cdcf21158d86fa60e6ff3c329cd3d99175832d34957956889a896c945820de56",
@@ -404,7 +404,7 @@
       "rust/crates/r8d/src/native.rs": "30d5126590446db852c3b1f9ad3cf58c461856fa1ae9e1f6e41a7d585b020232",
       "rust/crates/r8d/src/bin/r8-native.rs": "242f0a122961469609fda8305df0252f81af0751f8c8ba1953c076c03a354be1"
     },
-    "source_map_sha256": "b321f986270dfd74505b7113b753fa2fca7584b728c871d43d513563233cccb9"
+    "source_map_sha256": "00dae20269b9129933ec1a9084583fcc91686a0163de47c5792a30b6b5b29465"
   },
   "result_fields_prohibited": [
     "observed_values",

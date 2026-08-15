@@ -40,6 +40,9 @@ class NativeNetnsTests(unittest.TestCase):
             native.ip("link", "set", "lo", "down", ns="test")
         run.assert_called_once_with(["ip", "netns", "exec", "test", "ip", "link", "set", "lo", "down"], True)
         self.assertIn("net.ipv6.conf.default.disable_ipv6=1", Path(native.__file__).read_text())
+        source = Path(native.__file__).read_text()
+        self.assertIn("self.procs + self.workers", source)
+        self.assertIn("process.wait(timeout=.5)", source)
     def test_nonroot_main_refuses(self):
         with patch.object(os, "geteuid", return_value=1000):
             self.assertEqual(native.main(["--binary", "/missing"]), 1)
