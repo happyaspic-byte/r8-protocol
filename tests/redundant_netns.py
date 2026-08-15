@@ -56,7 +56,7 @@ def ip(*args, ns=None, check=True):
     prefix = ["ip", "netns", "exec", ns, "ip"] if ns is not None else ["ip"]
     return run(prefix + list(args), check)
 STARTUP_STAGES = frozenset(("arguments", "manifest", "isolation", "descriptors", "watch", "privilege", "runtime"))
-ISOLATION_STAGES = frozenset(("namespace", "network", "default-route", "address", "interface", "internal"))
+ISOLATION_STAGES = frozenset(("namespace", "network", "default-route-v4", "default-route-v6", "address", "interface", "internal"))
 def startup_error(stderr):
     stage = isolation = None
     for line in stderr.splitlines():

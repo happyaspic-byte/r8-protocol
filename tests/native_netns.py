@@ -101,7 +101,7 @@ ERROR_CATEGORIES = {
 SETUP_STAGES = frozenset(("namespace-create", "ipv6-disable", "loopback-down", "veth-create", "veth-move", "interface-rename", "link-activate"))
 STARTUP_STAGES = frozenset(("arguments", "manifest", "isolation", "descriptors", "watch", "privilege", "runtime"))
 ERROR_CATEGORIES.update({f"STARTUP_{stage.upper()}": f"startup-{stage}" for stage in STARTUP_STAGES})
-ISOLATION_STAGES = frozenset(("namespace", "network", "default-route", "address", "interface", "internal"))
+ISOLATION_STAGES = frozenset(("namespace", "network", "default-route-v4", "default-route-v6", "address", "interface", "internal"))
 ERROR_CATEGORIES.update({f"STARTUP_ISOLATION_{stage.upper().replace('-', '_')}": f"startup-isolation-{stage}" for stage in ISOLATION_STAGES})
 
 

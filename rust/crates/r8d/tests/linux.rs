@@ -70,7 +70,8 @@ fn errors_are_redacted_and_finite() {
     for error in [
         LinuxError::Namespace,
         LinuxError::Network,
-        LinuxError::DefaultRoute,
+        LinuxError::DefaultRouteV4,
+        LinuxError::DefaultRouteV6,
         LinuxError::Interface,
         LinuxError::Address,
         LinuxError::Socket,

@@ -32,7 +32,8 @@ const REQUIRED_SEALS: libc::c_int =
 pub enum LinuxError {
     Namespace,
     Network,
-    DefaultRoute,
+    DefaultRouteV4,
+    DefaultRouteV6,
     Interface,
     Address,
     Socket,
@@ -99,9 +100,7 @@ where
     if namespace_matches_pid_one()? {
         return Err(LinuxError::Namespace);
     }
-    if has_default_route()? {
-        return Err(LinuxError::DefaultRoute);
-    }
+    verify_no_default_route()?;
     let addresses = interface_addresses()?;
     let loopback = addresses
         .iter()
@@ -392,13 +391,16 @@ fn namespace_matches_pid_one() -> Result<bool, LinuxError> {
     Ok(current.ino() == init.ino() && current.dev() == init.dev())
 }
 
-fn has_default_route() -> Result<bool, LinuxError> {
+fn verify_no_default_route() -> Result<(), LinuxError> {
     let ipv4 = fs::read_to_string("/proc/net/route").map_err(|_| LinuxError::Network)?;
     if has_ipv4_default_route(&ipv4) {
-        return Ok(true);
+        return Err(LinuxError::DefaultRouteV4);
     }
     let ipv6 = fs::read_to_string("/proc/net/ipv6_route").map_err(|_| LinuxError::Network)?;
-    Ok(has_ipv6_default_route(&ipv6))
+    if has_ipv6_default_route(&ipv6) {
+        return Err(LinuxError::DefaultRouteV6);
+    }
+    Ok(())
 }
 
 /// Parse `/proc/net/route`; defaults and malformed records are unsafe.
