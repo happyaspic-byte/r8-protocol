@@ -17,8 +17,15 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "reference"))
+_WORKER_PROCESS = len(sys.argv) > 1 and sys.argv[1] == "worker"
+if _WORKER_PROCESS:
+    print("r8-native-worker stage=bootstrap", file=sys.stderr, flush=True)
 import r8ref
+if _WORKER_PROCESS:
+    print("r8-native-worker stage=import-ref", file=sys.stderr, flush=True)
 import r8session
+if _WORKER_PROCESS:
+    print("r8-native-worker stage=import-session", file=sys.stderr, flush=True)
 
 ETHERTYPE = 0x88B5
 PACKET_IGNORE_OUTGOING = 23
@@ -101,13 +108,17 @@ ERROR_CATEGORIES = {
     "FORWARD_WORKER_SOCKET": "forward-worker-socket",
     "FORWARD_WORKER_SEND": "forward-worker-send",
     "FORWARD_WORKER_REPLY": "forward-worker-reply",
+    "FORWARD_WORKER_BOOTSTRAP": "forward-worker-bootstrap",
+    "FORWARD_WORKER_IMPORT_REF": "forward-worker-import-ref",
+    "FORWARD_WORKER_IMPORT_SESSION": "forward-worker-import-session",
+    "FORWARD_WORKER_RECEIVE": "forward-worker-receive",
 }
 LAB_STAGES = frozenset(("setup", "launch", "proof-ctl", "proof-dgram", "proof-ses", "proof-negative", "revoke", "cleanup"))
 def emit_stage(value):
     if value not in LAB_STAGES:
         raise RuntimeError("SETUP")
     print(f"r8-native-lab stage={value}", file=sys.stderr, flush=True)
-WORKER_STAGES = frozenset(("socket", "send", "reply", "receive"))
+WORKER_STAGES = frozenset(("bootstrap", "import-ref", "import-session", "socket", "send", "reply", "receive"))
 def emit_worker_stage(value):
     if value not in WORKER_STAGES:
         raise RuntimeError("SETUP")
@@ -120,7 +131,12 @@ def worker_error(stderr):
         value = line.removeprefix("r8-native-worker stage=")
         if value in WORKER_STAGES:
             stage = value
-    return f"FORWARD_WORKER_{stage.upper()}" if stage in ("socket", "send", "reply") else "FORWARD"
+    key = f"FORWARD_WORKER_{stage.upper().replace('-', '_')}" if stage else "FORWARD"
+    return key if key in ERROR_CATEGORIES else "FORWARD"
+def worker_process_error(process):
+    stage = getattr(process, "_r8_worker_stage", None)
+    key = f"FORWARD_WORKER_{stage.upper().replace('-', '_')}" if stage else "FORWARD"
+    return key if key in ERROR_CATEGORIES else "FORWARD"
 def wait_worker_stage(process, expected, timeout=10):
     if expected not in WORKER_STAGES:
         return False
@@ -136,9 +152,13 @@ def wait_worker_stage(process, expected, timeout=10):
             if not events:
                 return False
             line = process.stderr.readline()
+            if not line:
+                return False
             if isinstance(line, bytes):
                 line = line.decode("utf-8", "replace")
             value = line.strip().removeprefix("r8-native-worker stage=")
+            if value in WORKER_STAGES:
+                process._r8_worker_stage = value
             if value == expected:
                 return True
             if line.startswith("r8-native-worker stage=") and value not in WORKER_STAGES:
@@ -304,7 +324,7 @@ class Lab:
             watcher = subprocess.Popen(["ip", "netns", "exec", self.name(self.hops + 1), sys.executable, str(Path(__file__).resolve()), "worker", "watch", "--interface", f"e{self.hops}", "--kind", kind, "--hops", str(self.hops), "--reply" if kind == "ctl" else "--no-reply"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             self.workers.append(watcher)
             if not wait_worker_stage(watcher, "receive"):
-                raise RuntimeError("FORWARD")
+                raise RuntimeError(worker_process_error(watcher))
             try:
                 sender = _run(["ip", "netns", "exec", self.name(0), sys.executable, str(Path(__file__).resolve()), "worker", "send", "--interface", "e0", "--packet", packet.hex(), "--reply" if kind == "ctl" else "--no-reply", "--hops", str(self.hops)], check=False)
             except subprocess.TimeoutExpired as error:
@@ -321,7 +341,7 @@ class Lab:
             watcher = subprocess.Popen(["ip", "netns", "exec", self.name(self.hops + 1), sys.executable, str(Path(__file__).resolve()), "worker", "absent", "--interface", f"e{self.hops}"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             self.workers.append(watcher)
             if not wait_worker_stage(watcher, "receive"):
-                raise RuntimeError("NEGATIVE")
+                raise RuntimeError(worker_process_error(watcher))
             raw = packet if len(packet) >= 14 and packet[12:14] == ETHERTYPE.to_bytes(2, "big") else eth(mac(1), mac(0), packet)
             if _run(["ip", "netns", "exec", self.name(0), sys.executable, str(Path(__file__).resolve()), "worker", "send", "--interface", "e0", "--frame", raw.hex()], check=False).returncode or watcher.wait(timeout=3): raise RuntimeError("NEGATIVE")
             self.counts["negative_timeouts"] += 1
