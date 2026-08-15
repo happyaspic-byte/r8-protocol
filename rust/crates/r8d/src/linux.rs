@@ -415,7 +415,7 @@ pub fn has_ipv4_default_route(route_table: &str) -> bool {
         {
             return true;
         }
-        if fields[1] == "00000000" && fields[7] == "00000000" {
+        if fields[1] == "00000000" && fields[7] == "00000000" && !route_is_reject(fields[3]) {
             return true;
         }
     }
@@ -440,13 +440,21 @@ pub fn has_ipv6_default_route(route_table: &str) -> bool {
         {
             return true;
         }
-        if fields[0] == "00000000000000000000000000000000" && fields[1] == "00000000" {
+        if fields[0] == "00000000000000000000000000000000"
+            && fields[1] == "00000000"
+            && !route_is_reject(fields[8])
+        {
             return true;
         }
     }
     false
 }
 
+fn route_is_reject(flags: &str) -> bool {
+    u32::from_str_radix(flags, 16)
+        .map(|value| value & 0x0200 != 0)
+        .unwrap_or(false)
+}
 fn is_hex_field(value: &str, length: usize) -> bool {
     value.len() == length && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }

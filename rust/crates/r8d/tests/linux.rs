@@ -12,6 +12,9 @@ fn route_parsers_identify_default_and_malformed_records() {
     assert!(!has_ipv4_default_route(
         "Iface Destination Gateway Flags RefCnt Use Metric Mask MTU Window IRTT\neth0 0100007F 00000000 0001 0 0 0 FFFFFFFF 0 0 0\n"
     ));
+    assert!(!has_ipv4_default_route(
+        "Iface Destination Gateway Flags RefCnt Use Metric Mask MTU Window IRTT\nlo 00000000 00000000 0200 0 0 0 00000000 0 0 0\n"
+    ));
     assert!(has_ipv4_default_route(
         "Iface Destination Gateway\neth0 malformed\n"
     ));
@@ -24,6 +27,9 @@ fn route_parsers_identify_default_and_malformed_records() {
     ));
     assert!(!has_ipv6_default_route(
         "20010db8000000000000000000000000 00000040 00000000000000000000000000000000 00000000 00000000000000000000000000000000 00000000 00000000 00000000 00000001 eth0\n"
+    ));
+    assert!(!has_ipv6_default_route(
+        "00000000000000000000000000000000 00000000 00000000000000000000000000000000 00000000 00000000000000000000000000000000 ffffffff 00000001 00000000 00200200 lo\n"
     ));
     assert!(has_ipv6_default_route("not a route\n"));
 }
