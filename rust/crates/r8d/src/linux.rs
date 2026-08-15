@@ -103,6 +103,13 @@ where
         return Err(LinuxError::DefaultRoute);
     }
     let addresses = interface_addresses()?;
+    let loopback = addresses
+        .iter()
+        .find(|entry| entry.name == "lo")
+        .ok_or(LinuxError::Address)?;
+    if !loopback.loopback || loopback.up {
+        return Err(LinuxError::Address);
+    }
     for name in &names {
         let entry = addresses
             .iter()
@@ -443,7 +450,7 @@ pub fn has_ipv6_default_route(route_table: &str) -> bool {
         if fields[0] == "00000000000000000000000000000000"
             && fields[1] == "00000000"
             && !route_is_reject(fields[8])
-            && !is_ipv6_kernel_null_route(&fields)
+            && !is_ipv6_inert_loopback_route(&fields)
         {
             return true;
         }
@@ -457,15 +464,12 @@ fn route_is_reject(flags: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn is_ipv6_kernel_null_route(fields: &[&str]) -> bool {
+fn is_ipv6_inert_loopback_route(fields: &[&str]) -> bool {
     fields[0] == "00000000000000000000000000000000"
         && fields[1] == "00000000"
         && fields[2] == "00000000000000000000000000000000"
         && fields[3] == "00000000"
         && fields[4] == "00000000000000000000000000000000"
-        && fields[5].eq_ignore_ascii_case("ffffffff")
-        && fields[6] == "00000001"
-        && fields[7] == "00000000"
         && u32::from_str_radix(fields[8], 16)
             .map(|value| value & 0x0020_0000 != 0)
             .unwrap_or(false)
@@ -478,6 +482,7 @@ fn is_hex_field(value: &str, length: usize) -> bool {
 struct InterfaceAddress {
     name: String,
     loopback: bool,
+    up: bool,
     ipv4: bool,
     global_ipv6: bool,
 }
@@ -502,6 +507,7 @@ fn interface_addresses() -> Result<Vec<InterfaceAddress>, LinuxError> {
                     result.push(InterfaceAddress {
                         name,
                         loopback: false,
+                        up: false,
                         ipv4: false,
                         global_ipv6: false,
                     });
@@ -510,6 +516,7 @@ fn interface_addresses() -> Result<Vec<InterfaceAddress>, LinuxError> {
             };
             let entry = &mut result[index];
             entry.loopback |= item.ifa_flags & (libc::IFF_LOOPBACK as u32) != 0;
+            entry.up |= item.ifa_flags & (libc::IFF_UP as u32) != 0;
             if !item.ifa_addr.is_null() {
                 match unsafe { (*item.ifa_addr).sa_family as libc::c_int } {
                     libc::AF_INET => entry.ipv4 = true,
