@@ -179,8 +179,8 @@ pub fn open_filtered_descriptor(name: &str) -> Result<FilteredDescriptor, LinuxE
             fd.as_raw_fd(),
             libc::SOL_SOCKET,
             SO_DETACH_FILTER,
-            std::ptr::null(),
-            0,
+            &one as *const libc::c_int as *const libc::c_void,
+            mem::size_of::<libc::c_int>() as libc::socklen_t,
         )
     };
     if detach == 0 || io::Error::last_os_error().raw_os_error() != Some(libc::EPERM) {
