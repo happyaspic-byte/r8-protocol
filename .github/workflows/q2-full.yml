@@ -1,0 +1,79 @@
+name: Q2 Full
+on:
+  workflow_dispatch:
+    inputs:
+      host_epoch:
+        description: Opaque closed-lab host epoch
+        required: true
+        type: string
+      gate5_run:
+        description: Successful Native full run ID at this exact commit
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+jobs:
+  q2-full:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with: {clean: true}
+      - name: Require successful Gate 4 and Gate 5 evidence at exact HEAD
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GATE5_RUN: ${{ inputs.gate5_run }}
+        run: |
+          [[ "$GATE5_RUN" =~ ^[0-9]+$ ]]
+          RUN="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GATE5_RUN")"
+          test "$(jq -r .name <<<"$RUN")" = "Native full"
+          test "$(jq -r .conclusion <<<"$RUN")" = "success"
+          test "$(jq -r .head_sha <<<"$RUN")" = "$GITHUB_SHA"
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with: {python-version: '3.12'}
+      - name: Install isolated-network prerequisites
+        run: |
+          sudo apt-get update
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install --yes iproute2 ethtool
+          python3 -m pip install --requirement requirements-dev.txt
+      - name: Build release native binaries
+        working-directory: rust
+        run: cargo build --release --locked -p r8d --bin r8-native -p r8-redundant --bin r8-redundant-native
+      - name: Prove Gate4 and Gate5 at current release binding
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test -z "$(git status --porcelain --untracked-files=all)"
+          # Gate commands write redacted JSON evidence only; Q2 refuses to observe before these files exist.
+          sudo python3 tests/native_netns.py --hops 1 --binary rust/target/release/r8-native > "$RUNNER_TEMP/gate4-one.json"
+          sudo python3 tests/native_netns.py --hops 2 --binary rust/target/release/r8-native > "$RUNNER_TEMP/gate4-two.json"
+          sudo python3 tests/redundant_netns.py --binary rust/target/release/r8-native --endpoint-binary rust/target/release/r8-redundant-native > "$RUNNER_TEMP/gate5.json"
+      - name: Execute full Q2 closed-lab package
+        env: {HOST_EPOCH: '${{ inputs.host_epoch }}'}
+        run: |
+          SOURCE_ID="$(python3 bench/q2_run.py source-identity)"
+          sudo -E env PATH="$PATH" GITHUB_SHA="$GITHUB_SHA" Q2_CLEAN_TREE=true python3 bench/q2_run.py run --output "$RUNNER_TEMP/q2-full" --binary rust/target/release/r8-native --endpoint-binary rust/target/release/r8-redundant-native --gate4-one "$RUNNER_TEMP/gate4-one.json" --gate4-two "$RUNNER_TEMP/gate4-two.json" --gate5 "$RUNNER_TEMP/gate5.json" --host-epoch "$HOST_EPOCH" --source-identity "$SOURCE_ID" --git-commit "$GITHUB_SHA"
+          sudo -E env PATH="$PATH" python3 bench/q2_run.py regenerate --output "$RUNNER_TEMP/q2-full"
+      - name: Validate package hashes and cardinalities
+        run: |
+          sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/q2-full"
+          python3 -c 'import pathlib; from bench import q2; p=pathlib.Path("'"$RUNNER_TEMP"'/q2-full"); assert not q2.validate_files(p/"trial.jsonl",p/"logical-packet.jsonl",p/"evidence.jsonl")'
+      - name: Bind final package manifest
+        run: |
+          SHA="$(sha256sum "$RUNNER_TEMP/q2-full/manifest.json" | cut -d' ' -f1)"
+          test "${#SHA}" = 64
+          printf 'Q2 manifest SHA-256: `%s`\n' "$SHA" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload Q2 package
+        id: q2-artifact
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: q2-full-${{ github.run_id }}
+          path: ${{ runner.temp }}/q2-full
+          if-no-files-found: warn
+      - name: Verify external immutable artifact binding
+        if: always() && steps.q2-artifact.outcome == 'success'
+        env: {ARTIFACT_DIGEST: '${{ steps.q2-artifact.outputs.artifact-digest }}'}
+        run: |
+          test "${#ARTIFACT_DIGEST}" = 64
+          printf 'Q2 artifact SHA-256: `%s`\n' "$ARTIFACT_DIGEST" >> "$GITHUB_STEP_SUMMARY"

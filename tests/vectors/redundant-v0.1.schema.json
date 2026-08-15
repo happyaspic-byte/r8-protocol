@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://r8.closed-lab.invalid/contracts/vectors/redundant-v0.1.schema.json",
+  "title": "R8 Profile-3 REDUNDANT reviewed synthetic corpus",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "contract_version", "status", "synthetic_only", "synthetic_material_notice", "cryptography", "common", "repr_claims", "positive_cases", "negative_cases", "state_traces"],
+  "properties": {
+    "$schema": {"const": "redundant-v0.1.schema.json"},
+    "contract_version": {"const": "r8-redundant-v0.1-vectors-v1"},
+    "status": {"const": "real-reviewed-synthetic-artifact"},
+    "synthetic_only": {"const": true},
+    "synthetic_material_notice": {"type": "string", "pattern": "^SYNTHETIC TEST-ONLY:"},
+    "cryptography": {"$ref": "#/$defs/cryptography"},
+    "common": {"$ref": "#/$defs/common"},
+    "repr_claims": {"$ref": "#/$defs/reprClaims"},
+    "positive_cases": {"type": "array", "minItems": 4, "items": {"$ref": "#/$defs/positive"}, "uniqueItems": true},
+    "negative_cases": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/negative"}, "uniqueItems": true},
+    "state_traces": {"type": "array", "minItems": 4, "items": {"$ref": "#/$defs/trace"}, "uniqueItems": true}
+  },
+  "$defs": {
+    "hex": {"type": "string", "pattern": "^(?:[0-9a-f]{2})*$"},
+    "hex32": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+    "cryptography": {"type": "object", "additionalProperties": false, "required": ["implementation", "shared_secret_hex", "transcript_hash_hex", "hkdf_extract_salt_hex", "hkdf_prk_hex", "hkdf_info_format", "keys"], "properties": {"implementation": {"type": "string", "pattern": "independent"}, "shared_secret_hex": {"$ref": "#/$defs/hex32"}, "transcript_hash_hex": {"$ref": "#/$defs/hex32"}, "hkdf_extract_salt_hex": {"$ref": "#/$defs/hex32"}, "hkdf_prk_hex": {"$ref": "#/$defs/hex32"}, "hkdf_info_format": {"const": "ASCII R8 key v1 || wire_version:u8 || session_version:u8 || profile:u8 || transcript_hash:32 || sender_role:u8 || receiver_role:u8 || path_slot:u8"}, "keys": {"type": "object", "additionalProperties": false, "required": ["c2s_slot0_key_hex", "c2s_slot1_key_hex", "s2c_slot0_key_hex", "s2c_slot1_key_hex"], "properties": {"c2s_slot0_key_hex": {"$ref": "#/$defs/hex32"}, "c2s_slot1_key_hex": {"$ref": "#/$defs/hex32"}, "s2c_slot0_key_hex": {"$ref": "#/$defs/hex32"}, "s2c_slot1_key_hex": {"$ref": "#/$defs/hex32"}}}}},
+    "common": {"type": "object", "additionalProperties": false, "required": ["scid", "source_loc_hex", "destination_loc_hex", "wire_version", "session_version", "profile", "binding_budget", "profile3_overhead"], "properties": {"scid": {"type": "integer", "minimum": 1, "maximum": 18446744073709551614}, "source_loc_hex": {"type": "string", "pattern": "^[0-9a-f]{32}$"}, "destination_loc_hex": {"type": "string", "pattern": "^[0-9a-f]{32}$"}, "wire_version": {"const": 8}, "session_version": {"const": 1}, "profile": {"const": 3}, "binding_budget": {"const": 1280}, "profile3_overhead": {"const": 84}}},
+    "reprClaims": {"type": "object", "additionalProperties": false, "required": ["key_material_redacted_in_repr", "plaintext_redacted_in_repr", "allowed_repr_tokens"], "properties": {"key_material_redacted_in_repr": {"const": true}, "plaintext_redacted_in_repr": {"const": true}, "allowed_repr_tokens": {"type": "array", "minItems": 1, "items": {"type": "string", "enum": ["<RedundantSession>", "[REDACTED]"]}, "uniqueItems": true}}},
+    "positive": {"type": "object", "additionalProperties": false, "required": ["id", "kind", "direction", "slot", "plaintext_hex", "header_hex", "prefix_hex", "counter", "delivery_id", "nonce_hex", "aad_hex", "ciphertext_hex", "tag_hex", "full_packet_hex", "exact_size", "binding_budget", "budget_remaining"], "properties": {"id": {"$ref": "#/$defs/id"}, "kind": {"const": "positive"}, "direction": {"const": "c2s"}, "slot": {"enum": [0, 1]}, "plaintext_hex": {"$ref": "#/$defs/hex"}, "header_hex": {"type": "string", "pattern": "^[0-9a-f]{96}$"}, "prefix_hex": {"const": "06010300"}, "counter": {"type": "integer", "minimum": 1, "maximum": 18446744073709551614}, "delivery_id": {"type": "integer", "minimum": 1, "maximum": 18446744073709551614}, "nonce_hex": {"type": "string", "pattern": "^[0-9a-f]{24}$"}, "aad_hex": {"$ref": "#/$defs/hex"}, "ciphertext_hex": {"$ref": "#/$defs/hex"}, "tag_hex": {"type": "string", "pattern": "^[0-9a-f]{32}$"}, "full_packet_hex": {"$ref": "#/$defs/hex"}, "exact_size": {"type": "integer", "minimum": 84, "maximum": 1280}, "binding_budget": {"const": 1280}, "budget_remaining": {"type": "integer", "minimum": 0, "maximum": 1196}}},
+    "negative": {"type": "object", "additionalProperties": false, "required": ["id", "kind", "base_case_id", "mutation", "expected_error"], "properties": {"id": {"$ref": "#/$defs/id"}, "kind": {"const": "negative"}, "base_case_id": {"$ref": "#/$defs/id"}, "mutation": {"type": "string", "minLength": 1}, "expected_error": {"enum": ["NONE", "TRUNCATED", "PROFILE", "FLAGS", "PATH_SLOT", "AUTH_FAILED", "E-BUDGET", "E-CAPACITY", "E-COUNTER", "E-PATH", "E-REPLAY"]}, "expected_outcome": {"enum": ["accept", "deliver", "suppress", "enqueue", "events"]}}},
+    "trace": {"type": "object", "additionalProperties": false, "required": ["id", "steps"], "properties": {"id": {"$ref": "#/$defs/id"}, "steps": {"type": "array", "minItems": 2, "items": {"type": "string", "minLength": 1}}}}
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"q2-trial-v5.schema.json",
+  "title":"Q2 v5 trial row",
+  "type":"object",
+  "additionalProperties":false,
+  "required":["trial_id","seed","block","condition","condition_code","mechanism","mechanism_digest","execution_rank","execution_ordinal","status","failure_retained","failure_reason","t_origin_relative_ns","readiness_relative_ns","flap_start_actual_relative_ns","flap_end_actual_relative_ns","recovery_relative_ns","recovery_censored","recovery_eligible","sent_packets","delivered_packets","lost_packets","duplicates","reorder_displacement_count","max_consecutive_loss_burst","degraded_interval_ns","wire_bytes","wire_packets","cpu_user_ns","cpu_system_ns","queue_high_water_packets","queue_overflow_packets","setup_status","cleanup_status","environment_id","topology_id","evidence_id"],
+  "properties":{
+    "trial_id":{"$ref":"#/$defs/id"},"seed":{"type":"integer","minimum":0,"maximum":219},"block":{"type":"integer","minimum":0,"maximum":10},
+    "condition":{"enum":["no-flap","flap-A","flap-B"]},"condition_code":{"type":"integer","minimum":0,"maximum":2},"mechanism":{"enum":["REDUNDANT","single-A","single-B"]},"mechanism_digest":{"$ref":"#/$defs/id"},"execution_rank":{"type":"integer","minimum":0,"maximum":2},"execution_ordinal":{"type":"integer","minimum":0,"maximum":1979,"description":"Exactly seed * 9 + condition_code * 3 + execution_rank, enforced by the canonical-plan validator."},
+    "status":{"enum":["completed","failed","timeout"]},"failure_retained":{"const":true},"failure_reason":{"type":["string","null"],"enum":["readiness_not_reached","flap-timing","fault_not_applied","trial_timeout","supervisor_timeout","binding_mismatch","evidence_missing","cleanup_failed",null]},"t_origin_relative_ns":{"const":0},"readiness_relative_ns":{"type":["integer","null"],"minimum":-100000000,"maximum":0},
+    "flap_start_actual_relative_ns":{"type":["integer","null"]},"flap_end_actual_relative_ns":{"type":["integer","null"]},"recovery_relative_ns":{"type":["integer","null"],"minimum":0,"maximum":2000000000},"recovery_censored":{"type":"boolean"},"recovery_eligible":{"type":"boolean"},
+    "sent_packets":{"type":"integer","minimum":0,"maximum":400,"description":"Retained aggregate of the 400 logical packet rows."},"delivered_packets":{"type":"integer","minimum":0,"maximum":400,"description":"Retained aggregate of authenticated deliveries."},"lost_packets":{"type":"integer","minimum":0,"maximum":400,"description":"Retained aggregate of schedules without authenticated delivery by T+3s."},"duplicates":{"type":"integer","minimum":0},"reorder_displacement_count":{"type":"integer","minimum":0},"max_consecutive_loss_burst":{"type":"integer","minimum":0,"maximum":400},"degraded_interval_ns":{"type":["integer","null"],"minimum":0},
+    "wire_bytes":{"type":["integer","null"],"minimum":0},"wire_packets":{"type":["integer","null"],"minimum":0},"cpu_user_ns":{"type":["integer","null"],"minimum":0},"cpu_system_ns":{"type":["integer","null"],"minimum":0},"queue_high_water_packets":{"type":["integer","null"],"minimum":0},"queue_overflow_packets":{"type":["integer","null"],"minimum":0},
+    "setup_status":{"enum":["passed","failed","not_completed"]},"cleanup_status":{"enum":["passed","failed","not_completed"]},"environment_id":{"$ref":"#/$defs/id"},"topology_id":{"$ref":"#/$defs/id"},"evidence_id":{"$ref":"#/$defs/id"}
+  },
+  "allOf":[
+    {"if":{"properties":{"condition":{"const":"no-flap"}}},"then":{"properties":{"condition_code":{"const":0},"flap_start_actual_relative_ns":{"const":null},"flap_end_actual_relative_ns":{"const":null},"recovery_relative_ns":{"const":null},"recovery_censored":{"const":false},"recovery_eligible":{"const":false}}}},
+    {"if":{"properties":{"condition":{"const":"flap-A"}}},"then":{"properties":{"condition_code":{"const":1}}}},
+    {"if":{"properties":{"condition":{"const":"flap-B"}}},"then":{"properties":{"condition_code":{"const":2}}}},
+    {"if":{"properties":{"status":{"const":"completed"}}},"then":{"properties":{"failure_reason":{"const":null},"setup_status":{"const":"passed"},"cleanup_status":{"const":"passed"}}}},
+    {"if":{"properties":{"status":{"const":"failed"}}},"then":{"properties":{"failure_reason":{"type":"string"}}}},
+    {"if":{"properties":{"status":{"const":"timeout"}}},"then":{"properties":{"failure_reason":{"enum":["trial_timeout","supervisor_timeout"]}}}},
+    {"if":{"properties":{"setup_status":{"const":"failed"}}},"then":{"properties":{"status":{"enum":["failed","timeout"]}}}},
+    {"if":{"properties":{"cleanup_status":{"const":"failed"}}},"then":{"properties":{"failure_reason":{"const":"cleanup_failed"},"status":{"const":"failed"}}}},
+    {"if":{"properties":{"failure_reason":{"const":"readiness_not_reached"}}},"then":{"properties":{"readiness_relative_ns":{"const":null}}}},
+    {"if":{"properties":{"recovery_eligible":{"const":false}}},"then":{"properties":{"recovery_relative_ns":{"const":null}}}},
+    {"if":{"properties":{"recovery_censored":{"const":true}}},"then":{"properties":{"recovery_relative_ns":{"const":null}}}},
+    {"if":{"properties":{"recovery_relative_ns":{"type":"integer"}}},"then":{"properties":{"recovery_eligible":{"const":true},"recovery_censored":{"const":false}}}},
+    {"if":{"properties":{"recovery_eligible":{"const":true},"recovery_relative_ns":{"const":null}}},"then":{"properties":{"recovery_censored":{"const":true}}}}
+  ],
+  "$defs":{"id":{"type":"string","pattern":"^[a-f0-9]{64}$"}}
+}

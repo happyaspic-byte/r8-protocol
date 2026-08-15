@@ -11,8 +11,7 @@ name = "r8move"
 path = "src/main.rs"
 [dependencies]
 ed25519-dalek = "2"
-hmac = "0.12"
-sha2 = "0.10"
+aws-lc-rs = "1"
 zeroize = "1"
 r8-session = { path = "../r8-session" }
 getrandom = "0.2"
@@ -22,3 +21,4 @@ r8-proto = { path = "../r8-proto" }
 [dev-dependencies]
 serde_json = "1"
 ed25519-dalek = "2"
+sha2 = "0.10"

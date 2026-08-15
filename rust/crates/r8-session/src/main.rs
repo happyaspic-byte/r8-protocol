@@ -6,15 +6,16 @@ use std::{
     time::{Duration, Instant},
 };
 
+use aws_lc_rs::hmac;
 use ed25519_dalek::SigningKey;
 use getrandom::getrandom;
-use hmac::{Hmac, Mac};
 use r8_proto::parse_loc;
 use r8_session::{
-    ClientMachine, ClientMaterial, HandshakeConfig, Identity, PrevalidationLimiter,
-    ServerHandshakeMaterial, ServerMachine, ServerMaterial, SessionError, UdpBinding,
+    ClientMachine, ClientMaterial, HandshakeConfig, Identity, ObservedBinding,
+    PrevalidationLimiter, ServerHandshakeMaterial, ServerMachine, ServerMaterial, SessionError,
+    UdpBinding,
 };
-use sha2::Sha256;
+use zeroize::Zeroizing;
 
 const RECV_EXTRA: usize = 1;
 const DEFAULT_BUDGET: usize = 1252;
@@ -263,9 +264,11 @@ fn endpoint_binding(endpoint: SocketAddr, selector: [u8; 16]) -> Result<UdpBindi
 }
 
 fn opaque_source(endpoint: SocketAddr, key: &[u8; 32]) -> [u8; 32] {
-    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(key).expect("fixed HMAC key");
-    mac.update(&canonical_endpoint(endpoint));
-    mac.finalize().into_bytes().into()
+    let key = hmac::Key::new(hmac::HMAC_SHA256, key);
+    hmac::sign(&key, &canonical_endpoint(endpoint))
+        .as_ref()
+        .try_into()
+        .expect("SHA-256 HMAC length")
 }
 fn peer_matches(
     peer_bindings: &HashMap<u64, (SocketAddr, UdpBinding)>,
@@ -465,7 +468,7 @@ fn serve(options: Options) -> Result<(), CliError> {
     };
     let mut server = ServerMachine::new(server_config, signing, material)?;
     let selector = random::<16>()?;
-    let source_hash_key = random::<32>()?;
+    let source_hash_key = Zeroizing::new(random::<32>()?);
     let mut peer_bindings: HashMap<u64, (SocketAddr, UdpBinding)> = HashMap::new();
     let mut limiter = PrevalidationLimiter::new();
     let started = Instant::now();
@@ -495,7 +498,7 @@ fn serve(options: Options) -> Result<(), CliError> {
             Ok((_header, payload)) if payload.first() == Some(&r8_session::OPEN) => server
                 .receive_open_limited(
                     &packet,
-                    &binding,
+                    &ObservedBinding::Udp(binding.clone()),
                     opaque_source(endpoint, &source_hash_key),
                     now,
                     bucket,
@@ -505,7 +508,7 @@ fn serve(options: Options) -> Result<(), CliError> {
             Ok((header, payload)) if payload.first() == Some(&r8_session::OPEN_AUTH) => {
                 match server.receive_open_auth(
                     &packet,
-                    &binding,
+                    &ObservedBinding::Udp(binding.clone()),
                     now,
                     bucket,
                     Some(ServerHandshakeMaterial {

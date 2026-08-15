@@ -28,9 +28,9 @@
     "host_epoch_required": true
   },
   "trigger_and_readiness": {
-    "start": "client userspace connect/send intent",
+    "start": "authoritative child IPC attempt-start marker emitted after bounded setup and immediately before client userspace connect/send intent; marker carries child monotonic start and process-CPU baseline",
     "complete": "authenticated delivery and response of one application byte",
-    "readiness": "completion condition is identical for both mechanisms"
+    "readiness": "completion condition is identical for both mechanisms; pre-marker setup is bounded and failures are setup failures"
   },
   "controls": {
     "R8": "includes cookie processing and configured peer-pin verification",
@@ -40,19 +40,22 @@
     "trust": "preconfigured pins before trials; no trust-on-first-use or public PKI substitution"
   },
   "timeout_and_censoring": {
-    "timeout": "5s",
+    "timeout": "5s after the authoritative attempt-start marker",
     "timeout_rows_retained": true,
     "failure_rows_retained": true,
-    "latency_censoring": "timed-out latency is right-censored",
-    "failure_rate": "timeouts contribute to failure rate",
+    "post_start_failure_evidence": "For every timeout or error after the timed attempt starts, retain the authoritative child completion/failure snapshot on normal exit. Only killed, abnormal-exit, or unusable-output fallbacks retain elapsed monotonic time, child process CPU delta, and loopback counter delta through failure or kill/reap at the bounded deadline; supervisor CPU is never substituted.",
+    "setup_failures": "Pre-marker setup failures or marker timeouts are retained with one error category prefixed setup: and zero timing, CPU, and network fields.",
+    "latency_censoring": "Every non-success row after the attempt-start marker is a right-censored latency observation at its retained elapsed time.",
+    "failure_rate": "All non-success rows contribute to failure rate over the complete measured denominator.",
+    "runtime_outcome": "A full package labels runtime_outcome success exactly when its recomputed failure count is zero and failures-retained otherwise; a smoke package labels it smoke-non-result.",
     "exclusions": "no post-hoc exclusions"
   },
   "outcomes": ["failure-rate", "latency", "bytes", "packets", "CPU"],
   "analysis": {
-    "estimators": ["failure-rate", "empirical-latency-quantiles", "block-bootstrap-95-percent-CI"],
-    "quantiles": ["p50", "p90", "p99"],
-    "bootstrap": {"resamples": 10000, "seed": "r8-q3-block-bootstrap-v1", "resampling_unit": "host-epoch block"},
-    "p99_unsupported_rule": "Label p99 unsupported, rather than substitute a maximum, if its confidence interval spans the 5s timeout or effective successes are insufficient for the empirical p99 and its block bootstrap.",
+    "estimators": ["failure-rate", "Kaplan-Meier-right-censored-latency-quantiles", "block-bootstrap-95-percent-CI"],
+    "quantiles": ["p50", "p90"],
+    "latency_quantile_rule": "For each quantile q, use the earliest retained elapsed time at which the Kaplan-Meier estimated event CDF for success reaches q; report null when that threshold is not identifiable from right-censored rows.",
+    "bootstrap": {"resamples": 10000, "seed": "r8-q3-block-bootstrap-v1", "resampling_unit": "host-epoch block", "nonestimable_rule": "Report a null confidence interval when any deterministic block-bootstrap resample is nonestimable for that quantile."},
     "post_hoc_changes": "require a new labeled series"
   },
   "result_fields_prohibited": ["observed_values", "digests", "summary", "confidence_intervals"]

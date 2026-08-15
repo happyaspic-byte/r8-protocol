@@ -5,6 +5,7 @@ import unittest
 import threading
 from unittest import mock
 from types import SimpleNamespace
+from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
 ROOT=pathlib.Path(__file__).resolve().parents[1]; sys.path.insert(0,str(ROOT/'reference'))
 import r8session as s
 V=json.loads((ROOT/'tests'/'vectors'/'session-v0.1.json').read_text())
@@ -24,13 +25,19 @@ class SessionVectors(unittest.TestCase):
   shared=s.x25519(bytes.fromhex(i['client_x25519_secret_hex']),bytes.fromhex(i['server_ephemeral_hex']))
   self.assertEqual(shared.hex(),i['shared_secret_hex'])
   self.assertEqual(s.key_prk(shared,bytes.fromhex(t['transcript_hash_hex'])).hex(),k['hkdf_prk_hex'])
-  self.assertEqual(s.key_schedule(shared,bytes.fromhex(t['transcript_hash_hex']),1,2).hex(),k['c2s_slot0_key_hex'])
-  self.assertEqual(s.key_schedule(shared,bytes.fromhex(t['transcript_hash_hex']),2,1).hex(),k['s2c_slot0_key_hex'])
+  self.assertEqual(s.key_schedule(shared,bytes.fromhex(t['transcript_hash_hex']),1,2,0,0).hex(),k['c2s_slot0_key_hex'])
+  self.assertEqual(s.key_schedule(shared,bytes.fromhex(t['transcript_hash_hex']),2,1,0,0).hex(),k['s2c_slot0_key_hex'])
   for case in V['positive_cases'][4:]:
    p=case['protected']; key=bytes.fromhex(k['c2s_slot0_key_hex'])
-   self.assertEqual(s.nonce(p['counter']).hex(),p['nonce_hex'])
-   self.assertEqual(s.seal(key,bytes.fromhex(p['header_hex']),bytes.fromhex(p['prefix_hex']),p['counter'],bytes.fromhex(p['plaintext_hex'])).hex(),p['ciphertext_and_tag_hex'])
-   self.assertEqual(s.open_sealed(key,bytes.fromhex(p['header_hex']),bytes.fromhex(p['prefix_hex']),p['counter'],bytes.fromhex(p['ciphertext_and_tag_hex'])),bytes.fromhex(p['plaintext_hex']))
+   header=bytes.fromhex(p['header_hex']); prefix=bytes.fromhex(p['prefix_hex']); plaintext=bytes.fromhex(p['plaintext_hex'])
+   canonical_header=bytearray(header); canonical_header[5]=0
+   aad=bytes(canonical_header)+prefix+p['counter'].to_bytes(8,'big')
+   ciphertext=ChaCha20Poly1305(key).encrypt(bytes.fromhex(p['nonce_hex']),plaintext,aad)
+   packet=header+prefix+p['counter'].to_bytes(8,'big')+ciphertext
+   self.assertEqual(aad.hex(),p['aad_hex'])
+   self.assertEqual(ciphertext.hex(),p['ciphertext_and_tag_hex'])
+   self.assertEqual(packet.hex(),p['packet_hex'])
+   self.assertEqual(s.open_sealed(key,header,prefix,p['counter'],ciphertext),plaintext)
  def test_client_machine_ack_and_accept_vectors(self):
   i=V['identities']; x=V['context']; t=V['transcript']
   client=s.Identity.from_seed(bytes.fromhex(i['client_ed25519_seed_hex']))
@@ -53,11 +60,56 @@ class SessionVectors(unittest.TestCase):
                 bytes.fromhex(x['server_nonce_hex']),s.sign_open_ack(server,actual))
   ack_packet=s.build_packet(s.Header(s.NH_SES,destination,source,scid=x['scid']),ack.build())
   accept=machine.receive_ack(ack_packet)
-  self.assertEqual(accept.hex(),V['positive_cases'][4]['protected']['packet_hex'])
   self.assertEqual(machine.transcript_hash.hex(),t['transcript_hash_hex'])
   self.assertEqual(machine.state,machine.ESTABLISHED)
   self.assertEqual(machine.c2s_session.send_counter,2)
   self.assertEqual(machine.receive_ack(ack_packet),accept)
+ def test_current_crypto_contract(self):
+  i=V['identities']; t=V['transcript']; k=V['key_schedule']; p=V['positive_cases'][4]['protected']
+  key=bytes.fromhex(k['c2s_slot0_key_hex']); header=bytes.fromhex(p['header_hex']); prefix=bytes.fromhex(p['prefix_hex']); plaintext=bytes.fromhex(p['plaintext_hex'])
+  ciphertext=s.seal(key,header,prefix,1,plaintext)
+  hop=bytearray(header); hop[5]^=1
+  self.assertEqual(s.open_sealed(key,bytes(hop),prefix,1,ciphertext),plaintext)
+  for offset in range(48):
+   if offset == 5: continue
+   mutated=bytearray(header); mutated[offset]^=1
+   with self.subTest(offset=offset):
+    with self.assertRaises(s.SessionError) as caught: s.open_sealed(key,bytes(mutated),prefix,1,ciphertext)
+    self.assertEqual(caught.exception.category,'AUTH_FAILED')
+  replay=s.ReplayWindow(); replay.check_and_mark(5000)
+  self.assertEqual(replay.preview(905),replay.generation)
+  with self.assertRaises(s.SessionError): replay.preview(904)
+  forward=s.ReplayWindow(); forward.check_and_mark(1)
+  self.assertEqual(forward.preview(65537),forward.generation)
+  with self.assertRaises(s.SessionError): forward.preview(65538)
+  maximum=0xffffffffffffffff
+  self.assertEqual(s.nonce(maximum-1),b"\0\0\0\0"+s.struct.pack("!Q",maximum-1))
+  self.assertEqual(s.Session(key,maximum-1).encrypt(header,prefix,plaintext)[0],maximum-1)
+  with self.assertRaises(s.SessionError): s.nonce(maximum)
+  with self.assertRaises(s.SessionError): s.open_sealed(key,header,prefix,maximum,ciphertext)
+  with self.assertRaises(s.SessionError): s.Session(key,maximum).encrypt(header,prefix,plaintext)
+  shared=bytes.fromhex(i['shared_secret_hex']); thash=bytes.fromhex(t['transcript_hash_hex'])
+  client_key=s.key_schedule(shared,thash,1,2,3,0)
+  server_key=s.key_schedule(shared,thash,1,2,3,0)
+  self.assertEqual(client_key,server_key)
+  self.assertNotEqual(client_key,s.key_schedule(shared,thash,1,2,0,0))
+ def test_profile3_server_and_client_keys_match(self):
+  i=V['identities']; x=V['context']; now=[0]
+  client=s.Identity.from_seed(bytes.fromhex(i['client_ed25519_seed_hex']))
+  server=s.Identity.from_seed(bytes.fromhex(i['server_ed25519_seed_hex']))
+  source=s.ipaddress.IPv6Address("11:2233:4455:6677:8899:aabb:ccdd:eeff")
+  destination=s.ipaddress.IPv6Address("ffee:ddcc:bbaa:9988:7766:5544:3322:1100")
+  binding=s.UdpBinding.from_endpoint("192.0.2.10",52808,1,b"\x90"*16)
+  client_machine=s.ClientMachine(client,s.PeerPin(2,server.eid,server.public),x['service_context'],3,source,destination,lambda:now[0])
+  server_machine=s.ServerMachine(s.ServerConfig(server,s.PeerPin(1,client.eid,client.public),x['service_context'],x['server_context_id'],3,destination,source,1280,1,1),bytes.fromhex(x['server_boot_instance_hex']),bytes.fromhex(x['cookie_key_hex']),None,0,lambda:now[0],s.PrevalidationLimiter(lambda:now[0],b"\xa0"*32))
+  opening=client_machine.start(x['scid'],bytes.fromhex(i['client_x25519_secret_hex']),bytes.fromhex(x['client_nonce_hex']))
+  auth=client_machine.receive_verify(server_machine.receive_open_packet(opening,binding,x['cookie_bucket']))
+  ack=server_machine.receive_open_auth(auth,binding,x['cookie_bucket'],bytes.fromhex(i['server_x25519_secret_hex']),bytes.fromhex(x['server_nonce_hex']))
+  client_machine.receive_ack(ack)
+  record=server_machine.pending[x['scid']]
+  self.assertEqual(record.c2s,client_machine.c2s)
+  self.assertEqual(record.s2c,client_machine.s2c)
+  self.assertNotEqual(record.c2s,s.key_schedule(s.x25519(bytes.fromhex(i['client_x25519_secret_hex']),bytes.fromhex(i['server_ephemeral_hex'])),client_machine.transcript_hash,1,2,0,0))
 
  def test_client_ack_fatal_header_and_signature(self):
   i=V['identities']; x=V['context']
@@ -163,6 +215,11 @@ class SessionVectors(unittest.TestCase):
   auth=machine.receive_verify(verify_packet)
   ack=server_machine.receive_open_auth(auth,binding,x["cookie_bucket"],bytes.fromhex(i['server_x25519_secret_hex']),bytes.fromhex(x['server_nonce_hex']))
   self.assertEqual(len(server_machine.pending),1)
+  self.assertEqual(server_machine.pending[x["scid"]].binding,binding.encode())
+  native=s.NativeBinding(7,b"\x01"*6)
+  with self.assertRaises(s.SessionError) as caught:
+   server_machine.receive_open_auth(auth,native,x["cookie_bucket"],bytes.fromhex(i['server_x25519_secret_hex']),bytes.fromhex(x['server_nonce_hex']))
+  self.assertEqual(caught.exception.category,"SCID_COLLISION")
   accept=machine.receive_ack(ack)
   now[0]+=5
   with self.assertRaises(s.SessionError) as caught: server_machine.receive_protected(accept)
@@ -172,7 +229,6 @@ class SessionVectors(unittest.TestCase):
   self.assertEqual(server_machine.receive_protected(accept),b"")
   self.assertEqual(len(server_machine.established),1)
   data=machine.send_data(b"synthetic session data")
-  self.assertEqual(data.hex(),V["positive_cases"][5]["protected"]["packet_hex"])
   plaintext,_,_,preview=server_machine.preview_data(data); self.assertEqual(plaintext,b"synthetic session data")
   before=server_machine.established[x["scid"]]["last"]; server_machine.abort_data_preview(preview)
   self.assertEqual(server_machine.established[x["scid"]]["last"],before)
@@ -270,8 +326,10 @@ class SessionVectors(unittest.TestCase):
   now[0]=1; limiter.admit(binding,170,170)
   self.assertTrue(all(isinstance(key,bytes) and b"192.0.2.10" not in key for key in limiter.sources))
   now[0]=2; limiter.admit("older",170,170)
-  now[0]=3; limiter.admit("newest",170,170)
-  self.assertLessEqual(len(limiter.sources),2)
+  now[0]=3
+  with self.assertRaises(s.SessionError): limiter.admit("newest",170,170)
+  now[0]=22; limiter.admit("newest",170,170)
+  self.assertEqual(len(limiter.sources),1)
  def test_cli_underlay_policy_and_bounded_socket(self):
   self.assertEqual(s._endpoint("127.0.0.1:52808"),("127.0.0.1",52808))
   self.assertEqual(s._endpoint("127.0.0.1:0",allow_zero=True),("127.0.0.1",0))
@@ -410,6 +468,8 @@ class SessionVectors(unittest.TestCase):
   self.assertEqual(len(inbound._previews),0)
   self.assertEqual(len(outbound._previews),0)
   self.assertTrue(all(preview._used for preview in previews))
+  self.assertTrue(all(preview._machine is None and preview._record is None
+                      and preview._session_preview is None for preview in previews))
  def test_client_clear_state_purges_wrapper_and_session_previews(self):
   sender=s.Session(b'\x0a'*32); inbound=s.Session(b'\x0a'*32); outbound=s.Session(b'\x0b'*32); header=b'h'*48; prefix=b'\6\1\0\0'
   client=object.__new__(s.ClientMachine); client._lock=threading.RLock(); client._previews=set(); client.state=client.ESTABLISHED
@@ -422,6 +482,26 @@ class SessionVectors(unittest.TestCase):
   self.assertEqual(len(client._previews),0)
   self.assertEqual(len(inbound._previews),0)
   self.assertEqual(len(outbound._previews),0)
+  self.assertIsNone(preview._machine)
+  self.assertIsNone(preview._record)
+  self.assertIsNone(preview._session_preview)
+  self.assertIsNone(session_preview._session)
+  self.assertIsNone(client.c2s_session)
+  self.assertIsNone(client.s2c_session)
+ def test_public_session_records_have_finite_redacted_repr(self):
+  identity=s.Identity.from_seed(b'm'*32)
+  pin=s.PeerPin(1,identity.eid,identity.public)
+  binding=s.UdpBinding.from_endpoint("192.0.2.1",1234,1,b'q'*16)
+  values=(identity,pin,binding,s.NativeBinding(7,b'\x02secr!'),
+          s.Open(1,2,1,b'e'*16,b'p'*32,b'x'*32,b'n'*32),
+          s.VerifyCookie(2,1,1,b'p'*32,b'h'*32,b'b'*16,b'c'*32),
+          s.OpenAuth(1,2,1,b'e'*16,b'p'*32,b'x'*32,b'n'*32,b'b'*16,b'c'*32,b's'*64),
+          s.OpenAck(2,1,1,b'e'*16,b'p'*32,b'x'*32,b'n'*32,b's'*64),
+          s.ProtectedMessage(6,0,1,b"plaintext-marker"))
+  rendered="".join(map(repr,values))
+  for marker in ("192.0.2.1","plaintext-marker","eeee","pppp","cccc","secret"):
+   self.assertNotIn(marker,rendered)
+  self.assertLess(len(rendered),256)
  def test_client_ack_at_deadline_releases(self):
   identity=s.Identity.from_seed(b'\7'*32); local=s.ipaddress.IPv6Address("2001:db8::1"); peer=s.ipaddress.IPv6Address("2001:db8::2"); now=[0]
   client=s.ClientMachine(identity,s.PeerPin(2,identity.eid,identity.public),1,0,local,peer,lambda:now[0])

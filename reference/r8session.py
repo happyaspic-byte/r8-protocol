@@ -23,7 +23,13 @@ from cryptography.hazmat.primitives.hashes import SHA256
 from cryptography.hazmat.primitives.hmac import HMAC
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF, HKDFExpand
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
-from r8ref import Header, NH_SES
+_PROFILE3_BOOTSTRAP_AUTHORITY = object()
+from r8ref import Header, NH_SES, WireError
+
+class _Redacted:
+    __slots__ = ()
+    def __repr__(self):
+        return f"<{type(self).__name__}>"
 
 ERRORS = frozenset((
     "ROLE_MISMATCH", "SERVICE_MISMATCH", "PIN_MISMATCH", "EID_KEY_MISMATCH",
@@ -32,6 +38,7 @@ ERRORS = frozenset((
     "RESTART_REQUIRED", "UNEXPECTED_MESSAGE", "TIMEOUT", "BUDGET",
     "BINDING_INVALID", "CONFIG_ERROR", "RNG_FAILURE",
 ))
+PROFILE3_DATA_PACKET_OVERHEAD = 84
 
 class SessionError(ValueError):
     def __init__(self, category):
@@ -58,8 +65,8 @@ def eid(public_key):
     if len(public_key) != 32: _fail("EID_KEY_MISMATCH")
     return hashlib.sha256(b"R8 EID v1" + public_key).digest()[:16]
 
-@dataclass(frozen=True)
-class Identity:
+@dataclass(frozen=True, repr=False)
+class Identity(_Redacted):
     private: Ed25519PrivateKey
     public: bytes
     eid: bytes
@@ -70,8 +77,8 @@ class Identity:
         public = private.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
         return cls(private, public, eid(public))
 
-@dataclass(frozen=True)
-class PeerPin:
+@dataclass(frozen=True, repr=False)
+class PeerPin(_Redacted):
     role: int
     eid: bytes
     public_key: bytes
@@ -79,18 +86,23 @@ class PeerPin:
         if self.role not in (1, 2) or len(self.eid) != 16 or len(self.public_key) != 32 or eid(self.public_key) != self.eid:
             raise ValueError("invalid complete peer pin")
 
-@dataclass(frozen=True)
-class UdpBinding:
+@dataclass(frozen=True, repr=False)
+class UdpBinding(_Redacted):
     address: bytes
     port: int
     selector_kind: int
     selector: bytes
 
     def encode(self):
-        if self.selector_kind not in (1, 2) or len(self.selector) != 16 or not 1 <= self.port <= 65535:
+        try:
+            valid = (isinstance(self.address, bytes) and isinstance(self.selector, bytes)
+                     and self.selector_kind in (1, 2) and len(self.selector) == 16
+                     and 1 <= self.port <= 65535)
+            ip = ipaddress.ip_address(self.address)
+        except (TypeError, ValueError):
             _fail("BINDING_INVALID")
-        try: ip = ipaddress.ip_address(self.address)
-        except ValueError: _fail("BINDING_INVALID")
+        if not valid:
+            _fail("BINDING_INVALID")
         family = b"\x01\x04" if ip.version == 4 else b"\x01\x06"
         return family + ip.packed + struct.pack("!H", self.port) + bytes((self.selector_kind,)) + self.selector
 
@@ -100,6 +112,33 @@ class UdpBinding:
             return cls(ipaddress.ip_address(host).packed, port, selector_kind, bytes(selector))
         except (ValueError, TypeError):
             _fail("BINDING_INVALID")
+@dataclass(frozen=True, repr=False)
+class NativeBinding(_Redacted):
+    ingress_descriptor_id: int
+    next_hop_mac: bytes
+
+    def encode(self):
+        if (type(self.ingress_descriptor_id) is not int
+                or not 0 < self.ingress_descriptor_id <= 0xffffffff
+                or not isinstance(self.next_hop_mac, bytes)
+                or len(self.next_hop_mac) != 6):
+            _fail("BINDING_INVALID")
+        return b"\x02" + struct.pack("!I", self.ingress_descriptor_id) + self.next_hop_mac
+
+
+Binding = UdpBinding | NativeBinding
+
+
+def validate_binding(value):
+    if not isinstance(value, Binding):
+        _fail("BINDING_INVALID")
+    try:
+        encoded = value.encode()
+    except (TypeError, ValueError, struct.error):
+        _fail("BINDING_INVALID")
+    if not isinstance(encoded, bytes):
+        _fail("BINDING_INVALID")
+    return encoded
 
 _LAYOUTS = {1: 118, 2: 118, 3: 230, 4: 182, 5: None, 6: None, 7: None}
 def decode(payload):
@@ -113,6 +152,8 @@ def decode(payload):
     if expected is not None: _exact(view, expected + 4)
     elif typ == 5: _exact(view, 4 + 8 + 60)
     elif typ == 7: _exact(view, 4 + 8 + 18)
+    elif typ == 6 and profile == 3:
+        if view.nbytes < 4 + 32: _fail("TRUNCATED")
     elif view.nbytes < 4 + 8 + 16: _fail("TRUNCATED")
     return typ, version, profile, view[4:].tobytes()
 def encode(typ, profile, body):
@@ -131,7 +172,7 @@ def build_packet(header, payload, binding_budget=1280):
 def parse_packet(packet, binding_budget=1280):
     try:
         header, payload = Header.unpack(packet, binding_budget)
-    except Exception as error:
+    except WireError as error:
         category = getattr(error, "category", None)
         if category == "TRUNCATED": _fail("TRUNCATED")
         if category == "TRAILING_BYTES": _fail("TRAILING_BYTES")
@@ -146,8 +187,8 @@ def _open_fields(body):
     return body[0], body[1], struct.unpack("!I", body[2:6])[0], body[6:22], body[22:54], body[54:86], body[86:118]
 
 
-@dataclass(frozen=True)
-class Open:
+@dataclass(frozen=True, repr=False)
+class Open(_Redacted):
     sender_role: int
     receiver_role: int
     service_context: int
@@ -172,8 +213,8 @@ class Open:
         return cls(role, peer, service, peer_eid, public, ephemeral, nonce_value)
 
 
-@dataclass(frozen=True)
-class VerifyCookie:
+@dataclass(frozen=True, repr=False)
+class VerifyCookie(_Redacted):
     receiver_role: int
     sender_role: int
     service_context: int
@@ -210,7 +251,7 @@ def parse_message(payload):
     return decode(payload)
 
 def cookie_input(binding, client_role, server_role, service, scid, client_eid, client_public, client_ephemeral, boot, bucket, server_context):
-    return (b"R8 cookie v1" + binding.encode() + bytes((8, 1, client_role, server_role)) +
+    return (b"R8 cookie v1" + validate_binding(binding) + bytes((8, 1, client_role, server_role)) +
             struct.pack("!IQ", service, scid) + client_eid + hashlib.sha256(client_public).digest() +
             hashlib.sha256(client_ephemeral).digest() + boot + struct.pack("!QI", bucket, server_context))
 def cookie(key, *args):
@@ -245,63 +286,99 @@ def key_prk(shared, thash):
     extract = HMAC(thash, SHA256())
     extract.update(shared)
     return extract.finalize()
-def key_schedule(shared, thash, sender_role, receiver_role, profile=0, slot=0):
-    if sender_role not in (1, 2) or receiver_role not in (1, 2) or not 0 <= profile <= 3 or slot not in (0, 1):
+def _key_schedule_prk(prk, thash, sender_role, receiver_role, profile, slot):
+    if (not isinstance(prk, bytes) or len(prk) != 32 or not isinstance(thash, bytes) or len(thash) != 32
+            or sender_role not in (1, 2) or receiver_role not in (1, 2)
+            or not 0 <= profile <= 3 or slot not in (0, 1)):
         _fail("AUTH_FAILED")
     info = b"R8 key v1" + bytes((8, 1, profile)) + thash + bytes((sender_role, receiver_role, slot))
-    return HKDFExpand(algorithm=SHA256(), length=32, info=info).derive(key_prk(shared, thash))
+    return HKDFExpand(algorithm=SHA256(), length=32, info=info).derive(prk)
+def key_schedule(shared, thash, sender_role, receiver_role, profile, slot):
+    return _key_schedule_prk(key_prk(shared, thash), thash, sender_role, receiver_role, profile, slot)
 def nonce(counter):
-    if not 1 <= counter <= 0xffffffffffffffff: _fail("COUNTER_RANGE")
+    if not 1 <= counter < 0xffffffffffffffff: _fail("COUNTER_RANGE")
     return b"\0\0\0\0" + struct.pack("!Q", counter)
+def _aad(header, prefix, counter):
+    try:
+        header_view = memoryview(header).cast("B")
+        prefix_view = memoryview(prefix).cast("B")
+    except (TypeError, ValueError):
+        _fail("AUTH_FAILED")
+    if header_view.nbytes != 48 or prefix_view.nbytes != 4:
+        _fail("AUTH_FAILED")
+    canonical_header = bytearray(header_view)
+    canonical_header[5] = 0
+    return bytes(canonical_header) + prefix_view.tobytes() + struct.pack("!Q", counter)
 def seal(key, header, prefix, counter, plaintext):
-    return ChaCha20Poly1305(key).encrypt(nonce(counter), plaintext, header + prefix + struct.pack("!Q", counter))
+    return ChaCha20Poly1305(key).encrypt(nonce(counter), plaintext, _aad(header, prefix, counter))
 def open_sealed(key, header, prefix, counter, ciphertext):
-    try: return ChaCha20Poly1305(key).decrypt(nonce(counter), ciphertext, header + prefix + struct.pack("!Q", counter))
+    try: return ChaCha20Poly1305(key).decrypt(nonce(counter), ciphertext, _aad(header, prefix, counter))
     except InvalidTag: _fail("AUTH_FAILED")
 
 class ReplayWindow:
+    WINDOW = 4096
+    MAX_FORWARD_JUMP = 65536
+
     def __init__(self):
         self.highest = 0
         self.bits = 0
         self.generation = 0
     def preview(self, counter):
-        if counter == 0: _fail("COUNTER_RANGE")
-        if self.highest and counter > self.highest + 1048576: _fail("REPLAY")
+        nonce(counter)
+        if self.highest and counter > self.highest + self.MAX_FORWARD_JUMP: _fail("REPLAY")
         if counter <= self.highest:
             distance = self.highest - counter
-            if distance >= 1024 or self.bits & (1 << distance): _fail("REPLAY")
+            if distance >= self.WINDOW or self.bits & (1 << distance): _fail("REPLAY")
         return self.generation
     def check_and_mark(self, counter):
         self.preview(counter)
         if counter > self.highest:
             shift = counter - self.highest
-            self.highest, self.bits = counter, (1 if shift >= 1024 else
-                ((self.bits << shift) | 1) & ((1 << 1024) - 1))
+            self.highest, self.bits = counter, (1 if shift >= self.WINDOW else
+                ((self.bits << shift) | 1) & ((1 << self.WINDOW) - 1))
         else:
             self.bits |= 1 << (self.highest - counter)
         self.generation += 1
 
 class _DecryptPreview:
-    __slots__ = ("_session", "_generation", "_counter", "_used")
+    __slots__ = ("_session", "_generation", "_counter", "_used", "_owner")
     def __init__(self, session, generation, counter):
-        self._session, self._generation, self._counter, self._used = session, generation, counter, False
+        self._session, self._generation, self._counter, self._used, self._owner = session, generation, counter, False, None
     def __repr__(self):
         return "<DecryptPreview>"
+    def _invalidate(self):
+        owner, self._owner = self._owner, None
+        self._session, self._generation, self._counter, self._used = None, -1, 0, True
+        if owner is not None:
+            owner._purge()
 
 class Session:
     def __init__(self, key, send_counter=1):
-        self.key, self.send_counter, self.replay = key, send_counter, ReplayWindow()
-        self._lock, self._previews = threading.RLock(), set()
+        self._key, self.send_counter, self.replay = key, send_counter, ReplayWindow()
+        self._lock, self._previews, self._released = threading.RLock(), set(), False
+    def _move_unlocked(self):
+        if self._released or self._previews or self._key is None:
+            _fail("UNEXPECTED_MESSAGE")
+        owned = Session(self._key, self.send_counter)
+        owned.replay.highest, owned.replay.bits, owned.replay.generation = (
+            self.replay.highest, self.replay.bits, self.replay.generation
+        )
+        self._key, self.send_counter, self.replay, self._released = None, 0, ReplayWindow(), True
+        return owned
     def encrypt(self, header, prefix, plaintext):
         with self._lock:
-            if self.send_counter > 0xffffffffffffffff: _fail("COUNTER_EXHAUSTED")
+            if self._released or self._key is None:
+                _fail("UNEXPECTED_MESSAGE")
+            if not 1 <= self.send_counter < 0xffffffffffffffff: _fail("COUNTER_EXHAUSTED")
             counter = self.send_counter; self.send_counter += 1
-            return counter, seal(self.key, header, prefix, counter, plaintext)
+            return counter, seal(self._key, header, prefix, counter, plaintext)
     def preview_decrypt(self, header, prefix, counter, ciphertext):
         with self._lock:
+            if self._released or self._key is None:
+                _fail("UNEXPECTED_MESSAGE")
             if len(self._previews) >= 64: _fail("CAPACITY")
             generation = self.replay.preview(counter)
-            plaintext = open_sealed(self.key, header, prefix, counter, ciphertext)
+            plaintext = open_sealed(self._key, header, prefix, counter, ciphertext)
             preview = _DecryptPreview(self, generation, counter)
             self._previews.add(preview)
             return plaintext, preview
@@ -311,10 +388,12 @@ class Session:
                     or preview._used or preview not in self._previews
                     or preview._generation != self.replay.generation):
                 self._previews.discard(preview)
+                if isinstance(preview, _DecryptPreview):
+                    preview._invalidate()
                 _fail("REPLAY")
             self.replay.check_and_mark(preview._counter)
-            for stale in self._previews:
-                stale._used = True
+            for stale in tuple(self._previews):
+                stale._invalidate()
             self._previews.clear()
     def abort_decrypt(self, preview):
         with self._lock:
@@ -324,20 +403,234 @@ class Session:
             if not valid:
                 if isinstance(preview, _DecryptPreview) and preview._session is self:
                     self._previews.discard(preview)
-                    preview._used = True
+                    preview._invalidate()
                 _fail("REPLAY")
             self._previews.remove(preview)
-            preview._used = True
+            preview._invalidate()
     def _discard_previews(self):
         with self._lock:
-            for preview in self._previews:
-                preview._used = True
+            for preview in tuple(self._previews):
+                preview._invalidate()
             self._previews.clear()
+    def release(self):
+        """Irreversibly purge this session under its own lock."""
+        with self._lock:
+            if self._released:
+                return
+            for preview in tuple(self._previews):
+                preview._invalidate()
+            self._previews.clear()
+            self._key = None
+            self.send_counter = 0
+            self.replay = ReplayWindow()
+            self._released = True
     def decrypt(self, header, prefix, counter, ciphertext):
         with self._lock:
             plaintext, preview = self.preview_decrypt(header, prefix, counter, ciphertext)
             self.commit_decrypt(preview)
             return plaintext
+class Profile3Bootstrap:
+    """Sole owner of transferred Profile-3 session material."""
+    __slots__ = ("scid", "role", "local_loc", "peer_loc", "outbound", "inbound", "_prk", "_thash",
+                 "_lock", "_sessions")
+
+    def __init__(self, scid, role, local_loc, peer_loc, outbound, inbound, prk, thash, *, _authority):
+        if _authority is not _PROFILE3_BOOTSTRAP_AUTHORITY:
+            _fail("UNEXPECTED_MESSAGE")
+        self.scid, self.role = scid, role
+        self.local_loc, self.peer_loc = local_loc, peer_loc
+        self.outbound, self.inbound = outbound, inbound
+        self._prk, self._thash = prk, thash
+        self._lock, self._sessions = threading.RLock(), {outbound, inbound}
+
+    def __repr__(self):
+        return "<Profile3Bootstrap>"
+
+    def _transfer(self):
+        with self._lock:
+            if (self.scid == 0 or self.outbound is None or self.inbound is None
+                    or self._prk is None or self._thash is None or self.outbound is self.inbound):
+                _fail("UNEXPECTED_MESSAGE")
+            first, second = sorted((self.outbound, self.inbound), key=id)
+            with first._lock:
+                with second._lock:
+                    if (first._released or second._released or first._previews or second._previews
+                            or first._key is None or second._key is None):
+                        _fail("UNEXPECTED_MESSAGE")
+                    outbound, inbound = self.outbound._move_unlocked(), self.inbound._move_unlocked()
+            owned = Profile3Bootstrap(
+                self.scid, self.role, self.local_loc, self.peer_loc,
+                outbound, inbound, self._prk, self._thash,
+                _authority=_PROFILE3_BOOTSTRAP_AUTHORITY,
+            )
+            self.scid = self.role = 0
+            self.local_loc = self.peer_loc = None
+            self.outbound = self.inbound = self._prk = self._thash = None
+            self._sessions.clear()
+            return owned
+
+    def take_slot1(self):
+        with self._lock:
+            if self._prk is None:
+                _fail("UNEXPECTED_MESSAGE")
+            prk, thash = self._prk, self._thash
+            self._prk = self._thash = None
+            peer_role = 2 if self.role == 1 else 1
+            outbound = Session(_key_schedule_prk(prk, thash, self.role, peer_role, 3, 1))
+            inbound = Session(_key_schedule_prk(prk, thash, peer_role, self.role, 3, 1))
+            self._sessions.update((outbound, inbound))
+            return outbound, inbound
+
+    def close(self):
+        with self._lock:
+            for session in tuple(self._sessions):
+                session.release()
+            self._sessions.clear()
+            self.scid = self.role = 0
+            self.local_loc = self.peer_loc = None
+            self.outbound = self.inbound = self._prk = self._thash = None
+    def release_sessions(self, *sessions):
+        with self._lock:
+            for session in sessions:
+                if session is not None:
+                    session.release()
+                    self._sessions.discard(session)
+                    if self.outbound is session:
+                        self.outbound = None
+                    if self.inbound is session:
+                        self.inbound = None
+class Profile3DataPreview:
+    __slots__ = ("_session", "_session_preview", "_delivery_id", "_plaintext")
+    def __init__(self, session, session_preview, delivery_id, plaintext):
+        self._session, self._session_preview = session, session_preview
+        self._delivery_id, self._plaintext = delivery_id, plaintext
+        session_preview._owner = self
+    @property
+    def delivery_id(self):
+        return self._delivery_id
+    @property
+    def plaintext(self):
+        return self._plaintext
+    def __repr__(self):
+        return "<Profile3DataPreview>"
+    def _purge(self):
+        self._plaintext = None
+        self._delivery_id = 0
+        self._session = self._session_preview = None
+
+
+def _profile3_data_fields(payload):
+    typ, version, profile, body = decode(payload)
+    if typ != 6 or version != 1 or profile != 3 or len(body) < 32:
+        _decode_fail()
+    counter, delivery_id = struct.unpack("!QQ", body[:16])
+    if not 0 < delivery_id < 0xffffffffffffffff:
+        _decode_fail()
+    nonce(counter)
+    return counter, delivery_id, body[16:]
+
+
+def _profile3_data_header(header, payload, binding_budget):
+    if not isinstance(header, Header):
+        _decode_fail()
+    try:
+        packet = header.pack(payload, binding_budget)
+    except WireError as error:
+        category = getattr(error, "category", None)
+        if category in ("BINDING_BUDGET", "PACKET_CAP"):
+            _fail("BUDGET")
+        if category == "TRUNCATED":
+            _fail("TRUNCATED")
+        if category == "TRAILING_BYTES":
+            _fail("TRAILING_BYTES")
+        _decode_fail()
+    parsed, _ = parse_packet(packet, binding_budget)
+    if (parsed.profile != 3 or parsed.nh != NH_SES or parsed.scid == 0
+            or parsed.pslot not in (0, 1)
+            or parsed.flags != (1 if parsed.pslot == 0 else 3)):
+        _decode_fail()
+    return packet[:48]
+
+
+def _profile3_aad(header, counter, delivery_id):
+    if type(delivery_id) is not int or not 0 < delivery_id < 0xffffffffffffffff:
+        _decode_fail()
+    return _aad(header, b"\x06\x01\x03\x00", counter) + struct.pack("!Q", delivery_id)
+
+
+def _profile3_seal(key, header, counter, delivery_id, plaintext):
+    return ChaCha20Poly1305(key).encrypt(nonce(counter), plaintext,
+                                         _profile3_aad(header, counter, delivery_id))
+
+
+def _profile3_open(key, header, counter, delivery_id, ciphertext):
+    try:
+        return ChaCha20Poly1305(key).decrypt(nonce(counter), ciphertext,
+                                             _profile3_aad(header, counter, delivery_id))
+    except InvalidTag:
+        _fail("AUTH_FAILED")
+
+
+def seal_profile3_data(session, header, delivery_id, plaintext, binding_budget=1280):
+    """Seal one exact Profile-3 SESSION_DATA packet with an existing session."""
+    if not isinstance(session, Session):
+        _decode_fail()
+    if type(delivery_id) is not int or not 0 < delivery_id < 0xffffffffffffffff:
+        _decode_fail()
+    try:
+        plaintext = memoryview(plaintext).cast("B").tobytes()
+    except (TypeError, ValueError):
+        _decode_fail()
+    prefix = b"\x06\x01\x03\x00"
+    placeholder = prefix + struct.pack("!QQ", 1, delivery_id) + b"\0" * (len(plaintext) + 16)
+    aad_header = _profile3_data_header(header, placeholder, binding_budget)
+    with session._lock:
+        if session._released or session._key is None:
+            _fail("UNEXPECTED_MESSAGE")
+        if not 1 <= session.send_counter < 0xffffffffffffffff:
+            _fail("COUNTER_EXHAUSTED")
+        counter = session.send_counter
+        ciphertext = _profile3_seal(session._key, aad_header, counter, delivery_id, plaintext)
+        session.send_counter += 1
+    return aad_header + prefix + struct.pack("!QQ", counter, delivery_id) + ciphertext
+
+
+def preview_profile3_data(session, packet, binding_budget=1280):
+    """Authenticate Profile-3 SESSION_DATA without marking its counter replayed."""
+    if not isinstance(session, Session):
+        _decode_fail()
+    header, payload = parse_packet(packet, binding_budget)
+    aad_header = _profile3_data_header(header, payload, binding_budget)
+    counter, delivery_id, ciphertext = _profile3_data_fields(payload)
+    with session._lock:
+        if session._released or session._key is None:
+            _fail("UNEXPECTED_MESSAGE")
+        if len(session._previews) >= 64:
+            _fail("CAPACITY")
+        generation = session.replay.preview(counter)
+        plaintext = _profile3_open(session._key, aad_header, counter, delivery_id, ciphertext)
+        session_preview = _DecryptPreview(session, generation, counter)
+        preview = Profile3DataPreview(session, session_preview, delivery_id, plaintext)
+        session._previews.add(session_preview)
+        return preview
+
+
+def commit_profile3_data(session, preview):
+    """Mark a previously authenticated Profile-3 DATA counter and return its delivery."""
+    if not isinstance(session, Session) or not isinstance(preview, Profile3DataPreview) or preview._session is not session:
+        _fail("REPLAY")
+    delivery_id, plaintext, session_preview = preview.delivery_id, preview.plaintext, preview._session_preview
+    session.commit_decrypt(session_preview)
+    return delivery_id, plaintext
+
+
+def abort_profile3_data(session, preview):
+    """Discard a Profile-3 DATA preview without changing replay state."""
+    if not isinstance(session, Session) or not isinstance(preview, Profile3DataPreview) or preview._session is not session:
+        _fail("REPLAY")
+    session.abort_decrypt(preview._session_preview)
+
+
 class _DataPreview:
     __slots__ = ("_machine", "_session_preview", "_record", "_close", "_used")
     def __init__(self, machine, session_preview, record, close):
@@ -345,6 +638,9 @@ class _DataPreview:
         self._record, self._close, self._used = record, close, False
     def __repr__(self):
         return "<DataPreview>"
+    def _invalidate(self):
+        self._machine = self._session_preview = self._record = None
+        self._close, self._used = False, True
 
 def _allowed_locs(value, current):
     if value is None:
@@ -360,17 +656,17 @@ def _loc(value):
     if not isinstance(value, ipaddress.IPv6Address):
         raise ValueError("location")
     return value
-@dataclass
-class Pending:
+@dataclass(repr=False)
+class Pending(_Redacted):
     scid: int
-    binding: UdpBinding
+    binding: bytes
     client: Open
     created: float
     cached_ack: bytes
 
 
-@dataclass(frozen=True)
-class ServerConfig:
+@dataclass(frozen=True, repr=False)
+class ServerConfig(_Redacted):
     identity: Identity
     peer_pin: PeerPin
     service_context: int
@@ -385,8 +681,9 @@ class ServerConfig:
     def __post_init__(self):
         if (self.peer_pin.role != 1 or not 0 < self.service_context <= 0xffffffff
                 or not 0 < self.server_context_id <= 0xffffffff or not 0 <= self.profile <= 3
-                or not 48 <= self.binding_budget <= 1280 or self.pending_limit < 1
-                or self.established_limit < 1 or not isinstance(self.local_loc, ipaddress.IPv6Address)
+                or not 48 <= self.binding_budget <= 1280 or not 1 <= self.pending_limit <= 256
+                or not 1 <= self.established_limit <= 1024
+                or not isinstance(self.local_loc, ipaddress.IPv6Address)
                 or not isinstance(self.peer_loc, ipaddress.IPv6Address)):
             raise ValueError("invalid server configuration")
 
@@ -445,6 +742,7 @@ class ServerMachine:
         if opening.service_context != self.service_context: _fail("SERVICE_MISMATCH")
         if opening.sender_public_key != self.peer_pin.public_key: _fail("PIN_MISMATCH")
         if opening.sender_eid != self.peer_pin.eid: _fail("EID_KEY_MISMATCH")
+        validate_binding(binding)
         value = cookie(self.cookie_key, binding, opening.sender_role, opening.receiver_role,
                        opening.service_context, header.scid, opening.sender_eid, opening.sender_public_key,
                        opening.sender_ephemeral, self.boot_instance, bucket, self.server_context_id)
@@ -457,14 +755,14 @@ class ServerMachine:
 
     def _discard_record(self, record):
         record.cached_ack = b""
-        for name in ("auth_packet", "hash", "c2s", "s2c", "accept_replay"):
+        for name in ("auth_packet", "hash", "c2s", "s2c", "prk", "accept_replay"):
             if hasattr(record, name):
                 setattr(record, name, None)
     def _dispose_established(self, established):
         for preview in tuple(self._previews):
             if preview._record is established:
                 self._previews.remove(preview)
-                preview._used = True
+                preview._invalidate()
         established["c2s"]._discard_previews()
         established["s2c"]._discard_previews()
         self._discard_record(established["record"])
@@ -481,6 +779,7 @@ class ServerMachine:
 
     def receive_open_auth(self, packet, binding, current_bucket, server_ephemeral_secret, server_nonce):
         if len(packet) > self.config.binding_budget: _fail("BUDGET")
+        binding_bytes = validate_binding(binding)
         header, payload = parse_packet(packet, self.config.binding_budget)
         self._header(header)
         auth = OpenAuth.parse(payload)
@@ -489,7 +788,7 @@ class ServerMachine:
         if existing is None:
             existing = self.established.get(header.scid, {}).get("record")
         if existing is not None:
-            if existing.binding == binding and existing.auth_packet == bytes(packet):
+            if existing.binding == binding_bytes and existing.auth_packet == bytes(packet):
                 return existing.cached_ack
             _fail("SCID_COLLISION")
         auth = OpenAuth.parse(payload)
@@ -519,10 +818,14 @@ class ServerMachine:
         if len(self.pending) >= self.pending_limit:
             _fail("CAPACITY")
         thash = transcript_hash(t0, auth.signature, signature)
-        record = Pending(header.scid, binding, Open(auth.sender_role, auth.receiver_role,
+        record = Pending(header.scid, binding_bytes, Open(auth.sender_role, auth.receiver_role,
             auth.service_context, auth.sender_eid, auth.sender_public_key, auth.sender_ephemeral,
             auth.sender_nonce), self.clock(), ack_packet)
-        record.auth_packet, record.hash, record.c2s, record.s2c = bytes(packet), thash, key_schedule(shared, thash, 1, 2), key_schedule(shared, thash, 2, 1)
+        record.auth_packet, record.hash, record.c2s, record.s2c = (bytes(packet), thash,
+            key_schedule(shared, thash, 1, 2, self.config.profile, 0),
+            key_schedule(shared, thash, 2, 1, self.config.profile, 0))
+        if self.config.profile == 3:
+            record.prk = key_prk(shared, thash)
         record.accept_replay = ReplayWindow()
         self.pending[header.scid] = record
         return ack_packet
@@ -546,7 +849,9 @@ class ServerMachine:
                     _fail("CAPACITY")
                 record.accept_replay.check_and_mark(message.counter)
                 self.pending.pop(header.scid)
-                self.established[header.scid] = {"record": record, "c2s": Session(record.c2s),
+                c2s_session = Session(record.c2s)
+                c2s_session.replay.check_and_mark(message.counter)
+                self.established[header.scid] = {"record": record, "c2s": c2s_session,
                                                  "s2c": Session(record.s2c), "last": self.clock()}
             else:
                 try:
@@ -570,6 +875,8 @@ class ServerMachine:
             if established is None: _fail("UNEXPECTED_MESSAGE")
             message = ProtectedMessage.parse(payload)
             if message.typ not in (6, 7) or message.profile != self.config.profile: _fail("UNEXPECTED_MESSAGE")
+            if self.config.profile == 3 and message.typ == 6:
+                _fail("UNEXPECTED_MESSAGE")
             plaintext, session_preview = established["c2s"].preview_decrypt(
                 packet[:48], payload[:4], message.counter, message.ciphertext)
             if message.typ == 7:
@@ -619,6 +926,21 @@ class ServerMachine:
     def promote_peer_loc(self, loc):
         with self._lock:
             self.peer_loc = _loc(loc)
+    def take_profile3(self, scid):
+        with self._lock:
+            if self.config.profile != 3:
+                _fail("UNEXPECTED_MESSAGE")
+            established = self.established.get(scid)
+            if (established is None or established["c2s"]._previews or established["s2c"]._previews
+                    or any(preview._record is established for preview in self._previews)):
+                _fail("UNEXPECTED_MESSAGE")
+            record = established["record"]
+            bootstrap = Profile3Bootstrap(scid, self.identity_role, self.local_loc, self.peer_loc,
+                                          established["s2c"], established["c2s"], record.prk, record.hash,
+                                          _authority=_PROFILE3_BOOTSTRAP_AUTHORITY)
+            self.established.pop(scid)
+            self._discard_record(record)
+            return bootstrap
 
     def send_data(self, scid, data, close=False):
         return self.send_data_with_locs(scid, data, self.local_loc, self.peer_loc, close)
@@ -626,6 +948,8 @@ class ServerMachine:
         with self._lock:
             established = self.established.get(scid)
             if established is None: _fail("UNEXPECTED_MESSAGE")
+            if self.config.profile == 3 and not close:
+                _fail("UNEXPECTED_MESSAGE")
             typ = 7 if close else 6
             plaintext = struct.pack("!H", data) if close and isinstance(data, int) else bytes(data)
             header = self._response_header(scid, True, source, destination)
@@ -661,7 +985,11 @@ class ServerMachine:
             self.prior_cookie_key, self.prior_key_valid_until = prior_cookie_key, prior_key_valid_until
 class PrevalidationLimiter:
     def __init__(self, clock, hash_key, max_sources=4096, window=20, burst=2000, refill=1000):
-        if len(hash_key) != 32: raise ValueError("limiter hash key")
+        if (len(hash_key) != 32 or type(max_sources) is not int or not 1 <= max_sources <= 4096
+                or type(window) is not int or not 1 <= window <= 20
+                or type(burst) is not int or not 1 <= burst <= 2000
+                or type(refill) is not int or not 0 <= refill <= 1000):
+            raise ValueError("limiter configuration")
         self.clock, self.hash_key, self.max_sources, self.window = clock, bytes(hash_key), max_sources, window
         self.burst, self.refill, self.tokens, self.updated, self.sources = burst, refill, burst, clock(), {}
 
@@ -671,21 +999,30 @@ class PrevalidationLimiter:
 
     def admit(self, source, request_bytes, response_bytes):
         now = self.clock()
-        self.tokens = min(self.burst, self.tokens + (now - self.updated) * self.refill)
-        self.updated = now
-        self.sources = {key: value for key, value in self.sources.items() if now - value[0] <= self.window}
+        if (type(now) not in (int, float) or now < self.updated
+                or type(request_bytes) is not int or request_bytes < 0
+                or type(response_bytes) is not int or response_bytes < 0):
+            _fail("CAPACITY")
+        elapsed = int(now - self.updated)
+        if elapsed:
+            self.tokens = min(self.burst, self.tokens + elapsed * self.refill)
+            self.updated += elapsed
+        self.sources = {key: value for key, value in self.sources.items()
+                        if now - value[1] < self.window}
         slot = self._slot(source)
         if slot not in self.sources and len(self.sources) >= self.max_sources:
-            oldest = min(self.sources.items(), key=lambda item: (item[1][0], item[0]))[0]
-            del self.sources[oldest]
-        prior = self.sources.get(slot, (now, 0, 0))
-        if response_bytes > request_bytes or prior[2] + response_bytes > prior[1] + request_bytes or self.tokens < 1:
+            _fail("CAPACITY")
+        prior = self.sources.get(slot, (now, now, 0, 0))
+        if now - prior[0] >= self.window:
+            prior = (now, prior[1], 0, 0)
+        requests, responses = prior[2] + request_bytes, prior[3] + response_bytes
+        if response_bytes > request_bytes or responses > requests or self.tokens < 1:
             _fail("CAPACITY")
         self.tokens -= 1
-        self.sources[slot] = (now, prior[1] + request_bytes, prior[2] + response_bytes)
+        self.sources[slot] = (prior[0], now, requests, responses)
 
-@dataclass(frozen=True)
-class OpenAuth:
+@dataclass(frozen=True, repr=False)
+class OpenAuth(_Redacted):
     sender_role: int; receiver_role: int; service_context: int; sender_eid: bytes
     sender_public_key: bytes; sender_ephemeral: bytes; sender_nonce: bytes
     boot_instance: bytes; cookie_value: bytes; signature: bytes
@@ -703,8 +1040,8 @@ class OpenAuth:
         return cls(body[0], body[1], struct.unpack("!I", body[2:6])[0], body[6:22], body[22:54],
                    body[54:86], body[86:118], body[118:134], body[134:166], body[166:230])
 
-@dataclass(frozen=True)
-class OpenAck:
+@dataclass(frozen=True, repr=False)
+class OpenAck(_Redacted):
     sender_role: int; receiver_role: int; service_context: int; sender_eid: bytes
     sender_public_key: bytes; sender_ephemeral: bytes; sender_nonce: bytes; signature: bytes
     def build(self, profile=0):
@@ -720,8 +1057,8 @@ class OpenAck:
         return cls(body[0], body[1], struct.unpack("!I", body[2:6])[0], body[6:22], body[22:54],
                    body[54:86], body[86:118], body[118:182])
 
-@dataclass(frozen=True)
-class ProtectedMessage:
+@dataclass(frozen=True, repr=False)
+class ProtectedMessage(_Redacted):
     typ: int; profile: int; counter: int; ciphertext: bytes
     def build(self):
         if self.typ not in (5, 6, 7): _decode_fail()
@@ -824,8 +1161,10 @@ class ClientMachine:
             shared = x25519(self.ephemeral_secret, ack.sender_ephemeral)
             client_signature = OpenAuth.parse(self.auth_payload).signature
             self.transcript_hash = transcript_hash(t0, client_signature, ack.signature)
-            self.c2s = key_schedule(shared, self.transcript_hash, 1, 2, self.profile)
-            self.s2c = key_schedule(shared, self.transcript_hash, 2, 1, self.profile)
+            if self.profile == 3:
+                self._profile3_prk = key_prk(shared, self.transcript_hash)
+            self.c2s = key_schedule(shared, self.transcript_hash, 1, 2, self.profile, 0)
+            self.s2c = key_schedule(shared, self.transcript_hash, 2, 1, self.profile, 0)
             prefix = bytes((5, 1, self.profile, 0))
             accept_header = Header(NH_SES, self.source, self.destination, profile=self.profile,
                                    flags=1, pslot=0, scid=self.scid)
@@ -843,6 +1182,17 @@ class ClientMachine:
             if self.state != self.ESTABLISHED:
                 self._release()
             raise
+    def take_profile3(self):
+        with self._lock:
+            if (self.profile != 3 or self.state != self.ESTABLISHED or self._previews
+                    or self.c2s_session._previews or self.s2c_session._previews):
+                _fail("UNEXPECTED_MESSAGE")
+            bootstrap = Profile3Bootstrap(self.scid, 1, self.local_loc, self.peer_loc,
+                                          self.c2s_session, self.s2c_session,
+                                          self._profile3_prk, self.transcript_hash,
+                                          _authority=_PROFILE3_BOOTSTRAP_AUTHORITY)
+            self._clear_state()
+            return bootstrap
     def _protected_header(self, outbound, source=None, destination=None):
         return Header(NH_SES, self.local_loc if outbound and source is None else
                       self.peer_loc if not outbound and source is None else _loc(source),
@@ -854,6 +1204,8 @@ class ClientMachine:
     def send_data_with_locs(self, data, source, destination):
         with self._lock:
             if self.state != self.ESTABLISHED: _fail("UNEXPECTED_MESSAGE")
+            if self.profile == 3:
+                _fail("UNEXPECTED_MESSAGE")
             plaintext = bytes(data)
             prefix = bytes((6, 1, self.profile, 0))
             header = self._protected_header(True, source, destination)
@@ -877,6 +1229,8 @@ class ClientMachine:
                 _fail("AUTH_FAILED")
             message = ProtectedMessage.parse(payload)
             if message.typ not in (6, 7) or message.profile != self.profile: _fail("UNEXPECTED_MESSAGE")
+            if self.profile == 3 and message.typ == 6:
+                _fail("UNEXPECTED_MESSAGE")
             plaintext, session_preview = self.s2c_session.preview_decrypt(
                 packet[:48], payload[:4], message.counter, message.ciphertext)
             if message.typ == 7:
@@ -890,19 +1244,21 @@ class ClientMachine:
                     or preview._used or preview not in self._previews
                     or preview._record is not self.s2c_session):
                 self._previews.discard(preview)
+                if isinstance(preview, _DataPreview) and preview._machine is self:
+                    preview._invalidate()
                 _fail("REPLAY")
+            record, close = preview._record, preview._close
             try:
-                self.s2c_session.commit_decrypt(preview._session_preview)
+                record.commit_decrypt(preview._session_preview)
             except SessionError:
                 self._previews.discard(preview)
-                preview._used = True
+                preview._invalidate()
                 raise
-            for stale in self._previews:
-                if stale._session_preview._session is self.s2c_session:
-                    stale._used = True
-            self._previews = {stale for stale in self._previews
-                              if stale._session_preview._session is not self.s2c_session}
-            if preview._close:
+            stale_previews = {stale for stale in self._previews if stale._record is record}
+            self._previews.difference_update(stale_previews)
+            for stale in stale_previews:
+                stale._invalidate()
+            if close:
                 self._clear_state()
             else:
                 self.deadline = self.clock()
@@ -914,11 +1270,11 @@ class ClientMachine:
             if not valid:
                 if isinstance(preview, _DataPreview) and preview._machine is self:
                     self._previews.discard(preview)
-                    preview._used = True
+                    preview._invalidate()
                 _fail("REPLAY")
-            self.s2c_session.abort_decrypt(preview._session_preview)
+            preview._record.abort_decrypt(preview._session_preview)
             self._previews.remove(preview)
-            preview._used = True
+            preview._invalidate()
     def receive_protected(self, packet):
         plaintext, _, _, preview = self.preview_data(packet)
         self.commit_data(preview)
@@ -955,8 +1311,8 @@ class ClientMachine:
     def _clear_state(self):
         with self._lock:
             self.state = self.RELEASED
-            for preview in self._previews:
-                preview._used = True
+            for preview in tuple(self._previews):
+                preview._invalidate()
             self._previews.clear()
             for name in ("c2s_session", "s2c_session"):
                 session = getattr(self, name, None)
@@ -965,7 +1321,7 @@ class ClientMachine:
             for name in ("ephemeral_secret", "ephemeral", "nonce_value", "opening", "open_packet",
                          "verify_payload", "boot_instance", "auth_payload", "auth_packet",
                          "ack_payload", "ack_packet", "accept_payload", "accept_packet",
-                         "transcript_hash", "c2s", "s2c", "c2s_session", "s2c_session"):
+                         "transcript_hash", "c2s", "s2c", "_profile3_prk", "c2s_session", "s2c_session"):
                 if hasattr(self, name):
                     setattr(self, name, None)
     def _release(self):

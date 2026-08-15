@@ -1,0 +1,418 @@
+{
+  "$schema": "redundant-v0.1.schema.json",
+  "contract_version": "r8-redundant-v0.1-vectors-v1",
+  "status": "real-reviewed-synthetic-artifact",
+  "synthetic_only": true,
+  "synthetic_material_notice": "SYNTHETIC TEST-ONLY: fixed non-operational material; never a runtime default, credential, or deployment input.",
+  "cryptography": {
+    "implementation": "independent construction using cryptography ChaCha20Poly1305 and hashlib/hmac SHA-256 HKDF extract/expand; no product r8session/r8-session dependency",
+    "shared_secret_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "transcript_hash_hex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+    "hkdf_extract_salt_hex": "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf",
+    "hkdf_prk_hex": "417e7502c38837c356dc6d3f1c84cfac0efea0e929628cb89ce52f74716620ad",
+    "hkdf_info_format": "ASCII R8 key v1 || wire_version:u8 || session_version:u8 || profile:u8 || transcript_hash:32 || sender_role:u8 || receiver_role:u8 || path_slot:u8",
+    "keys": {
+      "c2s_slot0_key_hex": "8b11176b1599313aba58254fbc84ba9138ffa8b7f7cc8a054021880d41f3fa5c",
+      "c2s_slot1_key_hex": "0a23ee0d8ae974cb78b599a5fc30cdbbd667d5a38ad7f5eaa3055930834338f3",
+      "s2c_slot0_key_hex": "2668812e3a6abb07b997caa99c9c65cb18f9743199dccaad9f6739032c6f310b",
+      "s2c_slot1_key_hex": "cae632ad62440bb7a5dd959745c6cb70eebd7d6ce0588d6ac5aff58e5f9e2f29"
+    }
+  },
+  "common": {
+    "scid": 72623859790382856,
+    "source_loc_hex": "20010db8000000000000000000000001",
+    "destination_loc_hex": "20010db8000000000000000000000002",
+    "wire_version": 8,
+    "session_version": 1,
+    "profile": 3,
+    "binding_budget": 1280,
+    "profile3_overhead": 84
+  },
+  "repr_claims": {
+    "key_material_redacted_in_repr": true,
+    "plaintext_redacted_in_repr": true,
+    "allowed_repr_tokens": [
+      "<RedundantSession>",
+      "[REDACTED]"
+    ]
+  },
+  "positive_cases": [
+    {
+      "id": "p3-data-slot0",
+      "kind": "positive",
+      "direction": "c2s",
+      "slot": 0,
+      "plaintext_hex": "73796e74686574696320726564756e64616e74207061796c6f6164",
+      "header_hex": "8300003f03400100010203040506070820010db800000000000000000000000120010db8000000000000000000000002",
+      "prefix_hex": "06010300",
+      "counter": 1,
+      "delivery_id": 1230066625199609624,
+      "nonce_hex": "000000000000000000000001",
+      "aad_hex": "8300003f03000100010203040506070820010db800000000000000000000000120010db80000000000000000000000020601030000000000000000011112131415161718",
+      "ciphertext_hex": "735fe3853808bf81d5f71c6605ffc8421d921b3ec8e9ea0fc47bc3",
+      "tag_hex": "1d467f2d75e05e85ade74a0d12f15b16",
+      "full_packet_hex": "8300003f03400100010203040506070820010db800000000000000000000000120010db80000000000000000000000020601030000000000000000011112131415161718735fe3853808bf81d5f71c6605ffc8421d921b3ec8e9ea0fc47bc31d467f2d75e05e85ade74a0d12f15b16",
+      "exact_size": 111,
+      "binding_budget": 1280,
+      "budget_remaining": 1169
+    },
+    {
+      "id": "p3-data-slot1",
+      "kind": "positive",
+      "direction": "c2s",
+      "slot": 1,
+      "plaintext_hex": "73796e74686574696320726564756e64616e74207061796c6f6164",
+      "header_hex": "8300003f03400301010203040506070820010db800000000000000000000000120010db8000000000000000000000002",
+      "prefix_hex": "06010300",
+      "counter": 1,
+      "delivery_id": 1230066625199609624,
+      "nonce_hex": "000000000000000000000001",
+      "aad_hex": "8300003f03000301010203040506070820010db800000000000000000000000120010db80000000000000000000000020601030000000000000000011112131415161718",
+      "ciphertext_hex": "fb680ee7738640417821977d7cdb0505c4254bfe7b9c4df8109ca8",
+      "tag_hex": "130917eac918b4f9e2a23ac3810a93db",
+      "full_packet_hex": "8300003f03400301010203040506070820010db800000000000000000000000120010db80000000000000000000000020601030000000000000000011112131415161718fb680ee7738640417821977d7cdb0505c4254bfe7b9c4df8109ca8130917eac918b4f9e2a23ac3810a93db",
+      "exact_size": 111,
+      "binding_budget": 1280,
+      "budget_remaining": 1169
+    },
+    {
+      "id": "p3-empty-slot0",
+      "kind": "positive",
+      "direction": "c2s",
+      "slot": 0,
+      "plaintext_hex": "",
+      "header_hex": "8300002403400100010203040506070820010db800000000000000000000000120010db8000000000000000000000002",
+      "prefix_hex": "06010300",
+      "counter": 2,
+      "delivery_id": 1230066625199609625,
+      "nonce_hex": "000000000000000000000002",
+      "aad_hex": "8300002403000100010203040506070820010db800000000000000000000000120010db80000000000000000000000020601030000000000000000021112131415161719",
+      "ciphertext_hex": "",
+      "tag_hex": "5607ec43e2c5ab813385fb32419f9f75",
+      "full_packet_hex": "8300002403400100010203040506070820010db800000000000000000000000120010db800000000000000000000000206010300000000000000000211121314151617195607ec43e2c5ab813385fb32419f9f75",
+      "exact_size": 84,
+      "binding_budget": 1280,
+      "budget_remaining": 1196
+    },
+    {
+      "id": "p3-boundary-slot0",
+      "kind": "positive",
+      "direction": "c2s",
+      "slot": 0,
+      "plaintext_hex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecfd0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeeff0f1f2f3f4f5f6f7f8f9fafbfcfdfeff000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445464748494a4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9fa0a1a2a3a4a5a6a7a8a9aaab",
+      "header_hex": "830004d003400100010203040506070820010db800000000000000000000000120010db8000000000000000000000002",
+      "prefix_hex": "06010300",
+      "counter": 3,
+      "delivery_id": 1230066625199609626,
+      "nonce_hex": "000000000000000000000003",
+      "aad_hex": "830004d003000100010203040506070820010db800000000000000000000000120010db8000000000000000000000002060103000000000000000003111213141516171a",
+      "ciphertext_hex": "341e9c5160c6066de4bdc61f2a5c0be18727cf49cdadacb4bc76dd4dbd1b9b7002ce83d99814851b54b5437ba8f8da603f527152371acfabd5e40f7d9039b632443baea9578cc0a90a1910f84ffa323195a7348cf804b93d22748d48652341faa5633b5e9cb52704afbedc6817f90978fa68cbfeeeebe51a3dd92fb0cb24d39269fa356bace617b3e0b546e0acc309573b15bf8af7d4e62ee24e1c1aa06879f8408fa34ce852365c745229e3c4bd239c2284264e2364aabd85d1fa8e4e4886b177cf28ee55f17f3c479ae812130bbec6a25d67c072065ffa674bb5dc54b359f093665282642c4132d5562ef90ac5acbe465bd98ecab90ca01bc2e0039e1bc68d13277d9f46fe5e0e466327361285259c96726e7336c2bf6663b739474ea9d6c41133477d1f6f6f5b1d47ad88801e09f0d27b6492f069a0110b453a2e9d1cdca4befeb5642f78a2ee6d4a85e26f105a6af50cd6f79fd662045ef603d84bf6d273bb9ae43fb35914b5c5bcad2b1d302ec4b3c320ae78485a11ca64d5b8b90b12a579d14c90dde767c9bca3e6f2fc69f1bf3f46a4f19772d45e00114a069c9c71e7896744e82813d53913d9fb32d7c33dec322b93189103941635860470cfee3c7c8b20645acc831e116221c7de9b10da7c9156c214a1744bb02b1da5faf8908db0602d71fab73f5143ed64569233ec7ca51f74e5a1e279b3f66b1af9a31bddaa619e207dcb0fc37ad39e003da8af28638a9d198be0e7153c1badf2891886cdd0eb12f43fe2ffbf59522cb51d14550cd5d0f3698c7d18b1cf7446f1fa75204b048a6aa337259be6e39f63f9ffbbe1275d6faf2963a94655042933b83f9c2a07f95db7468b9f6a8ca94afe4f24ced8c09025c3d1311e522b44b3cc1a5f7855e24666d86b419e2675d62b3a338694f0427b4a31ec42b8d97c975fc3316a57225467022dbcb7b4e7a163631ecd9e5d30b4a9d101e1ff1c8f568f0643c82d45c7168bd0f32dccbf09f750d73063b505a6b19c7fcb3dd58257ff9c85751c606401b6ea9f11309ac583afa29aab680d5c83ec538d41bb8a5c7f56a23213735d344d5ca051771918209592958e53fdcc7bed7392965af9b6ddd9d0328a54ecad14c70d11845a5e38ac8430a7d9fc8c0fe7e703a416bb86093593579496b4ee351153a9b01f2c47f2fd280901c07b270b0f1b602d000c44a069ea9c5e89484412426505e03023e7395ea5216f5c1abd7453184503a8bca554c3b68bc75478f31bc4ec592ad30e4bc60256d521bf75ac4291bab4518769c65ef7c70a007588b4c816c2c0f8785e23a8f3d0eed6660f83b44c760e412ef387e84402063525172b33c5f8ae82de86e5788f9861df4decb2b78738c196ba25d9a1ffc1ce0d2ed5e66277d9b433421e81ae5e6ee4f55764bb4a53c711a78f454242c49f6e78178a90e0284441517f4970d87eda6c73792773fad4964587b316217e854fd7ff57090418adca266999e976d6aae19c3e0eafde0f713309ef32c24fc1f4e1b0d9204c35ad028eb13a06c9e39495986bf142aeac5aa64dcb11ab96d786e8dc0a970cf5d54d8a6b84616367d9bec47b6479c9aa5855a8b32e939b03b29bea0e6ff250cda8b31156e79bcdbfdbfac853683d2ba28c25db7f749e5ef33c1a168d4e62ecea3af473501bc8171dfc441aad5a5fec21116947",
+      "tag_hex": "c540751f86ecc8911a79d0e37d6b0ea0",
+      "full_packet_hex": "830004d003400100010203040506070820010db800000000000000000000000120010db8000000000000000000000002060103000000000000000003111213141516171a341e9c5160c6066de4bdc61f2a5c0be18727cf49cdadacb4bc76dd4dbd1b9b7002ce83d99814851b54b5437ba8f8da603f527152371acfabd5e40f7d9039b632443baea9578cc0a90a1910f84ffa323195a7348cf804b93d22748d48652341faa5633b5e9cb52704afbedc6817f90978fa68cbfeeeebe51a3dd92fb0cb24d39269fa356bace617b3e0b546e0acc309573b15bf8af7d4e62ee24e1c1aa06879f8408fa34ce852365c745229e3c4bd239c2284264e2364aabd85d1fa8e4e4886b177cf28ee55f17f3c479ae812130bbec6a25d67c072065ffa674bb5dc54b359f093665282642c4132d5562ef90ac5acbe465bd98ecab90ca01bc2e0039e1bc68d13277d9f46fe5e0e466327361285259c96726e7336c2bf6663b739474ea9d6c41133477d1f6f6f5b1d47ad88801e09f0d27b6492f069a0110b453a2e9d1cdca4befeb5642f78a2ee6d4a85e26f105a6af50cd6f79fd662045ef603d84bf6d273bb9ae43fb35914b5c5bcad2b1d302ec4b3c320ae78485a11ca64d5b8b90b12a579d14c90dde767c9bca3e6f2fc69f1bf3f46a4f19772d45e00114a069c9c71e7896744e82813d53913d9fb32d7c33dec322b93189103941635860470cfee3c7c8b20645acc831e116221c7de9b10da7c9156c214a1744bb02b1da5faf8908db0602d71fab73f5143ed64569233ec7ca51f74e5a1e279b3f66b1af9a31bddaa619e207dcb0fc37ad39e003da8af28638a9d198be0e7153c1badf2891886cdd0eb12f43fe2ffbf59522cb51d14550cd5d0f3698c7d18b1cf7446f1fa75204b048a6aa337259be6e39f63f9ffbbe1275d6faf2963a94655042933b83f9c2a07f95db7468b9f6a8ca94afe4f24ced8c09025c3d1311e522b44b3cc1a5f7855e24666d86b419e2675d62b3a338694f0427b4a31ec42b8d97c975fc3316a57225467022dbcb7b4e7a163631ecd9e5d30b4a9d101e1ff1c8f568f0643c82d45c7168bd0f32dccbf09f750d73063b505a6b19c7fcb3dd58257ff9c85751c606401b6ea9f11309ac583afa29aab680d5c83ec538d41bb8a5c7f56a23213735d344d5ca051771918209592958e53fdcc7bed7392965af9b6ddd9d0328a54ecad14c70d11845a5e38ac8430a7d9fc8c0fe7e703a416bb86093593579496b4ee351153a9b01f2c47f2fd280901c07b270b0f1b602d000c44a069ea9c5e89484412426505e03023e7395ea5216f5c1abd7453184503a8bca554c3b68bc75478f31bc4ec592ad30e4bc60256d521bf75ac4291bab4518769c65ef7c70a007588b4c816c2c0f8785e23a8f3d0eed6660f83b44c760e412ef387e84402063525172b33c5f8ae82de86e5788f9861df4decb2b78738c196ba25d9a1ffc1ce0d2ed5e66277d9b433421e81ae5e6ee4f55764bb4a53c711a78f454242c49f6e78178a90e0284441517f4970d87eda6c73792773fad4964587b316217e854fd7ff57090418adca266999e976d6aae19c3e0eafde0f713309ef32c24fc1f4e1b0d9204c35ad028eb13a06c9e39495986bf142aeac5aa64dcb11ab96d786e8dc0a970cf5d54d8a6b84616367d9bec47b6479c9aa5855a8b32e939b03b29bea0e6ff250cda8b31156e79bcdbfdbfac853683d2ba28c25db7f749e5ef33c1a168d4e62ecea3af473501bc8171dfc441aad5a5fec21116947c540751f86ecc8911a79d0e37d6b0ea0",
+      "exact_size": 1280,
+      "binding_budget": 1280,
+      "budget_remaining": 0
+    }
+  ],
+  "negative_cases": [
+    {
+      "id": "delivery-zero",
+      "kind": "negative",
+      "base_case_id": "p3-data-slot0",
+      "mutation": "delivery_id=0",
+      "expected_error": "E-PATH"
+    },
+    {
+      "id": "delivery-max",
+      "kind": "negative",
+      "base_case_id": "p3-data-slot0",
+      "mutation": "delivery_id=u64::MAX",
+      "expected_error": "E-PATH"
+    },
+    {
+      "id": "truncate-before-prefix",
+      "kind": "negative",
+      "base_case_id": "p3-data-slot0",
+      "mutation": "truncate full packet at header",
+      "expected_error": "TRUNCATED"
+    },
+    {
+      "id": "truncate-prefix",
+      "kind": "negative",
+      "base_case_id": "p3-data-slot0",
+      "mutation": "truncate within SES prefix",
+      "expected_error": "TRUNCATED"
+    },
+    {
+      "id": "truncate-counter",
+      "kind": "negative",
+      "base_case_id": "p3-data-slot0",
+      "mutation": "truncate within counter",
+      "expected_error": "TRUNCATED"
+    },
+    {
+      "id": "truncate-delivery-id",
+      "kind": "negative",
+      "base_case_id": "p3-data-slot0",
+      "mutation": "truncate within delivery ID",
+      "expected_error": "TRUNCATED"
+    },
+    {
+      "id": "truncate-tag",
+      "kind": "negative",
+      "base_case_id": "p3-data-slot0",
+      "mutation": "truncate within AEAD tag",
+      "expected_error": "TRUNCATED"
+    },
+    {
+      "id": "wrong-profile",
+      "kind": "negative",
+      "base_case_id": "p3-data-slot0",
+      "mutation": "header and SES profile=2",
+      "expected_error": "PROFILE"
+    },
+    {
+      "id": "wrong-flags",
+      "kind": "negative",
+      "base_case_id": "p3-data-slot0",
+      "mutation": "clear V on Profile-3 data",
+      "expected_error": "FLAGS"
+    },
+    {
+      "id": "wrong-slot",
+      "kind": "negative",
+      "base_case_id": "p3-data-slot0",
+      "mutation": "slot=1 with slot0 header/key",
+      "expected_error": "PATH_SLOT"
+    },
+    {
+      "id": "wrong-key",
+      "kind": "negative",
+      "base_case_id": "p3-data-slot0",
+      "mutation": "decrypt c2s slot0 bytes with c2s slot1 key",
+      "expected_error": "AUTH_FAILED"
+    },
+    {
+      "id": "wrong-header",
+      "kind": "negative",
+      "base_case_id": "p3-data-slot0",
+      "mutation": "mutate authenticated SCID byte",
+      "expected_error": "AUTH_FAILED"
+    },
+    {
+      "id": "hop-mutation-valid",
+      "kind": "negative",
+      "base_case_id": "p3-data-slot0",
+      "mutation": "decrement wire hop limit only; canonical AAD zeroes hop",
+      "expected_error": "NONE",
+      "expected_outcome": "accept"
+    },
+    {
+      "id": "counter-zero",
+      "kind": "negative",
+      "base_case_id": "p3-data-slot0",
+      "mutation": "counter=0",
+      "expected_error": "E-REPLAY"
+    },
+    {
+      "id": "counter-max",
+      "kind": "negative",
+      "base_case_id": "p3-data-slot0",
+      "mutation": "counter=u64::MAX",
+      "expected_error": "E-REPLAY"
+    },
+    {
+      "id": "replay-same-slot",
+      "kind": "negative",
+      "base_case_id": "p3-data-slot0",
+      "mutation": "submit accepted packet twice",
+      "expected_error": "E-REPLAY"
+    },
+    {
+      "id": "budget-over-one",
+      "kind": "negative",
+      "base_case_id": "p3-boundary-slot0",
+      "mutation": "binding budget=1279 for 1280-byte boundary packet",
+      "expected_error": "E-BUDGET"
+    },
+    {
+      "id": "binding-mismatch",
+      "kind": "negative",
+      "base_case_id": "p3-data-slot0",
+      "mutation": "authenticated packet presented on a different observed binding",
+      "expected_error": "E-PATH"
+    },
+    {
+      "id": "first-anchor",
+      "kind": "negative",
+      "base_case_id": "p3-data-slot0",
+      "mutation": "first accepted ID=900000 anchors high water",
+      "expected_error": "NONE",
+      "expected_outcome": "deliver"
+    },
+    {
+      "id": "lower-reorder",
+      "kind": "negative",
+      "base_case_id": "p3-data-slot0",
+      "mutation": "after anchor, accepted ID=899999 inserts below high water",
+      "expected_error": "NONE",
+      "expected_outcome": "deliver"
+    },
+    {
+      "id": "equal-suppression",
+      "kind": "negative",
+      "base_case_id": "p3-data-slot0",
+      "mutation": "same authenticated ID and bytes suppresses",
+      "expected_error": "NONE",
+      "expected_outcome": "suppress"
+    },
+    {
+      "id": "divergence-close",
+      "kind": "negative",
+      "base_case_id": "p3-data-slot0",
+      "mutation": "same ID with separately authenticated different bytes closes session",
+      "expected_error": "E-PATH"
+    },
+    {
+      "id": "replay-window-4096",
+      "kind": "negative",
+      "base_case_id": "p3-data-slot0",
+      "mutation": "counter exactly 4096 behind high water remains eligible",
+      "expected_error": "NONE",
+      "expected_outcome": "accept"
+    },
+    {
+      "id": "replay-window-4097",
+      "kind": "negative",
+      "base_case_id": "p3-data-slot0",
+      "mutation": "counter 4097 behind high water rejected",
+      "expected_error": "E-REPLAY"
+    },
+    {
+      "id": "dedup-capacity-4096",
+      "kind": "negative",
+      "base_case_id": "p3-data-slot0",
+      "mutation": "4096th distinct unexpired delivery ID is accepted into dedup table",
+      "expected_error": "NONE",
+      "expected_outcome": "accept"
+    },
+    {
+      "id": "dedup-capacity-4097",
+      "kind": "negative",
+      "base_case_id": "p3-data-slot0",
+      "mutation": "4097th distinct unexpired delivery ID exceeds dedup table capacity",
+      "expected_error": "E-CAPACITY"
+    },
+    {
+      "id": "gap-65536",
+      "kind": "negative",
+      "base_case_id": "p3-data-slot0",
+      "mutation": "forward delivery gap exactly 65536 accepted",
+      "expected_error": "NONE",
+      "expected_outcome": "deliver"
+    },
+    {
+      "id": "gap-65537",
+      "kind": "negative",
+      "base_case_id": "p3-data-slot0",
+      "mutation": "forward delivery gap 65537 rejected",
+      "expected_error": "E-REPLAY"
+    },
+    {
+      "id": "queue-256",
+      "kind": "negative",
+      "base_case_id": "p3-data-slot0",
+      "mutation": "per-path queue exactly 256 packets accepted",
+      "expected_error": "NONE",
+      "expected_outcome": "enqueue"
+    },
+    {
+      "id": "queue-257",
+      "kind": "negative",
+      "base_case_id": "p3-data-slot0",
+      "mutation": "257th packet drops newest without ID/counter consumption",
+      "expected_error": "E-PATH"
+    },
+    {
+      "id": "dedup-expiry",
+      "kind": "negative",
+      "base_case_id": "p3-data-slot0",
+      "mutation": "expire entry at 30000ms; later authenticated ID may deliver",
+      "expected_error": "NONE",
+      "expected_outcome": "deliver"
+    },
+    {
+      "id": "slot-remove",
+      "kind": "negative",
+      "base_case_id": "p3-data-slot0",
+      "mutation": "active slot failure removes slot and flushes only its queue",
+      "expected_error": "E-PATH"
+    },
+    {
+      "id": "slot-nonreuse",
+      "kind": "negative",
+      "base_case_id": "p3-data-slot0",
+      "mutation": "attempt to reactivate removed slot in same session",
+      "expected_error": "E-PATH"
+    },
+    {
+      "id": "restart-required",
+      "kind": "negative",
+      "base_case_id": "p3-data-slot0",
+      "mutation": "counter/delivery exhaustion releases session and requires fresh handshake",
+      "expected_error": "E-COUNTER"
+    },
+    {
+      "id": "events-degraded-recovered",
+      "kind": "negative",
+      "base_case_id": "p3-data-slot0",
+      "mutation": "initial degraded, then exactly one recovered event after slot-one admission",
+      "expected_error": "NONE",
+      "expected_outcome": "events"
+    }
+  ],
+  "state_traces": [
+    {
+      "id": "trace-anchor-reorder-suppress",
+      "steps": [
+        "authenticate delivery 900000 on slot0",
+        "anchor high_water=900000 and deliver",
+        "authenticate delivery 899999 on slot1",
+        "retain high_water=900000 and deliver",
+        "authenticate delivery 899999 same bytes on other slot",
+        "suppress without expiry extension"
+      ]
+    },
+    {
+      "id": "trace-divergence",
+      "steps": [
+        "authenticate ID 17 bytes 61 on slot0",
+        "authenticate ID 17 bytes 62 on slot1",
+        "emit divergence and release both slots"
+      ]
+    },
+    {
+      "id": "trace-capacity-and-gap",
+      "steps": [
+        "accept replay distance 4096",
+        "reject replay distance 4097",
+        "accept dedup capacity 4096",
+        "reject dedup capacity 4097",
+        "accept delivery gap 65536",
+        "reject delivery gap 65537",
+        "enqueue 256 packets",
+        "drop newest 257th without reservations"
+      ]
+    },
+    {
+      "id": "trace-expiry-remove-restart-events",
+      "steps": [
+        "expire dedup at 30000ms",
+        "remove failed slot; do not reuse it",
+        "counter exhaustion releases session",
+        "fresh handshake starts new session",
+        "record degraded then recovered events only"
+      ]
+    }
+  ]
+}

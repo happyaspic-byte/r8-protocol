@@ -45,9 +45,10 @@ def frozen_epoch_rejections(seed=0x47303034, cases=128):
         update = lambda cid, loc, epoch: sender._sign_update(cid, m.ipaddress.IPv6Address(loc), epoch, 0).build()
         commit(update(winner, "8::3", 1), (case, 1))
         commit(update(pending, "8::4", 1), (case, 2))
-        receiver.candidates[winner] = {"binding": binding, "expiry": 3000, "challenge": None,
-                                       "state": "PROVEN", "proposal": receiver.proposals[winner][1]}
-        receiver.cohort = (1, {winner: receiver.proposals[winner][1], pending: receiver.proposals[pending][1]})
+        core = m._MOBILITY_CORES[receiver]
+        core.candidates[winner] = {"binding": m._binding(binding), "expiry": 3000, "challenge": None,
+                                   "state": "PROVEN", "proposal": core.proposals[winner][1]}
+        core.cohort = (1, {winner: core.proposals[winner][1], pending: core.proposals[pending][1]})
         before = snapshot()
         late_id = rng.randbytes(16) or b"\0" * 15 + b"\x01"
         late = update(late_id, "8::5", 1)

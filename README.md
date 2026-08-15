@@ -18,9 +18,9 @@ spec/                 Gate-0 baseline·active contracts·architecture·검증 �
   0007-native-binding-v0.1.md
   0008-redundant-v0.1.md
   parameters-v0.1.md  packet, binding, and resource-limit registry
-tests/vectors/        shared corpus: 162 reviewed fixtures (73 wire + 41 session + 48 mobility: 5 positive/43 negative); native/redundant families planned
+tests/vectors/        shared corpus: 201 reviewed fixtures (73 wire + 41 session + 48 mobility + 39 redundant)
 bench/protocols/      immutable Q1/Q2/Q3 preregistrations and manifest (no observed-result fields)
-.github/workflows/ci.yml  active least-privilege CI workflow; latest green hosted prior-snapshot CI `31803830187`; corrected dirty source awaits a new hosted CI
+.github/workflows/    pinned least-privilege CI plus privileged closed-lab Q1/native/Q2 workflows; final-source hosted verification pending
 requirements-dev.txt  pinned Python verification dependency set
 reference/r8ref.py    strict v0.2 Python UDP implementation
 reference/r8session.py  pinned cookie-first session reference
@@ -30,8 +30,9 @@ rust/                 strict v0.2 Rust workspace
   crates/r8-proto       wire-format library + shared-corpus tests
   crates/r8-session     pinned cookie-first session library
   crates/r8-mobility    signed mobility library
-  crates/r8d            daemon (echo responder + DGRAM receiver)
+  crates/r8d            UDP daemon plus isolated AF_PACKET native forwarder
   crates/r8ping         echo/DGRAM client
+  crates/r8-redundant    authenticated Profile-3 redundant state + native endpoint
 tools/
   netns-topo.sh       closed-lab network-namespace topology (setup|demo|teardown)
   wireshark/r8.lua    Wireshark dissector (udp/52808, ethertype 0x88B5)
@@ -45,31 +46,35 @@ tools/
 # Pinned Python verification dependency
 python3 -m pip install --requirement requirements-dev.txt
 
-# Python wire/session/mobility tests and fuzz smoke
+# Python wire/session/mobility/redundant tests and bounded fuzz smoke
 python3 -m unittest discover -s tests -p 'test_*.py'
 python3 tests/fuzz_reference.py
 python3 -m unittest discover -s tests -p 'test_session.py'
 python3 tests/fuzz_session.py
 python3 -m unittest discover -s tests -p 'test_mobility.py'
 python3 tests/fuzz_mobility.py
+python3 tests/fuzz_redundant.py
+python3 tests/fuzz_redundant_state.py
 
 # Mandatory dissector coverage; requires tshark and fails rather than skipping when unavailable
 R8_REQUIRE_TSHARK=1 python3 -m unittest discover -s tests -p 'test_dissector.py'
 
-# Locked Rust workspace verification, including session and mobility
+# Locked full Rust workspace verification, including session, mobility, native, and redundant
 (cd rust && cargo fmt --all --check)
 (cd rust && cargo clippy --workspace --all-targets --locked -- -D warnings)
-(cd rust && cargo test -p r8-session -p r8-mobility --locked)
-(cd rust && cargo build -p r8-session -p r8-mobility --locked)
+(cd rust && cargo test --workspace --all-targets --locked)
 
 # Build Rust apps and run bidirectional live loopback interop
 python3 tests/interop.py --build
 python3 tests/session_interop.py --build
 python3 tests/mobility_interop.py --build
 
-# Q3: compute source identity, then request the hosted isolated-netns smoke/full workflow
-python3 -c 'import runpy; print(runpy.run_path("bench/q3.py")["source_identity"]())'
-gh workflow run q3-full.yml -f host_epoch=closed-lab-epoch-NNN
+# Source identities and privileged hosted closed-lab workflows
+python3 -c 'from bench import q1; print(q1.source_identity())'
+python3 bench/q2_run.py source-identity
+gh workflow run q1-full.yml -f host_epoch=closed-lab-epoch-NNN
+gh workflow run native-full.yml -f gate3_run=Q1_SUCCESS_RUN_ID
+gh workflow run q2-full.yml -f host_epoch=closed-lab-epoch-NNN -f gate5_run=NATIVE_SUCCESS_RUN_ID
 ```
 `r8move --moving-role {1,2}` defaults to role 1; connect remains handshake role 1 and serve role 2, and the flag selects only the endpoint that initiates mobility. Both abrupt and make-before-break use a proof-gated candidate switch with old inbound-only grace, on closed loopback or an isolated lab only.
 
@@ -84,20 +89,21 @@ Q3 runs require a dedicated root network namespace and must not be invoked again
 | Stage | Scope | Status |
 |---|---|---|
 | Gate 0 | provenance / wire-change / budget / machine-contract baseline | ✅ durably checkpointed |
-| Gate 1 / M0–M1 | strict v0.2 Python/Rust wire implementation and UDP interop | ✅ durably complete locally; latest green hosted prior-snapshot CI `31803830187`; corrected dirty source awaits a new hosted CI |
-| Gate 2 / G003 | pinned cookie-first sessions and Q3 evidence | deferred in joined VB002 until G004 closes; canonical isolated-netns v8 Q3 evidence is retained |
-| M3 / Q1 | mobility implementation | implemented; Q1 v4 preregistered and awaits privileged smoke |
-| M4–M5 / Q2 | native binding, REDUNDANT, and registered measurement protocol | ⬜ unexecuted |
+| Gate 1 / M0–M1 | strict v0.2 Python/Rust wire implementation and UDP interop | ✅ durably complete locally; latest retained hosted prior-snapshot CI is `31834671629`; final candidate verification pending |
+| Gate 2 / G003 | pinned cookie-first sessions and Q3 evidence | locally complete; joined VB002 closure awaits fresh Q1 v5 evidence; canonical isolated-netns Q3 v8 evidence retained |
+| Gate 3 / M3 / Q1 | signed proof-gated mobility and equal-notice Q1 | implementation/source/contract CLEAR; Q1 v4 run `31835854041` retained invalid and unpublished; fresh privileged v5 run pending |
+| Gates 4–5 / M4–M5 | native forwarding and authenticated REDUNDANT | implemented and locally verified; privileged Gate 4/5 evidence pending |
+| Gate 6 / Q2 | paired native two-path measurement | v5 frozen with zero observations; forbidden until Gate 4/5 evidence clears |
 
 ### Q3 closed-lab result
 
 The canonical Q3 full evidence package is immutable at `bench/results/q3-closed-lab-v8`, from hosted workflow `31835193766` at commit `881826bb64bc38bbbbffe7ab9cdcedecc98a82e2`. It is bound to source identity `sha256:6a9dea8d7f34d508d8e8b6220935a29834b5beda4cb17a52068df32d26d68ba3`, epoch `closed-lab-epoch-010`, and raw-data SHA-256 `f6234ac3d504f93511b8255b180b92da7e5a3babc342a0c7be5a65df6b19861c`. The dedicated loopback-only network namespace recorded zero failures across 4,200 rows. Cold p50/p90/p99 were R8 2.833492/2.913582/3.488101 ms and TLS 43.559856/43.975300/44.645833 ms; warm p50/p90 were R8 1.773880/1.875701 ms and TLS 41.696243/42.329702 ms. Network totals were R8 1,326 bytes and 7 packets in each direction, and TLS 3,979 bytes and 12 packets. This is closed-lab-only evidence, not an Internet or IPv8-standard claim.
 
-Q3 v3 is historical and non-retained; v4, v6, and v7 are invalid/rejected and non-retained; no v5 exists. The latest green hosted prior-snapshot CI is `31803830187`; the corrected dirty source awaits a new hosted CI. Gate 2/G003 remains deferred in joined VB002 until G004 closes. Q1 v2 is retained setup-only non-result evidence, Q1 v3 was cancelled without an artifact, and Q1 v4 remains preregistered and pending privileged smoke. No full Q1 or G004 pass is claimed.
+Q3 v3 is historical and non-retained; v4, v6, and v7 are invalid/rejected and non-retained; no v5 exists. Gate 2/G003 remains deferred in joined VB002 until G004 closes. Q1 v2 is retained setup-only non-result evidence, Q1 v3 was cancelled without an artifact, and Q1 v4 run `31835854041` is retained as invalid diagnostic-only evidence with 63 pre-runtime readiness timeouts, `publication_eligible=false`, and an empty summary. The bounded child-liveness-aware fix is frozen as Q1 v5; no fresh full v5 result is claimed.
 
-### Q1 retained failed setup evidence
+### Q1 retained invalid evidence
 
-Q1 v2 is retained at `bench/results/q1-setup-failure-v2/` as setup-only evidence, not a Q1 result and not canonical performance evidence. Its manifest route-ordering diagnosis is a historical unverified hypothesis, not an established root cause; current status infers none pending Q1 v4 privileged-smoke verification.
+Q1 v2 remains setup-only non-result evidence. Q1 v4 is retained at `bench/results/q1-closed-lab-v4-invalid-run-31835854041/` solely as negative diagnostic evidence: all 1,320 rows are preserved, but none of its 1,257 complete runtime rows may enter an estimand. Fresh Q1 v5 evidence must come from the exact clean source-bound commit.
 
 ## 설계 한계 (스스로 밝히는 것)
 

@@ -21,6 +21,7 @@ import time
 import struct
 from datetime import datetime, timezone
 import re
+import select
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -41,13 +42,25 @@ SAFE_LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}\Z")
 SOURCE_LABEL = re.compile(r"(?:sha256:[0-9a-f]{64}|[A-Za-z0-9][A-Za-z0-9_-]{0,127})\Z")
 COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 SOURCE_INPUTS = {
+    ".github/workflows/q3-full.yml": ROOT / ".github/workflows/q3-full.yml",
     "bench/fixtures/q3-cert.pem": CERT,
     "bench/fixtures/q3-key.pem": KEY,
     "bench/protocols/q3.json": PROTOCOL,
     "bench/q3.py": Path(__file__).resolve(),
     "reference/r8session.py": ROOT / "reference/r8session.py",
     "requirements-dev.txt": ROOT / "requirements-dev.txt",
+    "spec/0004-wire-format-v0.2.md": ROOT / "spec/0004-wire-format-v0.2.md",
+    "spec/0005-session-security-v0.1.md": ROOT / "spec/0005-session-security-v0.1.md",
+    "spec/parameters-v0.1.md": ROOT / "spec/parameters-v0.1.md",
 }
+HISTORICAL_V8_SOURCE_INPUTS = frozenset({
+    "bench/fixtures/q3-cert.pem",
+    "bench/fixtures/q3-key.pem",
+    "bench/protocols/q3.json",
+    "bench/q3.py",
+    "reference/r8session.py",
+    "requirements-dev.txt",
+})
 
 
 def digest(path):
@@ -56,9 +69,22 @@ def source_hashes():
     return {path: digest(source) for path, source in sorted(SOURCE_INPUTS.items())}
 
 
-def source_identity():
-    encoded = json.dumps(source_hashes(), sort_keys=True, separators=(",", ":")).encode()
+def implementation_source_identity(sources):
+    encoded = json.dumps(sources, sort_keys=True, separators=(",", ":")).encode()
     return "sha256:" + hashlib.sha256(encoded).hexdigest()
+def strict_json(text):
+    def object_without_duplicates(pairs):
+        value = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError("duplicate JSON object key: " + key)
+            value[key] = item
+        return value
+    return json.loads(text, object_pairs_hook=object_without_duplicates)
+
+
+def source_identity():
+    return implementation_source_identity(source_hashes())
 
 
 
@@ -166,17 +192,18 @@ def _r8_server_ready():
     config = r8.ServerConfig(server_id, server_pin, 1, 1, 0, peer, local, R8_BINDING_BUDGET, 4, 4)
     server = r8.ServerMachine(config, r8._random(16), r8._random(32), None, 0, clock,
                               r8.PrevalidationLimiter(clock, r8._random(32)))
-    binding_selector = r8._random(16)
-    ready = threading.Event()
-    port = []
-    error = []
+    binding_selector, ready, stop, port, error, sockets = r8._random(16), threading.Event(), threading.Event(), [], [], []
 
     def serve():
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-                s.bind(("127.0.0.1", 0)); s.settimeout(TIMEOUT); port.append(s.getsockname()[1]); ready.set()
-                while True:
-                    packet, addr = s.recvfrom(R8_BINDING_BUDGET)
+                sockets.append(s)
+                s.bind(("127.0.0.1", 0)); s.settimeout(.1); port.append(s.getsockname()[1]); ready.set()
+                while not stop.is_set():
+                    try:
+                        packet, addr = s.recvfrom(R8_BINDING_BUDGET)
+                    except socket.timeout:
+                        continue
                     header, payload = r8.parse_packet(packet)
                     binding = r8.UdpBinding.from_endpoint(addr[0], addr[1], 1, binding_selector)
                     typ = r8.decode(payload)[0]
@@ -189,34 +216,51 @@ def _r8_server_ready():
                     else: raise ValueError("unexpected R8 packet")
                     s.sendto(reply, addr)
                     if typ == 6: return
-        except Exception as exc: error.append(type(exc).__name__)
+        except OSError:
+            if not stop.is_set(): error.append("OSError")
+        except Exception as exc:
+            error.append(type(exc).__name__)
 
-    thread = threading.Thread(target=serve, daemon=True); thread.start()
-    if not ready.wait(TIMEOUT): raise TimeoutError("R8 server readiness")
+    thread = threading.Thread(target=serve)
 
-    machine = r8.ClientMachine(client_id, client_pin, 1, 0, local, peer, clock, R8_BINDING_BUDGET)
+    def close():
+        stop.set()
+        for active in sockets:
+            try: active.shutdown(socket.SHUT_RDWR)
+            except OSError: pass
+            try: active.close()
+            except OSError: pass
+    started = False
+    try:
+        thread.start()
+        started = True
+        if not ready.wait(TIMEOUT): raise TimeoutError("R8 server readiness")
+        machine = r8.ClientMachine(client_id, client_pin, 1, 0, local, peer, clock, R8_BINDING_BUDGET)
+    except BaseException:
+        close()
+        if started: thread.join(TIMEOUT)
+        raise
 
     def client():
-        captured = None
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-                s.settimeout(TIMEOUT)
-                packet = machine.start(_random_scid(), r8._random(32), r8._random(32)); s.sendto(packet, ("127.0.0.1", port[0]))
-                packet = machine.receive_verify(s.recv(R8_BINDING_BUDGET)); s.sendto(packet, ("127.0.0.1", port[0]))
-                packet = machine.receive_ack(s.recv(R8_BINDING_BUDGET)); s.sendto(packet, ("127.0.0.1", port[0]))
-                packet = machine.send_data(b"x"); s.sendto(packet, ("127.0.0.1", port[0]))
-                if machine.receive_protected(s.recv(R8_BINDING_BUDGET)) != b"x": raise ValueError("application response mismatch")
-                captured = _measurement_end()
-                client.snapshot = captured
-        finally:
-            thread.join(TIMEOUT)
-        if thread.is_alive(): raise TimeoutError("R8 server completion")
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            sockets.append(s)
+            s.settimeout(TIMEOUT)
+            packet = machine.start(_random_scid(), r8._random(32), r8._random(32)); s.sendto(packet, ("127.0.0.1", port[0]))
+            packet = machine.receive_verify(s.recv(R8_BINDING_BUDGET)); s.sendto(packet, ("127.0.0.1", port[0]))
+            packet = machine.receive_ack(s.recv(R8_BINDING_BUDGET)); s.sendto(packet, ("127.0.0.1", port[0]))
+            packet = machine.send_data(b"x"); s.sendto(packet, ("127.0.0.1", port[0]))
+            if machine.receive_protected(s.recv(R8_BINDING_BUDGET)) != b"x": raise ValueError("application response mismatch")
+            captured = _measurement_end()
         if error: raise RuntimeError(error[0])
         return captured
+
+    client.close, client.join = close, lambda: thread.join(TIMEOUT)
     return client
 
 def r8_trial():
-    _r8_server_ready()()
+    client = _r8_server_ready()
+    try: client()
+    finally: client.close(); client.join()
 
 
 def _disable_tickets(context):
@@ -237,57 +281,77 @@ def _tls_server_ready():
     from cryptography import x509
     from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
     expected_pin = _fixture_spki_pin()
-    ready, release, port, error = threading.Event(), threading.Event(), [], []
+    ready, release, stop, port, error, sockets = threading.Event(), threading.Event(), threading.Event(), [], [], []
 
     def serve():
         try:
             context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
             context.minimum_version = context.maximum_version = ssl.TLSVersion.TLSv1_3
-            _disable_tickets(context)
-            _disable_server_tickets(context)
-            context.load_cert_chain(CERT, KEY)
+            _disable_tickets(context); _disable_server_tickets(context); context.load_cert_chain(CERT, KEY)
             with socket.socket() as listener:
-                listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); listener.bind(("127.0.0.1", 0)); listener.listen(1); listener.settimeout(TIMEOUT)
+                sockets.append(listener)
+                listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); listener.bind(("127.0.0.1", 0)); listener.listen(1); listener.settimeout(.1)
                 port.append(listener.getsockname()[1]); ready.set()
-                with context.wrap_socket(listener.accept()[0], server_side=True) as conn:
-                    conn.settimeout(TIMEOUT)
-                    if conn.recv(1) != b"x": raise ValueError("application byte mismatch")
-                    conn.sendall(b"x")
-                    if not release.wait(TIMEOUT):
-                        raise TimeoutError("TLS client release")
-        except Exception as exc: error.append(type(exc).__name__)
+                while not stop.is_set():
+                    try: raw = listener.accept()[0]
+                    except socket.timeout: continue
+                    sockets.append(raw)
+                    with context.wrap_socket(raw, server_side=True) as conn:
+                        sockets.append(conn); conn.settimeout(TIMEOUT)
+                        if conn.recv(1) != b"x": raise ValueError("application byte mismatch")
+                        conn.sendall(b"x")
+                        release.wait()
+                        return
+        except OSError:
+            if not stop.is_set(): error.append("OSError")
+        except Exception as exc:
+            error.append(type(exc).__name__)
 
-    thread = threading.Thread(target=serve, daemon=True); thread.start()
-    if not ready.wait(TIMEOUT): raise TimeoutError("TLS server readiness")
+    thread = threading.Thread(target=serve)
 
-    context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH, cafile=str(CERT))
-    context.minimum_version = context.maximum_version = ssl.TLSVersion.TLSv1_3
-    _disable_tickets(context)
+    def close():
+        stop.set(); release.set()
+        for active in sockets:
+            try: active.shutdown(socket.SHUT_RDWR)
+            except OSError: pass
+            try: active.close()
+            except OSError: pass
+    started = False
+    try:
+        thread.start()
+        started = True
+        if not ready.wait(TIMEOUT): raise TimeoutError("TLS server readiness")
+        context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH, cafile=str(CERT))
+        context.minimum_version = context.maximum_version = ssl.TLSVersion.TLSv1_3
+        _disable_tickets(context)
+    except BaseException:
+        close()
+        if started: thread.join(TIMEOUT)
+        raise
 
     def client():
-        captured = None
         try:
             with socket.create_connection(("127.0.0.1", port[0]), TIMEOUT) as raw:
+                sockets.append(raw)
                 with context.wrap_socket(raw, server_hostname="localhost") as conn:
-                    try:
-                        actual = hashlib.sha256(x509.load_der_x509_certificate(conn.getpeercert(binary_form=True)).public_key().public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)).hexdigest()
-                        if actual != expected_pin: raise ssl.SSLError("SPKI pin mismatch")
-                        conn.settimeout(TIMEOUT); conn.sendall(b"x")
-                        if conn.recv(1) != b"x": raise ValueError("application response mismatch")
-                        captured = _measurement_end()
-                        client.snapshot = captured
-                    finally:
-                        release.set()
+                    sockets.append(conn)
+                    actual = hashlib.sha256(x509.load_der_x509_certificate(conn.getpeercert(binary_form=True)).public_key().public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)).hexdigest()
+                    if actual != expected_pin: raise ssl.SSLError("SPKI pin mismatch")
+                    conn.settimeout(TIMEOUT); conn.sendall(b"x")
+                    if conn.recv(1) != b"x": raise ValueError("application response mismatch")
+                    captured = _measurement_end()
+            if error: raise RuntimeError(error[0])
+            return captured
         finally:
             release.set()
-            thread.join(TIMEOUT)
-        if thread.is_alive(): raise TimeoutError("TLS server completion")
-        if error: raise RuntimeError(error[0])
-        return captured
+
+    client.close, client.join = close, lambda: thread.join(TIMEOUT)
     return client
 
 def tls_trial():
-    _tls_server_ready()()
+    client = _tls_server_ready()
+    try: client()
+    finally: client.close(); client.join()
 
 
 def _measurement_start():
@@ -295,35 +359,40 @@ def _measurement_start():
 def _measurement_end():
     return net(), time.process_time_ns(), time.monotonic_ns()
 
-def trial(mechanism):
-    status, category = "success", None
-    start_net = cpu = started = snapshot = client = None
-    previous = None
-    timer_started = False
+def _zero_network():
+    return {key: 0 for key in net()}
+
+def _measurement_result(status, category, start_net, cpu, started, snapshot=None):
+    if start_net is None:
+        return {"status": status, "error_category": "setup:" + category, "latency_ns": 0, "cpu_ns": 0, "network": _zero_network()}
+    end_net, end_cpu, ended = snapshot or _measurement_end()
+    return {"status": status, "error_category": category, "latency_ns": ended - started, "cpu_ns": end_cpu - cpu, "network": {k: end_net[k] - start_net[k] for k in start_net}}
+
+def _attempt(client, start):
+    status, category, snapshot = "success", None, None
+    previous = signal.getsignal(signal.SIGALRM)
     try:
-        client = (_r8_server_ready if mechanism == MECHANISMS[0] else _tls_server_ready)()
-        start_net, cpu, started = _measurement_start()
-        previous = signal.getsignal(signal.SIGALRM)
         def expired(_signum, _frame): raise TimeoutError("Q3 trial timeout")
         signal.signal(signal.SIGALRM, expired)
         signal.setitimer(signal.ITIMER_REAL, TIMEOUT)
-        timer_started = True
         snapshot = client()
     except TimeoutError as exc:
-        status, category = "timeout", type(exc).__name__
-        snapshot = getattr(client, "snapshot", None)
+        status, category, snapshot = "timeout", type(exc).__name__, _measurement_end()
     except Exception as exc:
-        status, category = "failure", type(exc).__name__
-        snapshot = getattr(client, "snapshot", None)
+        status, category, snapshot = "failure", type(exc).__name__, _measurement_end()
     finally:
-        if timer_started:
-            signal.setitimer(signal.ITIMER_REAL, 0)
-            signal.signal(signal.SIGALRM, previous)
-    if start_net is None or snapshot is None:
-        return {"status": status, "error_category": category, "latency_ns": 0, "cpu_ns": 0, "network": {key: 0 for key in net()}}
-    end_net, end_cpu, ended = snapshot
-    return {"status": status, "error_category": category, "latency_ns": ended - started, "cpu_ns": end_cpu - cpu, "network": {k: end_net[k] - start_net[k] for k in start_net}}
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+        client.close()
+        client.join()
+    return _measurement_result(status, category, *start, snapshot)
 
+def trial(mechanism):
+    try:
+        client = (_r8_server_ready if mechanism == MECHANISMS[0] else _tls_server_ready)()
+    except Exception as exc:
+        return _measurement_result("failure", type(exc).__name__, None, None, None)
+    return _attempt(client, _measurement_start())
 
 def order(per_mechanism_count):
     rng, result = random.Random(ORDER_SEED), []
@@ -344,44 +413,129 @@ def planned_trials(per_mechanism_count, smoke):
         ordinals[mechanism] += 1
         yield block, position, mechanism, ordinal, not smoke and ordinal < WARMUPS
 
-
 def worker(args):
-    print(json.dumps(trial(args.mechanism), sort_keys=True)); return 0
+    try:
+        client = (_r8_server_ready if args.mechanism == MECHANISMS[0] else _tls_server_ready)()
+    except Exception as exc:
+        print(json.dumps(_measurement_result("failure", type(exc).__name__, None, None, None), sort_keys=True))
+        return 0
+    start = _measurement_start()
+    if args.marker_fd is not None:
+        with socket.socket(fileno=args.marker_fd) as marker:
+            marker.sendall(json.dumps({"network": start[0], "cpu_ns": start[1], "started_ns": start[2]}, sort_keys=True).encode())
+    print(json.dumps(_attempt(client, start), sort_keys=True))
+    return 0
 
+def _reap_worker(process, deadline_ns):
+    while time.monotonic_ns() < deadline_ns:
+        pid, status, usage = os.wait4(process.pid, os.WNOHANG)
+        if pid:
+            return status, usage, False
+        time.sleep(.001)
+    os.kill(process.pid, signal.SIGKILL)
+    _pid, status, usage = os.wait4(process.pid, 0)
+    return status, usage, True
 
 def invoke_worker(mechanism):
+    parent, child = socket.socketpair()
     try:
-        result = subprocess.run([sys.executable, str(Path(__file__).resolve()), "worker", "--mechanism", mechanism], text=True, capture_output=True, timeout=TIMEOUT + 3, check=False)
-    except subprocess.TimeoutExpired:
-        return {"status": "timeout", "error_category": "worker_timeout", "latency_ns": int(TIMEOUT * 1_000_000_000), "cpu_ns": 0, "network": {k: 0 for k in net()}}
-    if result.returncode:
-        return {"status": "failure", "error_category": "worker_exit", "latency_ns": 0, "cpu_ns": 0, "network": {k: 0 for k in net()}}
-    try: return json.loads(result.stdout)
-    except json.JSONDecodeError: return {"status": "failure", "error_category": "worker_output", "latency_ns": 0, "cpu_ns": 0, "network": {k: 0 for k in net()}}
+        process = subprocess.Popen(
+            [sys.executable, str(Path(__file__).resolve()), "worker", "--mechanism", mechanism, "--marker-fd", str(child.fileno())],
+            text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, pass_fds=(child.fileno(),),
+        )
+    finally:
+        child.close()
+    try:
+        readable, _, _ = select.select([parent], [], [], TIMEOUT)
+        if not readable:
+            os.kill(process.pid, signal.SIGKILL)
+            os.wait4(process.pid, 0)
+            return _measurement_result("failure", "worker_marker_timeout", None, None, None)
+        try:
+            marker = strict_json(parent.recv(4096).decode())
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            try: os.kill(process.pid, signal.SIGKILL)
+            except ProcessLookupError: pass
+            os.wait4(process.pid, 0)
+            return _measurement_result("failure", "worker_marker_invalid", None, None, None)
+        if set(marker) != {"network", "cpu_ns", "started_ns"} or type(marker["cpu_ns"]) is not int or type(marker["started_ns"]) is not int or type(marker["network"]) is not dict:
+            os.kill(process.pid, signal.SIGKILL)
+            os.wait4(process.pid, 0)
+            return _measurement_result("failure", "worker_marker_invalid", None, None, None)
+        start_net, child_cpu, started = marker["network"], marker["cpu_ns"], marker["started_ns"]
+        if set(start_net) != set(LO_COUNTERS):
+            os.kill(process.pid, signal.SIGKILL)
+            os.wait4(process.pid, 0)
+            return _measurement_result("failure", "worker_marker_invalid", None, None, None)
+        status, usage, killed = _reap_worker(process, started + int(TIMEOUT * 1_000_000_000))
+        def fallback(status, category):
+            end_net, _supervisor_cpu, ended = _measurement_end()
+            child_end_cpu = int((usage.ru_utime + usage.ru_stime) * 1_000_000_000)
+            observed = {"latency_ns": max(0, ended - started), "cpu_ns": max(0, child_end_cpu - child_cpu), "network": {k: end_net[k] - start_net[k] for k in start_net}}
+            return {"status": status, "error_category": category, **observed}
+
+        if killed:
+            return fallback("timeout", "worker_timeout")
+        if not os.WIFEXITED(status) or os.WEXITSTATUS(status):
+            return fallback("failure", "worker_exit")
+        output = process.stdout.read()
+        try:
+            result = strict_json(output)
+            numeric = [result["latency_ns"], result["cpu_ns"], *result["network"].values()]
+        except (AttributeError, KeyError, TypeError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            return fallback("failure", "worker_output")
+        if set(result) != {"status", "error_category", "latency_ns", "cpu_ns", "network"} or result["status"] not in {"success", "failure", "timeout"} or (result["status"] == "success") != (result["error_category"] is None) or (result["status"] != "success" and type(result["error_category"]) is not str) or type(result["network"]) is not dict or set(result["network"]) != set(LO_COUNTERS) or any(type(value) is not int or value < 0 for value in numeric):
+            return fallback("failure", "worker_output")
+        return result
+    finally:
+        parent.close()
 
 
 def percentile(values, q):
     if not values: return None
     return sorted(values)[min(len(values) - 1, int((len(values) - 1) * q))]
 
+def censored_quantile(rows, q):
+    """Kaplan-Meier quantile; non-success rows are right-censored observations."""
+    if not rows:
+        return None
+    observations = {}
+    for row in rows:
+        elapsed = row["latency_ns"]
+        events, censored = observations.get(elapsed, (0, 0))
+        observations[elapsed] = (events + (row["status"] == "success"), censored + (row["status"] != "success"))
+    at_risk, survival = len(rows), 1.0
+    for elapsed in sorted(observations):
+        events, censored = observations[elapsed]
+        survival *= (at_risk - events) / at_risk
+        if 1.0 - survival >= q:
+            return elapsed
+        at_risk -= events + censored
+    return None
+
+def censored_bootstrap(blocks, q):
+    if not blocks:
+        return None
+    rng = random.Random(BOOTSTRAP_SEED + repr(q))
+    samples = []
+    for _ in range(10000):
+        sample = [row for _ in blocks for row in rng.choice(blocks)]
+        estimate = censored_quantile(sample, q)
+        if estimate is None:
+            return None
+        samples.append(estimate)
+    return [percentile(samples, .025), percentile(samples, .975)]
+
 def summary(rows):
-    output = {"contract_version": json.loads(PROTOCOL.read_text())["contract_version"], "series": {}}
+    output = {"contract_version": strict_json(PROTOCOL.read_text())["contract_version"], "series": {}}
     for series in ("cold-process-primary", "warm-process"):
         output["series"][series] = {}
         for mechanism in MECHANISMS:
             selected = [r for r in rows if r["series"] == series and r["mechanism"] == mechanism and not r["excluded"]]
-            success = [r["latency_ns"] for r in selected if r["status"] == "success"]
-            blocks = [[r["latency_ns"] for r in selected if r["block"] == b and r["status"] == "success"] for b in sorted({r["block"] for r in selected})]
-            rng = random.Random(BOOTSTRAP_SEED + series + mechanism)
-            ci = {}
-            bootstrap_ready = bool(blocks) and all(blocks) and len(success) >= 100
-            for name, q in (("p50", .5), ("p90", .9), ("p99", .99)):
-                samples = [percentile([v for group in (rng.choice(blocks) for _ in blocks) for v in group], q) for _ in range(10000)] if bootstrap_ready else []
-                ci[name] = None if not samples else [percentile(samples, .025), percentile(samples, .975)]
-            p99_supported = bootstrap_ready and ci["p99"][1] < int(TIMEOUT * 1_000_000_000)
+            blocks = [[r for r in selected if r["block"] == b] for b in sorted({r["block"] for r in selected})]
+            ci = {name: censored_bootstrap(blocks, q) for name, q in (("p50", .5), ("p90", .9))}
             metrics = {"failure_rate": (sum(r["status"] != "success" for r in selected) / len(selected)) if selected else None,
-                "latency_ns": {"p50": percentile(success, .5), "p90": percentile(success, .9), "p99": percentile(success, .99) if p99_supported else "unsupported", "confidence_intervals_95": ci},
-                "p99_supported": p99_supported,
+                "latency_ns": {"estimator": "kaplan-meier-right-censored", "p50": censored_quantile(selected, .5), "p90": censored_quantile(selected, .9), "confidence_intervals_95": ci},
                 "mean_cpu_ns": statistics.fmean([r["cpu_ns"] for r in selected]) if selected else None,
                 "mean_network": {k: statistics.fmean([r["network"][k] for r in selected]) if selected else None for k in net()}}
             output["series"][series][mechanism] = metrics
@@ -408,6 +562,7 @@ def environment(source_label):
         "fixture_key_sha256": sources["bench/fixtures/q3-key.pem"],
         "reference_sha256": sources["reference/r8session.py"],
         "requirements_dev_sha256": sources["requirements-dev.txt"],
+        "workflow_sha256": sources[".github/workflows/q3-full.yml"],
         "loopback_interface": "lo",
         "loopback_mtu": int(Path("/sys/class/net/lo/mtu").read_text()),
         "cpu_policy": "process CPU clock; no affinity or governor modification",
@@ -431,9 +586,13 @@ def manifest(args, rows, directory):
                 "rows": len(group),
                 "failures": sum(row["status"] != "success" for row in group),
             })
+    failures = sum(row["status"] != "success" for row in rows)
+    complete_evidence = not args.smoke and len(rows) == 2 * len(MECHANISMS) * (WARMUPS + MEASURED) and all(group["rows"] == WARMUPS + MEASURED for group in group_counts)
     return {
         "schema": "q3-run-manifest-v1",
-        "status": SMOKE_STATUS if args.smoke else "completed",
+        "status": SMOKE_STATUS if args.smoke else "completed-evidence",
+        "runtime_outcome": "smoke-non-result" if args.smoke else ("success" if failures == 0 else "failures-retained"),
+        "publication_eligible": bool(not args.smoke and complete_evidence),
         "source_identity": args.source_identity,
         "implementation_source_identity": source_identity(),
         "implementation_sources": source_hashes(),
@@ -442,7 +601,7 @@ def manifest(args, rows, directory):
         "isolated_netns_proof": True,
         "group_counts": group_counts,
         "row_count": len(rows),
-        "failures": sum(row["status"] != "success" for row in rows),
+        "failures": failures,
         "post_hoc_exclusions": 0,
         "command_template": "python3 bench/q3.py run --output OUTPUT_DIR --source-identity SOURCE_ID --host-epoch HOST_EPOCH" + (" --smoke" if args.smoke else ""),
         "sha256": {name: digest(directory / name) for name in ("raw.jsonl", "environment.json", "summary.json")},
@@ -503,14 +662,16 @@ def run(args):
 
 def _validate_rows(manifest_data, saved, rows):
     smoke = manifest_data["status"] == SMOKE_STATUS
-    if manifest_data["status"] not in {SMOKE_STATUS, "completed"}:
+    if manifest_data["status"] not in {SMOKE_STATUS, "completed", "completed-evidence"}:
         raise ValueError("invalid run status")
     if manifest_data.get("isolated_netns_proof") is not True or saved.get("isolated_netns_proof") is not True:
         raise ValueError("missing isolated network namespace proof")
     if saved.get("source_identity") != manifest_data["source_identity"] or saved.get("loopback_interface") != "lo" or saved.get("loopback_mtu") != 65536:
         raise ValueError("environment consistency verification failed")
-    labels = type("Args", (), {"smoke": smoke, "source_identity": manifest_data["source_identity"], "host_epoch": manifest_data["host_epoch"], "git_commit": manifest_data.get("git_commit")})()
-    require_labels(labels)
+    if not SOURCE_LABEL.fullmatch(manifest_data["source_identity"]) or not SAFE_LABEL.fullmatch(manifest_data["host_epoch"]):
+        raise ValueError("manifest label verification failed")
+    if not smoke and (not FULL_EPOCH.fullmatch(manifest_data["host_epoch"]) or not COMMIT.fullmatch(manifest_data.get("git_commit", ""))):
+        raise ValueError("full manifest label verification failed")
     expected = []
     per_mechanism_count = 2 if smoke else WARMUPS + MEASURED
     for series in ("cold-process-primary", "warm-process"):
@@ -527,8 +688,12 @@ def _validate_rows(manifest_data, saved, rows):
         raise ValueError("group/failure verification failed")
     if manifest_data.get("post_hoc_exclusions") != 0:
         raise ValueError("post-hoc exclusions verification failed")
-    if not smoke and manifest_data["failures"] != 0:
-        raise ValueError("full run contains failures")
+    if manifest_data["status"] == "completed-evidence":
+        expected_outcome = "success" if manifest_data["failures"] == 0 else "failures-retained"
+        if manifest_data.get("publication_eligible") is not True or manifest_data.get("runtime_outcome") != expected_outcome:
+            raise ValueError("completed evidence status verification failed")
+    if manifest_data["status"] == SMOKE_STATUS and (manifest_data.get("publication_eligible", False) or manifest_data.get("runtime_outcome") != SMOKE_STATUS):
+        raise ValueError("smoke status verification failed")
     fields = {"schema", "source_identity", "series", "mechanism", "host_epoch", "block", "order", "trial", "excluded", "smoke_non_result", "status", "error_category", "latency_ns", "cpu_ns", "network"}
     for row, (series, block, position, mechanism, ordinal, excluded) in zip(rows, expected):
         if set(row) != fields or row["schema"] != "q3-raw-v1" or row["source_identity"] != manifest_data["source_identity"] or row["host_epoch"] != manifest_data["host_epoch"] or (row["series"], row["block"], row["order"], row["mechanism"], row["trial"], row["excluded"]) != (series, block, position, mechanism, ordinal, excluded) or row["smoke_non_result"] is not smoke or row["status"] not in {"success", "failure", "timeout"} or (row["status"] == "success") != (row["error_category"] is None):
@@ -538,11 +703,17 @@ def _validate_rows(manifest_data, saved, rows):
         numeric = [row["latency_ns"], row["cpu_ns"], *row["network"].values()]
         if any(type(value) is not int or value < 0 for value in numeric):
             raise ValueError("raw numeric verification failed")
+        if row["status"] != "success":
+            setup_failure = row["error_category"].startswith("setup:")
+            if setup_failure and any(numeric):
+                raise ValueError("setup failure measurement verification failed")
+            if not setup_failure and row["latency_ns"] == 0:
+                raise ValueError("post-start failure elapsed verification failed")
         require_loopback_delta(row["network"])
 
 def regenerate(args):
     directory = Path(args.output)
-    manifest_data = json.loads((directory / "run-manifest.json").read_text())
+    manifest_data = strict_json((directory / "run-manifest.json").read_text())
     if manifest_data.get("schema") != "q3-run-manifest-v1":
         raise ValueError("invalid run manifest")
     hashes = manifest_data.get("sha256")
@@ -551,21 +722,43 @@ def regenerate(args):
     for name, expected_hash in hashes.items():
         if expected_hash != digest(directory / name):
             raise ValueError("manifest hash verification failed: " + name)
-    saved = json.loads((directory / "environment.json").read_text())
+    saved = strict_json((directory / "environment.json").read_text())
     current_sources = source_hashes()
     current_identity = source_identity()
-    for recorded in (saved, manifest_data):
-        if recorded.get("implementation_sources") != current_sources:
-            raise ValueError("source/toolchain hash verification failed")
-        if recorded.get("implementation_source_identity") != current_identity:
-            raise ValueError("implementation source identity verification failed")
-    if manifest_data.get("toolchain_provenance", {}).get("requirements_dev_sha256") != current_sources["requirements-dev.txt"]:
-        raise ValueError("requirements toolchain hash verification failed")
-    for key, expected in (("protocol_sha256", current_sources["bench/protocols/q3.json"]), ("fixture_certificate_sha256", current_sources["bench/fixtures/q3-cert.pem"]), ("fixture_key_sha256", current_sources["bench/fixtures/q3-key.pem"]), ("reference_sha256", current_sources["reference/r8session.py"]), ("requirements_dev_sha256", current_sources["requirements-dev.txt"])):
-        if saved.get(key) != expected:
-            raise ValueError("hash verification failed: " + key)
-    rows = [json.loads(line) for line in (directory / "raw.jsonl").read_text().splitlines()]
+    recorded_sources = manifest_data.get("implementation_sources")
+    recorded_identity = manifest_data.get("implementation_source_identity")
+    if type(recorded_sources) is not dict or any(type(path) is not str or type(value) is not str or not re.fullmatch(r"[0-9a-f]{64}", value) for path, value in recorded_sources.items()):
+        raise ValueError("recorded implementation sources verification failed")
+    recorded_keys = set(recorded_sources)
+    if recorded_keys not in (set(SOURCE_INPUTS), set(HISTORICAL_V8_SOURCE_INPUTS)):
+        raise ValueError("recorded implementation source key-set verification failed")
+    if saved.get("implementation_sources") != recorded_sources or saved.get("implementation_source_identity") != recorded_identity:
+        raise ValueError("recorded implementation source binding verification failed")
+    if implementation_source_identity(recorded_sources) != recorded_identity:
+        raise ValueError("recorded implementation source identity verification failed")
+    smoke = manifest_data.get("status") == SMOKE_STATUS
+    if not smoke and (manifest_data.get("source_identity") != recorded_identity or saved.get("source_identity") != recorded_identity):
+        raise ValueError("full package public source identity binding verification failed")
+    if not smoke:
+        component_fields = {
+            "protocol_sha256": "bench/protocols/q3.json",
+            "fixture_certificate_sha256": "bench/fixtures/q3-cert.pem",
+            "fixture_key_sha256": "bench/fixtures/q3-key.pem",
+            "reference_sha256": "reference/r8session.py",
+            "requirements_dev_sha256": "requirements-dev.txt",
+        }
+        if "workflow_sha256" in saved or ".github/workflows/q3-full.yml" in recorded_sources:
+            component_fields["workflow_sha256"] = ".github/workflows/q3-full.yml"
+        for field, path in component_fields.items():
+            if path not in recorded_sources or saved.get(field) != recorded_sources[path]:
+                raise ValueError("recorded component hash verification failed: " + field)
+        if manifest_data.get("toolchain_provenance", {}).get("requirements_dev_sha256") != recorded_sources["requirements-dev.txt"]:
+            raise ValueError("requirements toolchain hash verification failed")
+    current_package = recorded_sources == current_sources and recorded_identity == current_identity
+    rows = [strict_json(line) for line in (directory / "raw.jsonl").read_text().splitlines()]
     _validate_rows(manifest_data, saved, rows)
+    if not current_package:
+        return
     rendered = json.dumps(summary(rows), sort_keys=True, indent=2) + "\n"
     if hashlib.sha256(rendered.encode()).hexdigest() != hashes["summary.json"]:
         raise ValueError("manifest summary verification failed")
@@ -576,7 +769,7 @@ def regenerate(args):
 def main():
     parser = argparse.ArgumentParser(); commands = parser.add_subparsers(dest="command", required=True)
     run_parser = commands.add_parser("run"); run_parser.add_argument("--output", required=True); run_parser.add_argument("--source-identity", required=True); run_parser.add_argument("--host-epoch", required=True); run_parser.add_argument("--git-commit"); run_parser.add_argument("--smoke", action="store_true")
-    work = commands.add_parser("worker"); work.add_argument("--mechanism", choices=MECHANISMS, required=True)
+    work = commands.add_parser("worker"); work.add_argument("--mechanism", choices=MECHANISMS, required=True); work.add_argument("--marker-fd", type=int)
     regen = commands.add_parser("regenerate"); regen.add_argument("--output", required=True)
     args = parser.parse_args()
     if args.command == "worker": return worker(args)

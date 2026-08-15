@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Q1 v4-ready runner.  It deliberately has no unprivileged/simulated mode."""
+"""Q1 v5-ready runner.  It deliberately has no unprivileged/simulated mode."""
 import argparse, hashlib, ipaddress, json, os, platform, random, re, shutil, signal, struct, subprocess, sys, tempfile, time
 from pathlib import Path
 
@@ -13,7 +13,7 @@ ORDER_SEED, BOOTSTRAP_SEED = "r8-q1-block-order-v4", "r8-q1-block-bootstrap-v2"
 SOCKET_BUFFER = 262144
 RAW_FIELDS = ("protocol_id", "contract_version", "trial_id", "block_id", "host_epoch", "mechanism", "arm", "randomization_position", "setup_status", "exclusion_reason", "error_category", "t_minus_3_ns", "activation_ns", "activation_start_ns", "activation_complete_ns", "cutover_ns", "observation_end_ns", "readiness_ns", "censored", "failure", "scheduled_payloads", "attempted_payloads", "sent_payloads", "received_payloads", "lost_payloads", "duplicate_payloads", "reordered_payloads", "outage_ns", "interface_counter_by_ordinal", "interface_counter_timestamp_ns_by_ordinal", "counter_complete", "process_user_cpu_ns", "process_system_cpu_ns", "process_cpu_timestamp_ns_by_ordinal", "cpu_complete", "cleanup_complete", "evidence_complete", "environment_complete", "topology_complete", "namespace_count", "interface_count", "non_loopback_interface_count", "veth_pair_count", "configuration_sha256")
 ERROR_CATEGORIES = frozenset(("namespace_create", "forwarding_config", "veth_create", "namespace_move", "bridge_create", "address_config", "link_activate", "route_client_default", "route_server_main", "route_old_policy", "route_candidate_policy", "route_vip_policy", "neighbor_config", "candidate_deactivate", "environment_setup", "environment_verify", "counter_read", "endpoint_setup", "endpoint_ready", "endpoint_exit", "timeline", "authenticated_events", "garp_announce", "endpoint_runtime", "r8_move_timeout", "r8_move_io", "r8_move_protocol", "worker_internal", "worker_timeout", "worker_exit", "worker_output", "cleanup_delete", "cleanup_reap", "cleanup_residual", "control_parse"))
-SOURCE_FILES = tuple(ROOT / path for path in ("bench/q1.py", "reference/r8mobility.py", "reference/r8move.py", "reference/r8ref.py", "reference/r8session.py", "requirements-dev.txt", "tests/mobility_netns.py"))
+SOURCE_FILES = tuple(ROOT / path for path in (".github/workflows/q1-full.yml", "bench/q1.py", "reference/r8mobility.py", "reference/r8move.py", "reference/r8ref.py", "reference/r8session.py", "requirements-dev.txt", "spec/0004-wire-format-v0.2.md", "spec/0005-session-security-v0.1.md", "spec/0006-mobility-v0.1.md", "spec/parameters-v0.1.md", "tests/mobility_netns.py"))
 
 def sha(path): return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 def stable_sha(value): return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
@@ -24,7 +24,7 @@ def contract():
     entry = next((x for x in manifest["preregistrations"] if x["protocol_id"] == "Q1"), None)
     if not entry or entry["sha256"] != sha(PROTOCOL) or entry["contract_version"] != data["contract_version"]:
         raise RuntimeError("Q1 preregistration/manifest hash mismatch")
-    if data["contract_version"] != "r8-benchmark-preregistration-v4": raise RuntimeError("wrong Q1 contract")
+    if data["contract_version"] != "r8-benchmark-preregistration-v5": raise RuntimeError("wrong Q1 contract")
     binding = data.get("implementation_binding", {})
     frozen = binding.get("source_map")
     if not isinstance(frozen, dict) or tuple(sorted(frozen)) != tuple(sorted(str(path.relative_to(ROOT)) for path in SOURCE_FILES)):
@@ -36,7 +36,7 @@ def contract():
     return data
 
 def schedule(smoke=False):
-    """Deterministic balanced v4 order: 66 independently balanced 20-trial blocks."""
+    """Deterministic balanced v5 order, preserving the frozen v4 seed and 66 blocks."""
     if smoke:
         return [{"trial_id": i, "block_id": 0, "randomization_position": i, "mechanism": m, "arm": a, "exclusion_reason": "smoke_non_result"} for i, (m,a) in enumerate(PAIR_ORDER)]
     rng = random.Random(ORDER_SEED)

@@ -1,66 +1,415 @@
 {
-  "contract_version": "r8-benchmark-preregistration-v1",
+  "contract_version": "r8-benchmark-preregistration-v5",
   "protocol_id": "Q2",
+  "series_version": "v5",
   "status": "preregistered-no-results",
   "scope": "private-experimental-closed-lab",
   "additional_properties": false,
+  "history": [
+    {
+      "series_version": "v1",
+      "status": "superseded-no-results",
+      "sha256": "12f678e6af04b1377bb977cf17da7f3a08bd2f0f9b3b30c43d4e6f072dbd840d",
+      "size_bytes": 3367,
+      "superseded_by": "v2",
+      "results": "none"
+    },
+    {
+      "series_version": "v2",
+      "status": "superseded-no-results",
+      "sha256": "376a944a155f40690acc5016db7d00cb8a0e12e249204ec5e3233471cdb9f545",
+      "size_bytes": 6939,
+      "superseded_by": "v3",
+      "results": "none"
+    },
+    {
+      "series_version": "v3",
+      "status": "superseded-no-results",
+      "sha256": "2e624e5801c2a42e7176204ba3f945e507e694273b85edb688b1e532a15f3e1f",
+      "size_bytes": 12704,
+      "superseded_by": "v4",
+      "results": "none"
+    },
+    {
+      "series_version": "v4",
+      "status": "superseded-no-results",
+      "sha256": "739021d7abf34ee8921de112e368aa41511116a426ab9d71a808d52a4836197b",
+      "size_bytes": 8711,
+      "superseded_by": "v5",
+      "results": "none"
+    }
+  ],
   "normative_references": {
     "sections": [
-      {"document": "spec/0003-test-plan.md", "section": "4"},
-      {"document": "spec/parameters-v0.1.md", "section": "2"},
-      {"document": "spec/parameters-v0.1.md", "section": "6"}
+      {
+        "document": "spec/0003-test-plan.md",
+        "section": "2"
+      },
+      {
+        "document": "spec/0003-test-plan.md",
+        "section": "4"
+      },
+      {
+        "document": "spec/0003-test-plan.md",
+        "section": "5"
+      },
+      {
+        "document": "spec/0008-redundant-v0.1.md",
+        "section": "1"
+      },
+      {
+        "document": "spec/0008-redundant-v0.1.md",
+        "section": "3"
+      },
+      {
+        "document": "spec/parameters-v0.1.md",
+        "section": "5"
+      },
+      {
+        "document": "spec/parameters-v0.1.md",
+        "section": "7"
+      }
     ],
     "parameter_ids": [
-      "P-APPLICATION-BUDGET",
       "P-PATH-SLOTS",
-      "P-PER-PATH-QUEUE-PACKETS-MAX"
+      "P-PROFILE3-ADMISSION-OWNER",
+      "P-REDUNDANT-RECEIVE-PREVIEWS-MAX",
+      "P-DELIVERY-ID",
+      "P-DELIVERY-FORWARD-GAP-MAX",
+      "P-DELIVERY-IDENTITY-WINDOW",
+      "P-DEDUP-CACHE-IDS",
+      "P-DEDUP-CACHE-EXPIRY",
+      "P-PER-PATH-QUEUE-PACKETS-MAX",
+      "P-PER-PATH-QUEUE-BYTES-MAX",
+      "P-Q2-SEED-IDS",
+      "P-Q2-IDENTITY-TOKENS",
+      "P-Q2-MECHANISM-ORDER",
+      "P-Q2-CANONICAL-PLAN",
+      "P-Q2-TOPOLOGY",
+      "P-Q2-SCHEDULE",
+      "P-Q2-FLAP",
+      "P-Q2-TRIAL-TABLE",
+      "P-Q2-LOGICAL-PACKET-TABLE",
+      "P-Q2-EVIDENCE",
+      "P-Q2-RMST",
+      "P-Q2-BOOTSTRAP"
     ]
   },
-  "hypothesis": "Authenticated R8 REDUNDANT delivery is compared fairly with both single-path controls under the same scheduled flap and application load, without claiming inferred physical disjointness.",
-  "conditions": ["no-flap", "flap-A", "flap-B"],
-  "mechanisms": ["R8-REDUNDANT", "R8-single-path-A", "R8-single-path-B"],
-  "pairing": {
-    "paired": true,
-    "pair_key": "topology-seed-and-flap-target",
-    "required_members": ["R8-REDUNDANT", "R8-single-path-A", "R8-single-path-B"],
-    "comparison": "paired differences within the same topology seed and flap target"
+  "hypothesis": "Authenticated R8 REDUNDANT delivery is compared with both single-path controls under the same scheduled load and fault, without claims of inferred physical disjointness.",
+  "identifiers": {
+    "seed_ids": "exact integers 0 through 219 inclusive; no other seed identifier is valid",
+    "conditions": [
+      {
+        "name": "no-flap",
+        "code": 0
+      },
+      {
+        "name": "flap-A",
+        "code": 1
+      },
+      {
+        "name": "flap-B",
+        "code": 2
+      }
+    ],
+    "mechanisms": [
+      "REDUNDANT",
+      "single-A",
+      "single-B"
+    ],
+    "trial_id": "SHA256 ASCII 'r8-q2-v4-trial-id' || seed u32be || condition u8 || mechanism exact UTF-8; lowercase hexadecimal",
+    "locator_id": "SHA256 ASCII 'r8-q2-v4-locator-id' || seed u32be || locator token exact UTF-8; first 16 digest bytes rendered as 32 lowercase hexadecimal characters",
+    "locator_tokens": [
+      "source-slot-0",
+      "destination-slot-0",
+      "source-slot-1",
+      "destination-slot-1"
+    ],
+    "mac": "SHA256 ASCII 'r8-q2-v4-mac' || seed u32be || interface token exact UTF-8; bytes 0..5, then byte 0 = (byte 0 OR 0x02) AND 0xfe (locally administered unicast); six colon-separated lowercase hexadecimal octets; actual values are never stored in evidence",
+    "interface_mac_tokens": [
+      "source-A-egress",
+      "hop-A-ingress",
+      "hop-A-egress",
+      "destination-A-ingress",
+      "source-B-egress",
+      "hop-B-ingress",
+      "hop-B-egress",
+      "destination-B-ingress"
+    ],
+    "seed0_goldens": {
+      "locators": {
+        "source-slot-0": "f92f96fbe5aef758edeab4ead052a1ff",
+        "destination-slot-0": "c4774475145f2a5c9185b7dba5a6dab7",
+        "source-slot-1": "75b251dd2de094681a904c4567164c33",
+        "destination-slot-1": "752051669236bde23f57431845142669"
+      },
+      "macs": {
+        "source-A-egress": "4a:8f:85:93:8c:3c",
+        "hop-A-ingress": "12:49:ae:8f:41:dc",
+        "hop-A-egress": "ea:c5:ec:77:e8:2b",
+        "destination-A-ingress": "02:37:72:41:d8:aa",
+        "source-B-egress": "ae:93:0a:5d:72:ba",
+        "hop-B-ingress": "96:bc:4c:0a:2d:da",
+        "hop-B-egress": "de:56:a7:47:c2:7c",
+        "destination-B-ingress": "02:9d:12:d3:ae:06"
+      }
+    }
   },
-  "warmups": {"count": 20, "excluded_from_analysis": true, "unit": "trial-per-flap-target"},
-  "measured_trials": {"count": 200, "unit": "paired trial-per-flap-target", "fixed": true},
-  "blocking": {
-    "block_size": 20,
-    "unit": "paired trials",
-    "randomization": "randomize paired mechanism execution order within each topology-seed block",
-    "seed": "r8-q2-block-order-v1",
-    "topology_seed_required": true
+  "execution_order": {
+    "algorithm": "For each seed and condition independently, compute SHA256(ASCII domain 'r8-q2-v3-mechanism-order' || seed u32be || condition u8 || mechanism exact UTF-8) for every mechanism; sort ascending by digest bytes, then mechanism UTF-8 lexical order; execute that order. Canonical plan order is seed ascending, condition code ascending, then execution rank ascending; every row includes execution_ordinal = seed * 9 + condition_code * 3 + execution_rank, which is exact and unique on 0..1979.",
+    "plan_row": {
+      "fields": [
+        "trial_id",
+        "seed",
+        "block",
+        "warmup",
+        "condition",
+        "condition_code",
+        "mechanism",
+        "mechanism_digest",
+        "execution_rank",
+        "execution_ordinal"
+      ],
+      "digest": "477db21557cd9ff0349c8e9630261d35ea6dda42a53f1fcf50c7936ba7a70f75",
+      "canonical_json": "UTF-8 JSON with lexicographically sorted keys, compact separators, followed by LF per row; SHA-256 over all 1,980 rows in canonical plan order"
+    },
+    "golden_vectors": [
+      {
+        "seed": 0,
+        "condition": "no-flap",
+        "order": [
+          "REDUNDANT",
+          "single-B",
+          "single-A"
+        ],
+        "digests": [
+          "7127e90c22c49f7de17fdbeecf1acd6c519a79c5644aa0ec943d2469908f822c",
+          "735814d3c538bdf8fda41310869d38367aac089e34b1649444aef8cf76abc8b7",
+          "9261252e55c219e31b0a560412fb95f8b06b8f0b74826c75f27d44639140de10"
+        ]
+      },
+      {
+        "seed": 110,
+        "condition": "flap-A",
+        "order": [
+          "REDUNDANT",
+          "single-B",
+          "single-A"
+        ],
+        "digests": [
+          "26e42b1baa80afddac6689bf4ba478c0a2fd111770e29418f417f71ae38467ef",
+          "4d4629d3013eb923011e0ed4a97dfd37141a1813a51bf16857947d44f74c970c",
+          "bb4ab64902acef8e282580cb8d90e684a9cb6d2612c7a37fa4dc4670c8ebe1cc"
+        ]
+      },
+      {
+        "seed": 219,
+        "condition": "flap-B",
+        "order": [
+          "single-B",
+          "single-A",
+          "REDUNDANT"
+        ],
+        "digests": [
+          "61d2844404520d5f48bcbc964ba4a41c246cad82557608042fdc8c58c993b8f9",
+          "6c51b534b48d27e065f7d30b16e5597865dc7ab5e31ca148ab26afa80ee49cad",
+          "8075f2dbfaa7368c085f98b3168cb20aaff54f6a6e418829cbc0b0a79f76e880"
+        ]
+      }
+    ]
   },
-  "trigger_and_readiness": {
-    "readiness": "steady state before the flap",
-    "trigger": "one precisely scheduled one-second flap after steady state",
-    "flap_targets": ["A", "B"],
-    "no_flap_control": "executed under the same topology and load controls",
-    "recovery": "recorded from the scheduled flap through post-flap delivery recovery"
+  "sampling": {
+    "seed_count": 220,
+    "blocks": "seed // 20; block 0 warmup and blocks 1 through 10 measured",
+    "warmup_trials": 180,
+    "measured_trials": 1800,
+    "trial_rows": 1980,
+    "logical_packet_rows": 792000,
+    "warmup_logical_packet_rows": 72000,
+    "measured_logical_packet_rows": 720000
   },
-  "controls": {
-    "trust": "the same preconfigured closed-lab trust material and peer authorization policy for all paired members",
-    "load": "identical application bytes, application rate, MTU, and queue settings",
-    "topology": "topology evidence retained for every topology seed",
-    "timeout": "identical per-trial timeout recorded before execution"
+  "topology": {
+    "roles": {
+      "source": "source application and native egress",
+      "hop-A": "only hop for path A",
+      "hop-B": "only hop for path B",
+      "destination": "destination application and native ingress"
+    },
+    "paths": {
+      "A": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "B": [
+        4,
+        5,
+        6,
+        7
+      ]
+    },
+    "interface_ordinals": "0 source/A-egress, 1 hop-A/ingress, 2 hop-A/egress, 3 destination/A-ingress, 4 source/B-egress, 5 hop-B/ingress, 6 hop-B/egress, 7 destination/B-ingress; only ordinals are stored in evidence",
+    "veth_pairs": [
+      [
+        0,
+        1
+      ],
+      [
+        2,
+        3
+      ],
+      [
+        4,
+        5
+      ],
+      [
+        6,
+        7
+      ]
+    ],
+    "forwarding": "exactly two disjoint IP-free two-hop veth paths; no bridge, default route, shared nonloopback interface, or link removal",
+    "mtu_bytes": 1500,
+    "native_budget_bytes": 1280,
+    "qdisc_egress_ordinals": [
+      0,
+      3,
+      4,
+      7
+    ],
+    "qdisc_rule": "flap-A mutates 0 and 3; flap-B mutates 4 and 7; both directions 100% loss; no-flap performs no qdisc mutation"
   },
-  "outcomes": ["sent", "delivered", "lost", "duplicates", "reorder", "max-loss-burst", "recovery", "degraded-interval", "overhead", "CPU", "failure"],
-  "timeout_and_censoring": {
-    "timeout_rows_retained": true,
-    "failure_rows_retained": true,
-    "censoring": "timeouts remain raw failures and censored recovery observations; they are not substituted with successful values",
-    "degraded_rule": "periods degraded to one path remain in raw results and are labeled and excluded only from claims of active redundancy",
-    "exclusions": "no post-hoc exclusions"
+  "premeasurement_gate": {
+    "profile3_admission": "before slot-one activation, all five protected controls traverse the actual native topology: LOC_UPDATE over path A; BIND_PROBE, BIND_CHALLENGE, BIND_RESPONSE, and CANDIDATE_RESULT over candidate path B in their protocol directions; each receiver derives NativeBinding only from its actual receiving endpoint descriptor and validated L2 peer",
+    "ready": "the child signals admission-ready only after handshake authentication, exact native candidate proof, both slot-one activations, and setup receive drain; readiness is bounded and failure is retained",
+    "baseline": "after admission-ready, the parent drains every setup frame, verifies clean qdisc/state, captures wire counters plus parent/daemon CPU baselines, then selects T and opens one shared start gate",
+    "cpu": "child-self CPU is captured immediately after the shared gate and at bounded completion; retained CPU is gated child-self plus gated parent/daemon deltas; setup/admission CPU is excluded",
+    "prohibition": "no in-memory or caller-asserted admission bypass is allowed in measured execution"
+  },
+  "schedule_and_fault": {
+    "clock": "CLOCK_MONOTONIC_RAW; stored times are signed integer ns relative to T",
+    "packets": "i=0..399; scheduled_time(i)=T-1s+i*10ms; interval [T-1s,T+3s); packet rows have exactly one row for every trial_id/packet_index pair; each active path has at most one authenticated copy",
+    "send": "send_relative_ns is null only for not_sent; otherwise send_relative_ns >= scheduled_time(i)",
+    "on_schedule_receive": "[scheduled_time(i),scheduled_time(i)+20ms]; authenticated delivery has exactly one earliest authenticated receive timestamp and on_schedule is derived from that interval",
+    "pre_T_readiness": "packet indexes 90..99 must all be on-schedule authenticated deliveries with receive <= T; evidence retains their longest consecutive run, and readiness_relative_ns is their maximum receive time only when all ten qualify",
+    "qdisc_actual_observation": "for each start/end command, actual state is the first successful post-command state read",
+    "flap": "each start and end absolute deviation from T and T+1s respectively MUST be <=100ms, inter-end skew MUST be <=100ms; otherwise retain finite failure_reason flap-timing",
+    "recovery": "only eligible flap trials with a valid later flap-end origin enter at 0; the tenth consecutive on-schedule authenticated delivery scheduled strictly after origin is the event, stored as receive_time minus origin; otherwise censor at min(2s, observed follow-up); missing or invalid origin enters and censors at 0",
+    "aggregates": "sent is the count of nonnull sends; delivered is authenticated logical deliveries; lost=400-delivered; duplicates=sum(max(path_A_count+path_B_count-1,0)); reorder_displacement_count increments for an arrival whose packet index is below the maximum prior arrived index; max_consecutive_loss_burst is derived in packet-index order; valid-flap degraded_interval_ns=later end minus earliest start, no-flap is zero, invalid fault is null. Wire/CPU/queue values are retained host observations. Every trial aggregate exactly equals evidence.metrics.",
+    "no_flap": "flap start/end and recovery fields are null; no-flap is excluded from recovery estimand; it remains in failure and loss estimands",
+    "timeouts": {
+      "trial_seconds": 10,
+      "supervisor_seconds": 20
+    }
+  },
+  "schemas": {
+    "trial_table": {
+      "path": "bench/protocols/q2-trial-v5.schema.json",
+      "sha256": "02f4a204840f216e6b453103696f0ea8bfc0bc6272b92b87e5fdddea93bbe30c",
+      "cardinality": 1980
+    },
+    "logical_packet_table": {
+      "path": "bench/protocols/q2-packet-v5.schema.json",
+      "sha256": "6db0bf37dead1602d6ff67d0278e484356cf1a68dd89c9c4e65e1ab9038a6594",
+      "cardinality": 792000
+    },
+    "evidence_table": {
+      "path": "bench/protocols/q2-evidence-v5.schema.json",
+      "sha256": "649d4368dcab8305f9db7479537d4e2c896e50b94cf7fad0737379306f696771",
+      "cardinality": "exactly one row per trial_id"
+    }
+  },
+  "evidence_identity": {
+    "canonical_json": "UTF-8 JSON with lexicographically sorted keys and compact separators (comma `,`, colon `:`), no whitespace; SHA-256 digest rendered as 64 lowercase hexadecimal characters.",
+    "environment_id": "SHA-256 of the canonical environment object after removing only environment_id.",
+    "topology_id": "SHA-256 of the canonical topology object after removing only topology_id.",
+    "evidence_id": "SHA-256 of the canonical evidence row after removing only evidence_id.",
+    "invariants": "All 1,980 evidence rows have one identical canonical environment object and environment_id; that environment identity is fixed across Q2 series. For each seed, exactly one identical canonical topology object and topology_id is shared by its nine condition/mechanism trials; topology.seed equals that seed. The environment_id, topology_id, and evidence_id fields are excluded only from their respective preimage objects; no domain prefix, salt, or other ID-domain bytes are included."
   },
   "analysis": {
-    "estimators": ["paired-difference", "failure-rate", "loss-rate", "empirical-quantiles", "block-bootstrap-95-percent-CI"],
-    "quantiles": ["p50", "p95"],
-    "unsupported_quantiles": ["p99"],
-    "bootstrap": {"resamples": 10000, "seed": "r8-q2-block-bootstrap-v1", "resampling_unit": "paired topology-seed block"},
-    "post_hoc_changes": "require a new labeled series"
+    "population": "all 200 measured seeds (blocks 1..10); retain every failure and timeout; warmup excluded",
+    "failure_rate": "per mechanism and condition numerator is trial status != completed; denominator 200",
+    "loss_rate": "per mechanism and condition numerator is every one of the 80,000 logical schedules without authenticated delivery by T+3s, including not_sent, failed, and timeout; denominator 80,000",
+    "contrasts": "for each measured seed and condition, calculate exact paired REDUNDANT minus single-A and REDUNDANT minus single-B differences for failure and loss; retain all 200 pairs",
+    "recovery": {
+      "estimand": "RMST through 2s by Kaplan-Meier, flap conditions only",
+      "valid_later_end_origin": "later valid flap end; enter at 0; tenth consecutive on-schedule authenticated delivery after origin is event",
+      "valid_later_end_no_event": "right-censor at min(2s, observed follow-up)",
+      "missing_or_invalid_origin": "enter and censor at 0, nonestimable for RMST while retained for failure and loss",
+      "report": "report recovery eligibility and nonestimability"
+    },
+    "bootstrap": {
+      "draw": "for r=0..9999 and pos=0..9, SHA256 ASCII 'r8-q2-v4-block-draw' || r u32be || pos u8; selected block=1+(first 8 digest bytes as u64be mod 10); no PRNG",
+      "goldens": [
+        {
+          "r": 0,
+          "pos": 0,
+          "digest": "4dabd97a5bed796fd1710045ba1cf1357e857a3430e4163574a7d06c0728fd50",
+          "block": 8
+        },
+        {
+          "r": 5000,
+          "pos": 5,
+          "digest": "db1cf7424d8aba5254001abe8d29846028949a840d6110a217be7950082505ed",
+          "block": 9
+        },
+        {
+          "r": 9999,
+          "pos": 9,
+          "digest": "e20b86c14765a10ad4f561b99e2385967fbc38cfb2b451f22d01e192abfd2ee0",
+          "block": 3
+        }
+      ],
+      "ci": "percentile 95% endpoints sorted zero-based floor(0.025*(B-1)) and ceil(0.975*(B-1)); required denominator or paired member absent is nonestimable"
+    },
+    "quantiles": "type-7 p50 and p95 only when estimable; p99 unsupported",
+    "post_observation_changes": "require a new labeled series"
   },
-  "result_fields_prohibited": ["observed_values", "digests", "summary", "confidence_intervals"]
+  "implementation_binding": {
+    "source_map": {
+      ".github/workflows/ci.yml": "eef9e855616ce08b1e19a765273e92a0d906911d4c3fe27dae515835f77450b2",
+      ".github/workflows/native-full.yml": "b083bbf795bc830f1864749de0d3f3511bf4aaa955db869e9abefe01bff4e287",
+      ".github/workflows/q2-full.yml": "47365fdb40f0672d77919a8263036efb550c923f8446010e56be7d093fa1b598",
+      "bench/q2.py": "3acbee3e01c82404877e843565d527e36ce7c6b40c18ca79733550004d3d5914",
+      "bench/q2_run.py": "aa3b27b51b93bfbac71451f72f5a762cbd8f0124df170cd8068d9bba03db6d3f",
+      "requirements-dev.txt": "7615cdb4d14c77a941e81dff308882ca529e021441a7a3a25554878ccffe9b6f",
+      "spec/0004-wire-format-v0.2.md": "845dc82ba63da281a458c0566a916c54b0636ba52d1300bf6bb251e971804279",
+      "spec/0005-session-security-v0.1.md": "3bf91be91847bd9a1a37da89161abd88c4491901a30576cd6c210977da19e8d9",
+      "spec/0006-mobility-v0.1.md": "71b493ac7d1609fe6d3317993e815455ac528371025b5b1697929bb23bf1b165",
+      "spec/0007-native-binding-v0.1.md": "71a0c6e3de53c7ad08de31709bd5e5d5275acb02427e27defecdcd7ecd721eaf",
+      "spec/0008-redundant-v0.1.md": "997387cbdde94d95ac58c2880eaf049ddcc38567b90113bae6f9e374d0fcb337",
+      "spec/parameters-v0.1.md": "0edc4b0fd693acbbc2e20bcdc23ea6a87b6e4afeab05fafc523a59fb8d9e060a",
+      "reference/r8ref.py": "add7bf864b5841ce6c10c07524942e93c538430b4904b0b2471efe3fa2658134",
+      "reference/r8session.py": "f049418c818e301eee3880a1a5d68b9731b311cc0c9e2ed8b9e7952071ee8540",
+      "reference/r8mobility.py": "c9da7638a77934d83fa0691a41e9890dc289e41078dd04c36f355c192df4db88",
+      "reference/r8redundant.py": "b1ed2b0c190163ad29c7c5461c76eec7b27a348a33ec60ef52bee6a9db9af77c",
+      "tests/native_netns.py": "167846d78c6b8f635c354f75703f1965cd1ae0a964fad0ee826a6bd2945a0165",
+      "tests/redundant_netns.py": "d63b6d73f98efb067b3d4fd08df50ead3987654caf6252d3eb321274c72d50ef",
+      "rust/Cargo.toml": "127425cc73795afaa6c0c8bd4d5c595f37af00546057a0b09e2d1df25808cfde",
+      "rust/Cargo.lock": "cdcf21158d86fa60e6ff3c329cd3d99175832d34957956889a896c945820de56",
+      "rust/crates/r8-proto/Cargo.toml": "082c90580af208919300ef47426283654f4f420f295ca6a3860e8183e756a61f",
+      "rust/crates/r8-proto/src/lib.rs": "40bd7db01917825f761a8aef77774e6b4d3b89d8e7889b440928aaa7e135e0fc",
+      "rust/crates/r8-session/Cargo.toml": "31962b03aef87234e1ec31a774038fd5837d3cb6bc28b6718bcbaccd6242a7df",
+      "rust/crates/r8-session/src/lib.rs": "8c2c6bec94a10d5e7693d815c4dd2b680dfc32eae975eb952c40964efa02dd38",
+      "rust/crates/r8-mobility/Cargo.toml": "d6339749d275eab1223db5e8066f29eaae1b19714651ef7afbe248b547b0f805",
+      "rust/crates/r8-mobility/src/lib.rs": "f5b516acaa780dab35854229aee036fcb752be16f05b63535170c19ccb8eef4e",
+      "rust/crates/r8-redundant/Cargo.toml": "9846e382396a316584778e17cac6fd3fca08214a6378d67e60af90be8a2c8145",
+      "rust/crates/r8-redundant/src/lib.rs": "5e0c6fba280f3b2bee9982844986847557519aa45324a73de4ab39988d7ffc38",
+      "rust/crates/r8-redundant/src/bin/r8-redundant-native.rs": "16c55acd8ac0de36eed0df63746fde523d507268080e75085367d9a691f5414b",
+      "rust/crates/r8d/Cargo.toml": "c305299760e0150e9199316676539727c53bc0764195eadb624878a58931cef4",
+      "rust/crates/r8d/src/lib.rs": "0ec08e148950c95ca44026eeb2304687bed72afffb650c8f279833abddad240f",
+      "rust/crates/r8d/src/forward.rs": "c7513a53375389a8dc10ff0c615c73f189319cbf4f1c1dce749ff38c2e945ac1",
+      "rust/crates/r8d/src/linux.rs": "bccd47650b718c4f16bef1688f9d645b1c215ebca4d5d6efdb5c4bd8e8c8dc2f",
+      "rust/crates/r8d/src/manifest.rs": "f712d5e3fd00b2b87674f0468181ba1d67ccd30901f38252a7ff1a63423de442",
+      "rust/crates/r8d/src/native.rs": "30d5126590446db852c3b1f9ad3cf58c461856fa1ae9e1f6e41a7d585b020232",
+      "rust/crates/r8d/src/bin/r8-native.rs": "2ce684715aa7c21ce26cf1eed2cc74f6800b478574fdb551a8e7a640b34a1dc2"
+    },
+    "source_map_sha256": "640b5f83c7d5000e7a594b72af9e7987bd0421d3505c7a05b8984f1d6e14b733"
+  },
+  "result_fields_prohibited": [
+    "observed_values",
+    "results",
+    "summary",
+    "confidence_intervals"
+  ]
 }

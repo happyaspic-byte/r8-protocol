@@ -1,18 +1,33 @@
 //! Strict R8 session-security v0.1 framing and cryptographic foundation.
 //! No credential defaults, fallback modes, or custom cryptographic primitives.
 
+use aws_lc_rs::{
+    hkdf::{KeyType, Prk, Salt, HKDF_SHA256},
+    hmac,
+};
 use chacha20poly1305::{
     aead::{AeadInPlace, KeyInit},
     ChaCha20Poly1305, Key, Nonce, Tag,
 };
+use core::num::NonZeroU64;
+use core::sync::atomic::{AtomicU64, Ordering};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
-use hkdf::Hkdf;
-use hmac::{Hmac, Mac};
-use r8_proto::{Header, HEADER_LEN};
+use r8_proto::{Header, WireError, HEADER_LEN};
 use sha2::{Digest, Sha256};
+use std::sync::{atomic::AtomicBool, Arc, Weak};
 use subtle::ConstantTimeEq;
-use x25519_dalek::{PublicKey, StaticSecret};
-use zeroize::Zeroize;
+use x25519_dalek::{PublicKey, SharedSecret, StaticSecret};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
+
+macro_rules! redacted_debug {
+    ($type:ty, $name:literal) => {
+        impl core::fmt::Debug for $type {
+            fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                f.write_str($name)
+            }
+        }
+    };
+}
 
 pub const WIRE_VERSION: u8 = 8;
 pub const SESSION_VERSION: u8 = 1;
@@ -23,8 +38,9 @@ pub const OPEN_ACK: u8 = 4;
 pub const SESSION_ACCEPT: u8 = 5;
 pub const SESSION_DATA: u8 = 6;
 pub const CLOSE: u8 = 7;
-pub const REPLAY_WINDOW: u64 = 1024;
-pub const REPLAY_JUMP_MAX: u64 = 1_048_576;
+pub const REPLAY_WINDOW: u64 = 4096;
+pub const REPLAY_JUMP_MAX: u64 = 65_536;
+pub const PROFILE3_DATA_PACKET_OVERHEAD: usize = 84;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SessionError {
@@ -91,7 +107,7 @@ impl core::fmt::Display for SessionError {
 }
 impl std::error::Error for SessionError {}
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct Identity {
     pub role: u8,
     pub service_context: u32,
@@ -138,7 +154,7 @@ pub fn eid(public_key: &[u8; 32]) -> [u8; 16] {
 }
 
 /// Canonical typed UDP binding from the mobility specification.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct UdpBinding(Vec<u8>);
 
 impl UdpBinding {
@@ -207,8 +223,63 @@ impl UdpBinding {
         &self.0
     }
 }
+#[derive(Clone, Eq, PartialEq)]
+pub enum ObservedBinding {
+    Udp(UdpBinding),
+    Native {
+        ingress_descriptor_id: u32,
+        next_hop_mac: [u8; 6],
+    },
+}
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+impl ObservedBinding {
+    pub fn validate(&self) -> Result<(), SessionError> {
+        match self {
+            Self::Udp(binding) => UdpBinding::parse(binding.as_bytes().to_vec()).map(|_| ()),
+            Self::Native {
+                ingress_descriptor_id,
+                ..
+            } if *ingress_descriptor_id != 0 => Ok(()),
+            Self::Native { .. } => Err(SessionError::Binding),
+        }
+    }
+
+    pub fn encode(&self) -> Vec<u8> {
+        match self {
+            Self::Udp(binding) => binding.as_bytes().to_vec(),
+            Self::Native {
+                ingress_descriptor_id,
+                next_hop_mac,
+            } => {
+                let mut out = Vec::with_capacity(11);
+                out.push(2);
+                out.extend_from_slice(&ingress_descriptor_id.to_be_bytes());
+                out.extend_from_slice(next_hop_mac);
+                out
+            }
+        }
+    }
+
+    pub fn parse(bytes: &[u8]) -> Result<Self, SessionError> {
+        match bytes.first() {
+            Some(1) => UdpBinding::parse(bytes.to_vec()).map(Self::Udp),
+            Some(2) if bytes.len() == 11 => {
+                let ingress_descriptor_id =
+                    u32::from_be_bytes(bytes[1..5].try_into().expect("checked native binding"));
+                if ingress_descriptor_id == 0 {
+                    return Err(SessionError::Binding);
+                }
+                Ok(Self::Native {
+                    ingress_descriptor_id,
+                    next_hop_mac: bytes[5..].try_into().expect("checked native binding"),
+                })
+            }
+            _ => Err(SessionError::Binding),
+        }
+    }
+}
+
+#[derive(Clone, Eq, PartialEq)]
 pub struct SessionMessage {
     pub typ: u8,
     pub profile: u8,
@@ -285,17 +356,18 @@ fn validate_body(typ: u8, body: &[u8]) -> Result<(), SessionError> {
     if matches!(typ, OPEN | VERIFY_COOKIE | OPEN_AUTH | OPEN_ACK) {
         validate_role_pair(body)?;
     }
-    if matches!(typ, SESSION_ACCEPT | SESSION_DATA | CLOSE)
-        && u64::from_be_bytes(body[..8].try_into().expect("checked")) == 0
-    {
-        return Err(SessionError::CounterRange);
+    if matches!(typ, SESSION_ACCEPT | SESSION_DATA | CLOSE) {
+        let counter = u64::from_be_bytes(body[..8].try_into().expect("checked"));
+        if counter == 0 || counter == u64::MAX {
+            return Err(SessionError::CounterRange);
+        }
     }
     Ok(())
 }
 
 #[derive(Clone, Copy)]
 pub struct CookieContext<'a> {
-    pub binding: &'a UdpBinding,
+    pub binding: &'a ObservedBinding,
     pub client: &'a Identity,
     pub server: &'a Identity,
     pub scid: u64,
@@ -313,7 +385,8 @@ pub fn cookie_input(context: &CookieContext<'_>) -> Result<Vec<u8>, SessionError
     }
     let mut out = Vec::with_capacity(160);
     out.extend_from_slice(b"R8 cookie v1");
-    out.extend_from_slice(context.binding.as_bytes());
+    context.binding.validate()?;
+    out.extend_from_slice(&context.binding.encode());
     out.extend_from_slice(&[
         WIRE_VERSION,
         SESSION_VERSION,
@@ -331,9 +404,11 @@ pub fn cookie_input(context: &CookieContext<'_>) -> Result<Vec<u8>, SessionError
     Ok(out)
 }
 pub fn cookie(key: &[u8; 32], input: &[u8]) -> [u8; 32] {
-    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(key).expect("fixed HMAC key");
-    mac.update(input);
-    mac.finalize().into_bytes().into()
+    let key = hmac::Key::new(hmac::HMAC_SHA256, key);
+    hmac::sign(&key, input)
+        .as_ref()
+        .try_into()
+        .expect("SHA-256 HMAC length")
 }
 pub fn cookie_matches(
     current: &[u8; 32],
@@ -455,28 +530,52 @@ pub fn transcript_hash(
     hash.finalize().into()
 }
 
-pub fn x25519(secret: [u8; 32], peer: [u8; 32]) -> Result<[u8; 32], SessionError> {
-    let shared = StaticSecret::from(secret)
-        .diffie_hellman(&PublicKey::from(peer))
-        .to_bytes();
-    if bool::from(shared.ct_eq(&[0; 32])) {
+pub fn x25519(secret: StaticSecret, peer: PublicKey) -> Result<SharedSecret, SessionError> {
+    let shared = secret.diffie_hellman(&peer);
+    if bool::from(shared.as_bytes().ct_eq(&[0; 32])) {
         Err(SessionError::AuthFailed)
     } else {
         Ok(shared)
     }
 }
-pub fn hkdf_prk(shared: [u8; 32], transcript_hash: [u8; 32]) -> [u8; 32] {
-    let (prk, _) = Hkdf::<Sha256>::extract(Some(&transcript_hash), &shared);
-    prk.into()
+pub fn hkdf_prk(shared: &SharedSecret, transcript_hash: [u8; 32]) -> Prk {
+    hkdf_prk_bytes(shared.as_bytes(), transcript_hash)
+}
+fn hkdf_prk_bytes(shared: &[u8; 32], transcript_hash: [u8; 32]) -> Prk {
+    Salt::new(HKDF_SHA256, &transcript_hash).extract(shared)
 }
 pub fn derive_key(
-    shared: [u8; 32],
+    shared: &Zeroizing<[u8; 32]>,
     transcript_hash: [u8; 32],
     profile: u8,
     sender_role: u8,
     receiver_role: u8,
     slot: u8,
-) -> Result<[u8; 32], SessionError> {
+) -> Result<Zeroizing<[u8; 32]>, SessionError> {
+    let prk = hkdf_prk_bytes(shared, transcript_hash);
+    derive_key_from_prk(
+        &prk,
+        transcript_hash,
+        profile,
+        sender_role,
+        receiver_role,
+        slot,
+    )
+}
+struct KeyLength(usize);
+impl KeyType for KeyLength {
+    fn len(&self) -> usize {
+        self.0
+    }
+}
+fn derive_key_from_prk(
+    prk: &Prk,
+    transcript_hash: [u8; 32],
+    profile: u8,
+    sender_role: u8,
+    receiver_role: u8,
+    slot: u8,
+) -> Result<Zeroizing<[u8; 32]>, SessionError> {
     if !matches!(sender_role, 1 | 2)
         || !matches!(receiver_role, 1 | 2)
         || sender_role == receiver_role
@@ -484,19 +583,21 @@ pub fn derive_key(
     {
         return Err(SessionError::ConfigError);
     };
-    let hk = Hkdf::<Sha256>::new(Some(&transcript_hash), &shared);
     let mut info = b"R8 key v1".to_vec();
     info.extend_from_slice(&[WIRE_VERSION, SESSION_VERSION, profile]);
     info.extend_from_slice(&transcript_hash);
     info.extend_from_slice(&[sender_role, receiver_role, slot]);
-    let mut key = [0; 32];
-    hk.expand(&info, &mut key)
+    let info_parts = [info.as_slice()];
+    let okm = prk
+        .expand(&info_parts, KeyLength(32))
         .map_err(|_| SessionError::ConfigError)?;
+    let mut key = Zeroizing::new([0; 32]);
+    okm.fill(&mut *key).map_err(|_| SessionError::ConfigError)?;
     Ok(key)
 }
 
 pub fn nonce(counter: u64) -> Result<[u8; 12], SessionError> {
-    if counter == 0 {
+    if counter == 0 || counter == u64::MAX {
         return Err(SessionError::CounterRange);
     };
     let mut nonce = [0; 12];
@@ -508,19 +609,19 @@ pub fn protected_aad(packet: &[u8], counter: u64) -> Result<Vec<u8>, SessionErro
         return Err(SessionError::Truncated);
     }
     Header::unpack(packet).map_err(|_| SessionError::AuthFailed)?;
-    let mut aad = Vec::with_capacity(HEADER_LEN + 12);
-    aad.extend_from_slice(&packet[..HEADER_LEN + 4]);
+    let mut aad = packet[..HEADER_LEN + 4].to_vec();
+    aad[5] = 0;
     aad.extend_from_slice(&counter.to_be_bytes());
     Ok(aad)
 }
 pub fn seal(
-    key: [u8; 32],
+    key: &[u8; 32],
     counter: u64,
     aad: &[u8],
     plaintext: &[u8],
 ) -> Result<Vec<u8>, SessionError> {
     let nonce = nonce(counter)?;
-    let cipher = ChaCha20Poly1305::new(Key::from_slice(&key));
+    let cipher = ChaCha20Poly1305::new(Key::from_slice(key));
     let mut data = plaintext.to_vec();
     let tag = cipher
         .encrypt_in_place_detached(Nonce::from_slice(&nonce), aad, &mut data)
@@ -529,7 +630,7 @@ pub fn seal(
     Ok(data)
 }
 pub fn open(
-    key: [u8; 32],
+    key: &[u8; 32],
     counter: u64,
     aad: &[u8],
     ciphertext: &[u8],
@@ -538,7 +639,7 @@ pub fn open(
         return Err(SessionError::Truncated);
     };
     let nonce = nonce(counter)?;
-    let cipher = ChaCha20Poly1305::new(Key::from_slice(&key));
+    let cipher = ChaCha20Poly1305::new(Key::from_slice(key));
     let split = ciphertext.len() - 16;
     let mut data = ciphertext[..split].to_vec();
     cipher
@@ -552,14 +653,13 @@ pub fn open(
     Ok(data)
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct ReplayWindow {
     largest: u64,
-    bits: [u64; 16],
+    bits: [u64; 64],
     generation: u64,
 }
 
-#[derive(Debug)]
 pub struct ReplayCommit {
     counter: u64,
     generation: u64,
@@ -569,12 +669,12 @@ impl ReplayWindow {
     pub fn new() -> Self {
         Self {
             largest: 0,
-            bits: [0; 16],
+            bits: [0; 64],
             generation: 0,
         }
     }
     pub fn check(&self, counter: u64) -> Result<(), SessionError> {
-        if counter == 0 {
+        if counter == 0 || counter == u64::MAX {
             return Err(SessionError::CounterRange);
         };
         if self.largest > 0 && counter > self.largest.saturating_add(REPLAY_JUMP_MAX) {
@@ -617,10 +717,10 @@ impl ReplayWindow {
         if counter > self.largest {
             let shift = counter - self.largest;
             if shift >= REPLAY_WINDOW {
-                self.bits = [0; 16]
+                self.bits = [0; 64]
             } else {
                 for _ in 0..shift {
-                    for i in (0..16).rev() {
+                    for i in (0..64).rev() {
                         self.bits[i] =
                             (self.bits[i] << 1) | if i > 0 { self.bits[i - 1] >> 63 } else { 0 }
                     }
@@ -639,7 +739,7 @@ impl Default for ReplayWindow {
 }
 
 #[derive(Clone, Debug)]
-pub struct Counters {
+struct Counters {
     next: u64,
 }
 impl Counters {
@@ -647,15 +747,15 @@ impl Counters {
         Self { next: 1 }
     }
     pub fn reserve(&mut self) -> Result<u64, SessionError> {
-        if self.next == 0 {
+        if self.next == 0 || self.next == u64::MAX {
             return Err(SessionError::CounterExhausted);
         };
         let counter = self.next;
-        self.next = self.next.checked_add(1).unwrap_or(0);
+        self.next += 1;
         Ok(counter)
     }
-    pub fn restart(&mut self) {
-        self.next = 1
+    fn can_reserve(&self) -> bool {
+        self.next != 0 && self.next != u64::MAX
     }
 }
 impl Default for Counters {
@@ -663,13 +763,18 @@ impl Default for Counters {
         Self::new()
     }
 }
-#[derive(Zeroize)]
+#[derive(Zeroize, ZeroizeOnDrop)]
 pub struct SecretMaterial {
     #[zeroize(skip)]
     pub key_id: u64,
     pub bytes: [u8; 32],
 }
-#[derive(Clone, Debug)]
+impl core::fmt::Debug for SecretMaterial {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("<SecretMaterial>")
+    }
+}
+#[derive(Clone)]
 pub struct HandshakeConfig {
     pub local: Identity,
     pub peer: Identity,
@@ -694,8 +799,8 @@ impl HandshakeConfig {
         }
         if self.profile > 3
             || !(48..=1280).contains(&self.budget)
-            || self.pending_limit == 0
-            || self.established_limit == 0
+            || !(1..=256).contains(&self.pending_limit)
+            || !(1..=1024).contains(&self.established_limit)
             || self.server_context_id == 0
         {
             return Err(SessionError::ConfigError);
@@ -704,23 +809,42 @@ impl HandshakeConfig {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Zeroize, ZeroizeOnDrop)]
 pub struct ClientMaterial {
     pub ephemeral_secret: [u8; 32],
     pub nonce: [u8; 32],
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Zeroize, ZeroizeOnDrop)]
 pub struct ServerMaterial {
     pub boot_instance: [u8; 16],
     pub current_cookie_key: [u8; 32],
     pub previous_cookie_key: [u8; 32],
     pub previous_key_rotated_ms: u64,
 }
-#[derive(Clone, Copy, Debug)]
+
+#[derive(Clone, Zeroize, ZeroizeOnDrop)]
 pub struct ServerHandshakeMaterial {
     pub ephemeral_secret: [u8; 32],
     pub nonce: [u8; 32],
+}
+
+impl core::fmt::Debug for ClientMaterial {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("<ClientMaterial>")
+    }
+}
+
+impl core::fmt::Debug for ServerMaterial {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("<ServerMaterial>")
+    }
+}
+
+impl core::fmt::Debug for ServerHandshakeMaterial {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("<ServerHandshakeMaterial>")
+    }
 }
 
 impl ServerMaterial {
@@ -735,28 +859,214 @@ impl ServerMaterial {
     }
 }
 
-#[derive(Clone, Debug)]
 pub struct DirectionalSession {
-    pub send_key: [u8; 32],
-    pub receive_key: [u8; 32],
-    pub send_counters: Counters,
-    pub replay: ReplayWindow,
-    pub transcript_hash: [u8; 32],
+    send_key: Zeroizing<[u8; 32]>,
+    receive_key: Zeroizing<[u8; 32]>,
+    send_counters: Counters,
+    replay: ReplayWindow,
+    transcript_hash: [u8; 32],
+    receive_budget: usize,
+    receive_owner: u64,
+    receive_lease: Arc<AtomicBool>,
 }
 
-#[derive(Debug)]
-pub struct ProtectedPreview {
-    plaintext: Vec<u8>,
-    commit: ReplayCommit,
-}
-
-impl ProtectedPreview {
-    pub fn plaintext(&self) -> &[u8] {
-        &self.plaintext
+impl core::fmt::Debug for DirectionalSession {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("DirectionalSession")
+            .field("send_key", &"[REDACTED]")
+            .field("receive_key", &"[REDACTED]")
+            .field("send_counters", &"[REDACTED]")
+            .field("transcript_hash", &"[REDACTED]")
+            .finish()
     }
 }
 
+pub struct ProtectedPreview {
+    plaintext: Zeroizing<Vec<u8>>,
+    commit: ReplayCommit,
+    receive_owner: u64,
+    receive_lease: Weak<AtomicBool>,
+}
+#[must_use]
+pub struct ProtectedReplayBinding {
+    receive_owner: u64,
+}
+
+impl core::fmt::Debug for ProtectedReplayBinding {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("<ProtectedReplayBinding>")
+    }
+}
+
+impl ProtectedReplayBinding {
+    pub fn matches_proof(&self, proof: &ProtectedReplayProof) -> bool {
+        proof
+            .preview
+            .as_ref()
+            .is_some_and(|preview| preview.receive_owner == self.receive_owner)
+    }
+    pub fn matches_binding(&self, other: &Self) -> bool {
+        self.receive_owner == other.receive_owner
+    }
+}
+
+#[must_use]
+pub struct ProtectedReplayProof {
+    preview: Option<ProtectedPreview>,
+    committed: bool,
+}
+
+impl core::fmt::Debug for ProtectedReplayProof {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("<ProtectedReplayProof>")
+    }
+}
+
+impl ProtectedReplayProof {
+    pub fn is_committed(&self) -> bool {
+        self.committed
+    }
+    pub fn matches_plaintext(&self, plaintext: &[u8]) -> bool {
+        self.preview.as_ref().is_some_and(|preview| {
+            preview
+                .plaintext()
+                .is_ok_and(|candidate| candidate == plaintext)
+        })
+    }
+}
+
+impl core::fmt::Debug for ProtectedPreview {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("<ProtectedPreview>")
+    }
+}
+
+impl core::fmt::Debug for Profile3DataPreview {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("<Profile3DataPreview>")
+    }
+}
+
+#[must_use]
+pub struct Profile3DataPreview {
+    delivery_id: NonZeroU64,
+    plaintext: Zeroizing<Vec<u8>>,
+    commit: ReplayCommit,
+    receive_owner: u64,
+}
+
+#[must_use]
+pub struct Profile3ReplayBinding {
+    receive_owner: u64,
+}
+
+impl core::fmt::Debug for Profile3ReplayBinding {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("<Profile3ReplayBinding>")
+    }
+}
+
+impl Profile3ReplayBinding {
+    pub fn matches_proof(&self, proof: &Profile3ReplayProof) -> bool {
+        proof
+            .preview
+            .as_ref()
+            .is_some_and(|preview| preview.receive_owner == self.receive_owner)
+    }
+    pub fn matches_binding(&self, other: &Self) -> bool {
+        self.receive_owner == other.receive_owner
+    }
+}
+
+#[must_use]
+pub struct Profile3ReplayProof {
+    preview: Option<Profile3DataPreview>,
+    committed: bool,
+}
+
+impl core::fmt::Debug for Profile3ReplayProof {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("<Profile3ReplayProof>")
+    }
+}
+
+impl Profile3ReplayProof {
+    pub fn is_committed(&self) -> bool {
+        self.committed
+    }
+    pub fn matches_plaintext(&self, plaintext: &[u8]) -> bool {
+        self.preview
+            .as_ref()
+            .is_some_and(|preview| preview.plaintext.as_slice() == plaintext)
+    }
+}
+
+impl Profile3DataPreview {
+    pub fn delivery_id(&self) -> NonZeroU64 {
+        self.delivery_id
+    }
+
+    pub fn plaintext(&self) -> &[u8] {
+        &self.plaintext
+    }
+    pub fn into_replay_proof(self) -> Profile3ReplayProof {
+        Profile3ReplayProof {
+            preview: Some(self),
+            committed: false,
+        }
+    }
+}
+impl ProtectedPreview {
+    pub fn plaintext(&self) -> Result<&[u8], SessionError> {
+        self.receive_lease
+            .upgrade()
+            .is_some_and(|lease| lease.load(Ordering::Acquire))
+            .then_some(self.plaintext.as_slice())
+            .ok_or(SessionError::Replay)
+    }
+    pub fn into_replay_proof(self) -> ProtectedReplayProof {
+        ProtectedReplayProof {
+            preview: Some(self),
+            committed: false,
+        }
+    }
+}
+
+static NEXT_SESSION_OWNER: AtomicU64 = AtomicU64::new(1);
+
 impl DirectionalSession {
+    pub fn new(
+        send_key: Zeroizing<[u8; 32]>,
+        receive_key: Zeroizing<[u8; 32]>,
+        transcript_hash: [u8; 32],
+        receive_budget: usize,
+    ) -> Self {
+        Self {
+            send_key,
+            receive_key,
+            send_counters: Counters::new(),
+            replay: ReplayWindow::new(),
+            transcript_hash,
+            receive_budget,
+            receive_owner: NEXT_SESSION_OWNER.fetch_add(1, Ordering::Relaxed),
+            receive_lease: Arc::new(AtomicBool::new(true)),
+        }
+    }
+
+    pub fn can_reserve(&self) -> bool {
+        self.send_counters.can_reserve()
+    }
+    pub fn profile3_replay_binding(&self) -> Profile3ReplayBinding {
+        Profile3ReplayBinding {
+            receive_owner: self.receive_owner,
+        }
+    }
+    pub fn protected_replay_binding(&self) -> ProtectedReplayBinding {
+        ProtectedReplayBinding {
+            receive_owner: self.receive_owner,
+        }
+    }
+
     pub fn encrypt(
         &mut self,
         header: &Header,
@@ -788,7 +1098,7 @@ impl DirectionalSession {
             .pack_with_budget(&payload, budget)
             .map_err(|_| SessionError::Budget)?;
         let aad = protected_aad(&packet, counter)?;
-        let ciphertext = seal(self.send_key, counter, &aad, plaintext)?;
+        let ciphertext = seal(&self.send_key, counter, &aad, plaintext)?;
         payload[12..].copy_from_slice(&ciphertext);
         header
             .pack_with_budget(&payload, budget)
@@ -796,8 +1106,13 @@ impl DirectionalSession {
     }
 
     pub fn preview(&self, packet: &[u8]) -> Result<ProtectedPreview, SessionError> {
-        let (header, payload) = Header::unpack(packet).map_err(|_| SessionError::AuthFailed)?;
-        let message = SessionMessage::decode(payload, header.profile, packet.len())
+        let (header, payload) = Header::unpack_with_budget(packet, self.receive_budget).map_err(
+            |error| match error {
+                WireError::BindingBudget => SessionError::Budget,
+                _ => SessionError::AuthFailed,
+            },
+        )?;
+        let message = SessionMessage::decode(payload, header.profile, self.receive_budget)
             .map_err(|_| SessionError::AuthFailed)?;
         if !matches!(message.typ, SESSION_ACCEPT | SESSION_DATA | CLOSE) {
             return Err(SessionError::UnexpectedMessage);
@@ -806,17 +1121,163 @@ impl DirectionalSession {
             u64::from_be_bytes(message.body[..8].try_into().expect("checked session body"));
         let commit = self.replay.preview(counter)?;
         let aad = protected_aad(packet, counter)?;
-        let plaintext = open(self.receive_key, counter, &aad, &message.body[8..])?;
-        Ok(ProtectedPreview { plaintext, commit })
+        let plaintext = open(&self.receive_key, counter, &aad, &message.body[8..])?;
+        Ok(ProtectedPreview {
+            plaintext: Zeroizing::new(plaintext),
+            commit,
+            receive_owner: self.receive_owner,
+            receive_lease: Arc::downgrade(&self.receive_lease),
+        })
+    }
+    pub fn commit(&mut self, mut preview: ProtectedPreview) -> Result<Vec<u8>, SessionError> {
+        if self.receive_owner != preview.receive_owner {
+            return Err(SessionError::Replay);
+        }
+        self.replay.commit(preview.commit)?;
+        Ok(core::mem::take(&mut *preview.plaintext))
+    }
+    pub fn commit_protected_replay(
+        &mut self,
+        proof: &mut ProtectedReplayProof,
+    ) -> Result<(), SessionError> {
+        if proof.committed {
+            return Err(SessionError::Replay);
+        }
+        let preview = proof.preview.take().ok_or(SessionError::Replay)?;
+        if self.receive_owner != preview.receive_owner {
+            return Err(SessionError::Replay);
+        }
+        self.replay.commit(preview.commit)?;
+        proof.committed = true;
+        Ok(())
+    }
+    pub fn encrypt_profile3_data(
+        &mut self,
+        header: &Header,
+        delivery_id: NonZeroU64,
+        plaintext: &[u8],
+        budget: usize,
+    ) -> Result<Vec<u8>, SessionError> {
+        if delivery_id.get() == u64::MAX {
+            return Err(SessionError::CounterRange);
+        }
+        let payload_len = plaintext
+            .len()
+            .checked_add(PROFILE3_DATA_PACKET_OVERHEAD - HEADER_LEN)
+            .ok_or(SessionError::Budget)?;
+        let packet_len = payload_len
+            .checked_add(HEADER_LEN)
+            .ok_or(SessionError::Budget)?;
+        if packet_len > budget {
+            return Err(SessionError::Budget);
+        }
+
+        let mut payload = vec![SESSION_DATA, SESSION_VERSION, 3, 0];
+        payload.resize(payload_len, 0);
+        payload[12..20].copy_from_slice(&delivery_id.get().to_be_bytes());
+        validate_profile3_data_header(header)?;
+        header
+            .pack_with_budget(&payload, budget)
+            .map_err(|_| SessionError::Budget)?;
+        if !self.send_counters.can_reserve() {
+            return Err(SessionError::CounterExhausted);
+        }
+
+        let counter = self.send_counters.reserve()?;
+        payload[4..12].copy_from_slice(&counter.to_be_bytes());
+        let mut packet = header
+            .pack_with_budget(&payload, budget)
+            .map_err(|_| SessionError::Budget)?;
+        let aad = profile3_data_aad(&packet, counter, delivery_id)?;
+        let ciphertext = seal(&self.send_key, counter, &aad, plaintext)?;
+        packet[HEADER_LEN + 20..].copy_from_slice(&ciphertext);
+        Ok(packet)
     }
 
-    pub fn commit(&mut self, preview: ProtectedPreview) -> Result<Vec<u8>, SessionError> {
+    pub fn preview_profile3_data(
+        &self,
+        packet: &[u8],
+    ) -> Result<Profile3DataPreview, SessionError> {
+        let (header, payload) = Header::unpack_with_budget(packet, self.receive_budget).map_err(
+            |error| match error {
+                WireError::BindingBudget => SessionError::Budget,
+                _ => SessionError::AuthFailed,
+            },
+        )?;
+        validate_profile3_data_header(&header)?;
+        let message = SessionMessage::decode(payload, header.profile, self.receive_budget)
+            .map_err(|error| match error {
+                SessionError::CounterRange => error,
+                _ => SessionError::AuthFailed,
+            })?;
+        if message.typ != SESSION_DATA || message.profile != 3 || message.body.len() < 32 {
+            return Err(SessionError::UnexpectedMessage);
+        }
+        let counter =
+            u64::from_be_bytes(message.body[..8].try_into().expect("checked profile3 body"));
+        let delivery_id = NonZeroU64::new(u64::from_be_bytes(
+            message.body[8..16]
+                .try_into()
+                .expect("checked profile3 body"),
+        ))
+        .ok_or(SessionError::AuthFailed)?;
+        if delivery_id.get() == u64::MAX {
+            return Err(SessionError::CounterRange);
+        }
+        let commit = self.replay.preview(counter)?;
+        let aad = profile3_data_aad(packet, counter, delivery_id)?;
+        let plaintext = open(&self.receive_key, counter, &aad, &message.body[16..])?;
+        Ok(Profile3DataPreview {
+            delivery_id,
+            plaintext: Zeroizing::new(plaintext),
+            commit,
+            receive_owner: self.receive_owner,
+        })
+    }
+    pub fn commit_profile3_replay(
+        &mut self,
+        proof: &mut Profile3ReplayProof,
+    ) -> Result<(), SessionError> {
+        if proof.committed {
+            return Err(SessionError::Replay);
+        }
+        let preview = proof.preview.take().ok_or(SessionError::Replay)?;
+        if self.receive_owner != preview.receive_owner {
+            return Err(SessionError::Replay);
+        }
         self.replay.commit(preview.commit)?;
-        Ok(preview.plaintext)
+        proof.committed = true;
+        Ok(())
+    }
+
+    pub fn commit_profile3_data(
+        &mut self,
+        mut preview: Profile3DataPreview,
+    ) -> Result<(NonZeroU64, Vec<u8>), SessionError> {
+        if self.receive_owner != preview.receive_owner {
+            return Err(SessionError::Replay);
+        }
+        self.replay.commit(preview.commit)?;
+        Ok((
+            preview.delivery_id,
+            core::mem::take(&mut *preview.plaintext),
+        ))
+    }
+
+    pub fn decrypt_profile3_data(
+        &mut self,
+        packet: &[u8],
+    ) -> Result<(NonZeroU64, Vec<u8>), SessionError> {
+        self.commit_profile3_data(self.preview_profile3_data(packet)?)
     }
 
     pub fn decrypt(&mut self, packet: &[u8]) -> Result<Vec<u8>, SessionError> {
         self.commit(self.preview(packet)?)
+    }
+}
+impl Drop for DirectionalSession {
+    fn drop(&mut self) {
+        self.receive_lease.store(false, Ordering::Release);
     }
 }
 fn validate_protected_header(
@@ -838,7 +1299,146 @@ fn validate_protected_header(
     }
     Ok(())
 }
-#[derive(Debug)]
+
+fn profile3_data_aad(
+    packet: &[u8],
+    counter: u64,
+    delivery_id: NonZeroU64,
+) -> Result<Vec<u8>, SessionError> {
+    let mut aad = protected_aad(packet, counter)?;
+    aad.extend_from_slice(&delivery_id.get().to_be_bytes());
+    Ok(aad)
+}
+
+fn validate_profile3_data_header(header: &Header) -> Result<(), SessionError> {
+    let expected_flags = match header.path_slot {
+        0 => 1,
+        1 => 3,
+        _ => return Err(SessionError::AuthFailed),
+    };
+    if header.profile != 3
+        || header.next_header != r8_proto::NH_SES
+        || header.flags != expected_flags
+        || header.tc != 0
+        || header.hop_limit == 0
+        || header.scid == 0
+    {
+        return Err(SessionError::AuthFailed);
+    }
+    Ok(())
+}
+struct Profile3BootstrapParts {
+    scid: u64,
+    local_loc: [u8; 16],
+    peer_loc: [u8; 16],
+    budget: usize,
+    local_role: u8,
+    peer_role: u8,
+    transcript_hash: [u8; 32],
+    schedule: Prk,
+    slot0: DirectionalSession,
+}
+
+pub struct Profile3Bootstrap {
+    scid: u64,
+    local_loc: [u8; 16],
+    peer_loc: [u8; 16],
+    budget: usize,
+    local_role: u8,
+    peer_role: u8,
+    transcript_hash: [u8; 32],
+    schedule: Option<Prk>,
+    slot0: Option<DirectionalSession>,
+}
+
+impl core::fmt::Debug for Profile3Bootstrap {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Profile3Bootstrap")
+            .field("slot0_active", &self.slot0.is_some())
+            .field("slot1_available", &self.schedule.is_some())
+            .finish()
+    }
+}
+
+impl Profile3Bootstrap {
+    fn new(parts: Profile3BootstrapParts) -> Self {
+        Self {
+            scid: parts.scid,
+            local_loc: parts.local_loc,
+            peer_loc: parts.peer_loc,
+            budget: parts.budget,
+            local_role: parts.local_role,
+            peer_role: parts.peer_role,
+            transcript_hash: parts.transcript_hash,
+            schedule: Some(parts.schedule),
+            slot0: Some(parts.slot0),
+        }
+    }
+
+    pub fn scid(&self) -> u64 {
+        self.scid
+    }
+
+    pub fn local_loc(&self) -> &[u8; 16] {
+        &self.local_loc
+    }
+
+    pub fn peer_loc(&self) -> &[u8; 16] {
+        &self.peer_loc
+    }
+
+    pub fn take_slot0(&mut self) -> Result<DirectionalSession, SessionError> {
+        self.slot0.take().ok_or(SessionError::UnexpectedMessage)
+    }
+
+    pub fn take_slot1(&mut self) -> Result<DirectionalSession, SessionError> {
+        let schedule = self
+            .schedule
+            .take()
+            .ok_or(SessionError::UnexpectedMessage)?;
+        let send_key = derive_key_from_prk(
+            &schedule,
+            self.transcript_hash,
+            3,
+            self.local_role,
+            self.peer_role,
+            1,
+        )?;
+        let receive_key = derive_key_from_prk(
+            &schedule,
+            self.transcript_hash,
+            3,
+            self.peer_role,
+            self.local_role,
+            1,
+        )?;
+        Ok(DirectionalSession::new(
+            send_key,
+            receive_key,
+            self.transcript_hash,
+            self.budget,
+        ))
+    }
+
+    pub fn close(&mut self) -> Result<(), SessionError> {
+        if self.slot0.take().is_none() {
+            return Err(SessionError::UnexpectedMessage);
+        }
+        self.schedule.take();
+        Ok(())
+    }
+
+    pub fn budget(&self) -> usize {
+        self.budget
+    }
+}
+impl Drop for Profile3Bootstrap {
+    fn drop(&mut self) {
+        self.schedule.take();
+        self.slot0.take();
+    }
+}
+
 pub struct DataPreview {
     scid: u64,
     header: Header,
@@ -846,36 +1446,51 @@ pub struct DataPreview {
 }
 
 impl DataPreview {
-    pub fn plaintext(&self) -> &[u8] {
+    pub fn plaintext(&self) -> Result<&[u8], SessionError> {
         self.commit.plaintext()
+    }
+    pub fn into_replay_proof(self) -> ProtectedReplayProof {
+        self.commit.into_replay_proof()
     }
 }
 
-#[derive(Clone, Debug)]
 enum ClientState {
     Idle,
     CookieWait {
         scid: u64,
         material: ClientMaterial,
-        open: Vec<u8>,
+        open: Zeroizing<Vec<u8>>,
         deadline_ms: u64,
     },
     AuthWait {
         scid: u64,
         material: ClientMaterial,
         boot: [u8; 16],
-        opening: Vec<u8>,
+        opening: Zeroizing<Vec<u8>>,
         verify_header: Header,
-        verify_cookie: [u8; 32],
-        open_auth: Vec<u8>,
+        verify_cookie: Zeroizing<[u8; 32]>,
+        open_auth: Zeroizing<Vec<u8>>,
         deadline_ms: u64,
     },
     Established {
         scid: u64,
-        session: DirectionalSession,
-        cached_accept: Vec<u8>,
+        session: Box<DirectionalSession>,
+        schedule: Option<Prk>,
+        cached_accept: Zeroizing<Vec<u8>>,
     },
     Released,
+}
+impl core::fmt::Debug for ClientState {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let state = match self {
+            Self::Idle => "Idle",
+            Self::CookieWait { .. } => "CookieWait(<redacted>)",
+            Self::AuthWait { .. } => "AuthWait(<redacted>)",
+            Self::Established { .. } => "Established(<redacted>)",
+            Self::Released => "Released",
+        };
+        formatter.write_str(state)
+    }
 }
 
 pub struct ClientMachine {
@@ -900,6 +1515,34 @@ impl ClientMachine {
             state: ClientState::Idle,
         })
     }
+    pub fn take_profile3_bootstrap(&mut self) -> Result<Profile3Bootstrap, SessionError> {
+        if self.config.profile != 3 {
+            return Err(SessionError::Profile);
+        }
+        let state = core::mem::replace(&mut self.state, ClientState::Released);
+        match state {
+            ClientState::Established {
+                scid,
+                session,
+                schedule: Some(schedule),
+                ..
+            } => Ok(Profile3Bootstrap::new(Profile3BootstrapParts {
+                scid,
+                local_loc: self.effective_local_loc,
+                peer_loc: self.effective_peer_loc,
+                budget: self.config.budget,
+                local_role: self.config.local.role,
+                peer_role: self.config.peer.role,
+                transcript_hash: session.transcript_hash,
+                schedule,
+                slot0: *session,
+            })),
+            state => {
+                self.state = state;
+                Err(SessionError::UnexpectedMessage)
+            }
+        }
+    }
 
     pub fn start(
         &mut self,
@@ -922,7 +1565,7 @@ impl ClientMachine {
         self.state = ClientState::CookieWait {
             scid,
             material,
-            open: packet.clone(),
+            open: Zeroizing::new(packet.clone()),
             deadline_ms: now_ms.saturating_add(5_000),
         };
         Ok(packet)
@@ -935,13 +1578,13 @@ impl ClientMachine {
         match &self.state {
             ClientState::CookieWait {
                 open, deadline_ms, ..
-            } if now_ms < *deadline_ms => Ok(open.clone()),
+            } if now_ms < *deadline_ms => Ok(open.to_vec()),
             ClientState::AuthWait {
                 open_auth,
                 deadline_ms,
                 ..
-            } if now_ms < *deadline_ms => Ok(open_auth.clone()),
-            ClientState::Established { cached_accept, .. } => Ok(cached_accept.clone()),
+            } if now_ms < *deadline_ms => Ok(open_auth.to_vec()),
+            ClientState::Established { cached_accept, .. } => Ok(cached_accept.to_vec()),
             _ => Err(SessionError::UnexpectedMessage),
         }
     }
@@ -980,12 +1623,12 @@ impl ClientMachine {
                 deadline_ms,
             } if now_ms < *deadline_ms => {
                 let scid = *scid;
-                let material = *material;
+                let material = material.clone();
                 let deadline_ms = *deadline_ms;
                 let result = (|| {
                     let (header, boot, cookie) =
-                        self.validate_verify_cookie(packet, scid, material, open)?;
-                    let opening = open.clone();
+                        self.validate_verify_cookie(packet, scid, &material, open)?;
+                    let opening = Zeroizing::new(open.to_vec());
                     let expected_ephemeral =
                         PublicKey::from(&StaticSecret::from(material.ephemeral_secret)).to_bytes();
                     let placeholder_server = Identity {
@@ -1027,8 +1670,8 @@ impl ClientMachine {
                             boot,
                             opening,
                             verify_header: header,
-                            verify_cookie: cookie,
-                            open_auth: open_auth.clone(),
+                            verify_cookie: Zeroizing::new(cookie),
+                            open_auth: Zeroizing::new(open_auth.clone()),
                             deadline_ms,
                         };
                         Ok(open_auth)
@@ -1050,14 +1693,14 @@ impl ClientMachine {
                 deadline_ms,
             } if now_ms < *deadline_ms => {
                 let (header, candidate_boot, candidate_cookie) =
-                    self.validate_verify_cookie(packet, *scid, *material, opening)?;
+                    self.validate_verify_cookie(packet, *scid, material, opening)?;
                 if header != *verify_header
                     || candidate_boot != *boot
-                    || candidate_cookie != *verify_cookie
+                    || candidate_cookie != **verify_cookie
                 {
                     return Err(SessionError::AuthFailed);
                 }
-                Ok(open_auth.clone())
+                Ok(open_auth.to_vec())
             }
             _ => Err(SessionError::UnexpectedMessage),
         }
@@ -1067,7 +1710,7 @@ impl ClientMachine {
         &self,
         packet: &[u8],
         scid: u64,
-        material: ClientMaterial,
+        material: &ClientMaterial,
         opening: &[u8],
     ) -> Result<(Header, [u8; 16], [u8; 32]), SessionError> {
         let (opening_header, opening_payload) =
@@ -1141,8 +1784,8 @@ impl ClientMachine {
                 material,
                 boot,
                 ..
-            } => (*scid, *material, *boot),
-            ClientState::Established { cached_accept, .. } => return Ok(cached_accept.clone()),
+            } => (*scid, material.clone(), *boot),
+            ClientState::Established { cached_accept, .. } => return Ok(cached_accept.to_vec()),
             _ => return Err(SessionError::UnexpectedMessage),
         };
         let (header, payload) = Header::unpack_with_budget(packet, self.config.budget)
@@ -1176,8 +1819,8 @@ impl ClientMachine {
         let server_ephemeral: [u8; 32] = body[54..86].try_into().expect("ack body length");
         let server_nonce: [u8; 32] = body[86..118].try_into().expect("ack body length");
         let signature: [u8; 64] = body[118..182].try_into().expect("ack body length");
-        let client_ephemeral =
-            PublicKey::from(&StaticSecret::from(material.ephemeral_secret)).to_bytes();
+        let ephemeral_secret = StaticSecret::from(material.ephemeral_secret);
+        let client_ephemeral = PublicKey::from(&ephemeral_secret).to_bytes();
         let t0 = transcript_t0(&TranscriptContext {
             profile: self.config.profile,
             scid,
@@ -1195,10 +1838,10 @@ impl ClientMachine {
             &t0,
             &signature,
         )?;
-        let shared = x25519(material.ephemeral_secret, server_ephemeral)?;
+        let shared = x25519(ephemeral_secret, PublicKey::from(server_ephemeral))?;
         let client_signature = match &self.state {
             ClientState::AuthWait { open_auth, .. } => {
-                let body = &Header::unpack(open_auth)
+                let body = &Header::unpack(open_auth.as_slice())
                     .map_err(|_| SessionError::AuthFailed)?
                     .1[4..];
                 body[166..230].try_into().expect("open auth signature")
@@ -1206,29 +1849,24 @@ impl ClientMachine {
             _ => unreachable!(),
         };
         let hash = transcript_hash(&t0, &client_signature, &signature);
-        let send_key = derive_key(
-            shared,
+        let schedule = hkdf_prk(&shared, hash);
+        let send_key = derive_key_from_prk(
+            &schedule,
             hash,
             self.config.profile,
             self.config.local.role,
             self.config.peer.role,
             0,
         )?;
-        let receive_key = derive_key(
-            shared,
+        let receive_key = derive_key_from_prk(
+            &schedule,
             hash,
             self.config.profile,
             self.config.peer.role,
             self.config.local.role,
             0,
         )?;
-        let mut session = DirectionalSession {
-            send_key,
-            receive_key,
-            send_counters: Counters::new(),
-            replay: ReplayWindow::new(),
-            transcript_hash: hash,
-        };
+        let mut session = DirectionalSession::new(send_key, receive_key, hash, self.config.budget);
         let header = Header {
             profile: self.config.profile,
             tc: 0,
@@ -1245,8 +1883,9 @@ impl ClientMachine {
         let accept = session.encrypt(&header, SESSION_ACCEPT, &plaintext, self.config.budget)?;
         self.state = ClientState::Established {
             scid,
-            session,
-            cached_accept: accept.clone(),
+            session: Box::new(session),
+            schedule: (self.config.profile == 3).then_some(schedule),
+            cached_accept: Zeroizing::new(accept.clone()),
         };
         Ok(accept)
     }
@@ -1361,6 +2000,21 @@ impl ClientMachine {
         };
         session.commit(preview.commit)
     }
+    pub fn protected_replay_binding(&self) -> Result<ProtectedReplayBinding, SessionError> {
+        match &self.state {
+            ClientState::Established { session, .. } => Ok(session.protected_replay_binding()),
+            _ => Err(SessionError::UnexpectedMessage),
+        }
+    }
+    pub fn commit_protected_replay(
+        &mut self,
+        proof: &mut ProtectedReplayProof,
+    ) -> Result<(), SessionError> {
+        match &mut self.state {
+            ClientState::Established { session, .. } => session.commit_protected_replay(proof),
+            _ => Err(SessionError::Replay),
+        }
+    }
 
     pub fn promote_local_loc(&mut self, new_loc: [u8; 16]) {
         self.effective_local_loc = new_loc;
@@ -1430,23 +2084,23 @@ impl ClientMachine {
             .map_err(|_| SessionError::Budget)
     }
 }
-#[derive(Clone, Debug)]
 struct PendingSession {
     scid: u64,
-    opening: Vec<u8>,
-    cached_ack: Vec<u8>,
-    binding: UdpBinding,
+    opening: Zeroizing<Vec<u8>>,
+    cached_ack: Zeroizing<Vec<u8>>,
+    binding: ObservedBinding,
     deadline_ms: u64,
     session: DirectionalSession,
+    schedule: Option<Prk>,
 }
-#[derive(Clone, Debug)]
 struct EstablishedSession {
     scid: u64,
     session: DirectionalSession,
-    opening: Vec<u8>,
-    cached_ack: Vec<u8>,
-    binding: UdpBinding,
-    accepted: Vec<u8>,
+    schedule: Option<Prk>,
+    opening: Zeroizing<Vec<u8>>,
+    cached_ack: Zeroizing<Vec<u8>>,
+    binding: ObservedBinding,
+    accepted: Zeroizing<Vec<u8>>,
     last_active_ms: u64,
 }
 
@@ -1480,6 +2134,42 @@ impl ServerMachine {
             established: Vec::new(),
         })
     }
+    pub fn take_profile3_bootstrap(
+        &mut self,
+        scid: u64,
+    ) -> Result<Profile3Bootstrap, SessionError> {
+        if self.config.profile != 3 {
+            return Err(SessionError::Profile);
+        }
+        let index = self
+            .established
+            .iter()
+            .position(|entry| entry.scid == scid)
+            .ok_or(SessionError::UnexpectedMessage)?;
+        let entry = self.established.remove(index);
+        match entry {
+            EstablishedSession {
+                scid,
+                session,
+                schedule: Some(schedule),
+                ..
+            } => Ok(Profile3Bootstrap::new(Profile3BootstrapParts {
+                scid,
+                local_loc: self.effective_local_loc,
+                peer_loc: self.effective_peer_loc,
+                budget: self.config.budget,
+                local_role: self.config.local.role,
+                peer_role: self.config.peer.role,
+                transcript_hash: session.transcript_hash,
+                schedule,
+                slot0: session,
+            })),
+            entry => {
+                self.established.insert(index, entry);
+                Err(SessionError::UnexpectedMessage)
+            }
+        }
+    }
     fn validate_handshake_header(&self, header: &Header, scid: u64) -> Result<(), SessionError> {
         if header.next_header != r8_proto::NH_SES
             || header.profile != self.config.profile
@@ -1497,9 +2187,10 @@ impl ServerMachine {
     pub fn receive_open(
         &self,
         packet: &[u8],
-        binding: &UdpBinding,
+        binding: &ObservedBinding,
         bucket: u64,
     ) -> Result<Vec<u8>, SessionError> {
+        binding.validate()?;
         let (header, payload) = Header::unpack_with_budget(packet, self.config.budget)
             .map_err(|_| SessionError::AuthFailed)?;
         self.validate_handshake_header(&header, header.scid)?;
@@ -1533,7 +2224,7 @@ impl ServerMachine {
     pub fn receive_open_limited(
         &self,
         packet: &[u8],
-        binding: &UdpBinding,
+        binding: &ObservedBinding,
         opaque_source: [u8; 32],
         now_ms: u64,
         bucket: u64,
@@ -1546,11 +2237,12 @@ impl ServerMachine {
     pub fn receive_open_auth(
         &mut self,
         packet: &[u8],
-        binding: &UdpBinding,
+        binding: &ObservedBinding,
         now_ms: u64,
         bucket: u64,
         handshake_material: Option<ServerHandshakeMaterial>,
     ) -> Result<Vec<u8>, SessionError> {
+        binding.validate()?;
         self.expire(now_ms);
         let (header, payload) = Header::unpack_with_budget(packet, self.config.budget)
             .map_err(|_| SessionError::AuthFailed)?;
@@ -1561,8 +2253,8 @@ impl ServerMachine {
         }
         let body = &auth.body;
         if let Some(pending) = self.pending.iter().find(|entry| entry.scid == header.scid) {
-            return if pending.opening == packet && pending.binding == *binding {
-                Ok(pending.cached_ack.clone())
+            return if pending.opening.as_slice() == packet && pending.binding == *binding {
+                Ok(pending.cached_ack.to_vec())
             } else {
                 Err(SessionError::ScidCollision)
             };
@@ -1572,8 +2264,8 @@ impl ServerMachine {
             .iter()
             .find(|entry| entry.scid == header.scid)
         {
-            return if established.opening == packet && established.binding == *binding {
-                Ok(established.cached_ack.clone())
+            return if established.opening.as_slice() == packet && established.binding == *binding {
+                Ok(established.cached_ack.to_vec())
             } else {
                 Err(SessionError::ScidCollision)
             };
@@ -1634,9 +2326,9 @@ impl ServerMachine {
             &placeholder,
             &signature,
         )?;
-        let server_ephemeral =
-            PublicKey::from(&StaticSecret::from(handshake_material.ephemeral_secret)).to_bytes();
-        let shared = x25519(handshake_material.ephemeral_secret, client_ephemeral)?;
+        let ephemeral_secret = StaticSecret::from(handshake_material.ephemeral_secret);
+        let server_ephemeral = PublicKey::from(&ephemeral_secret).to_bytes();
+        let shared = x25519(ephemeral_secret, PublicKey::from(client_ephemeral))?;
         let actual = transcript_t0(&TranscriptContext {
             profile: self.config.profile,
             scid: header.scid,
@@ -1650,16 +2342,17 @@ impl ServerMachine {
         })?;
         let server_signature = sign_open_ack(&self.signing_key, &actual);
         let hash = transcript_hash(&actual, &signature, &server_signature);
-        let send_key = derive_key(
-            shared,
+        let schedule = hkdf_prk(&shared, hash);
+        let send_key = derive_key_from_prk(
+            &schedule,
             hash,
             self.config.profile,
             self.config.local.role,
             client.role,
             0,
         )?;
-        let receive_key = derive_key(
-            shared,
+        let receive_key = derive_key_from_prk(
+            &schedule,
             hash,
             self.config.profile,
             client.role,
@@ -1677,17 +2370,12 @@ impl ServerMachine {
         let ack = self.packet(header.scid, OPEN_ACK, 0, 0, &ack_body)?;
         self.pending.push(PendingSession {
             scid: header.scid,
-            opening: packet.to_vec(),
-            cached_ack: ack.clone(),
+            opening: Zeroizing::new(packet.to_vec()),
+            cached_ack: Zeroizing::new(ack.clone()),
             binding: binding.clone(),
             deadline_ms: now_ms.saturating_add(5_000),
-            session: DirectionalSession {
-                send_key,
-                receive_key,
-                send_counters: Counters::new(),
-                replay: ReplayWindow::new(),
-                transcript_hash: hash,
-            },
+            session: DirectionalSession::new(send_key, receive_key, hash, self.config.budget),
+            schedule: (self.config.profile == 3).then_some(schedule),
         });
         Ok(ack)
     }
@@ -1712,7 +2400,7 @@ impl ServerMachine {
             .iter()
             .find(|entry| entry.scid == header.scid)
         {
-            return if entry.accepted == packet {
+            return if entry.accepted.as_slice() == packet {
                 Ok(())
             } else {
                 Err(SessionError::AuthFailed)
@@ -1724,9 +2412,9 @@ impl ServerMachine {
             .position(|entry| entry.scid == header.scid)
             .ok_or(SessionError::UnexpectedMessage)?;
         let preview = self.pending[index].session.preview(packet)?;
-        if preview.plaintext().len() != 44
-            || &preview.plaintext()[..12] != b"R8 ACCEPT v1"
-            || preview.plaintext()[12..] != self.pending[index].session.transcript_hash
+        if preview.plaintext()?.len() != 44
+            || &preview.plaintext()?[..12] != b"R8 ACCEPT v1"
+            || preview.plaintext()?[12..] != self.pending[index].session.transcript_hash
         {
             return Err(SessionError::AuthFailed);
         }
@@ -1738,10 +2426,11 @@ impl ServerMachine {
         self.established.push(EstablishedSession {
             scid: pending.scid,
             session: pending.session,
+            schedule: pending.schedule,
             opening: pending.opening,
             cached_ack: pending.cached_ack,
             binding: pending.binding,
-            accepted: packet.to_vec(),
+            accepted: Zeroizing::new(packet.to_vec()),
             last_active_ms: now_ms,
         });
         Ok(())
@@ -1808,6 +2497,30 @@ impl ServerMachine {
         let plaintext = entry.session.commit(preview.commit)?;
         entry.last_active_ms = now_ms;
         Ok(plaintext)
+    }
+    pub fn protected_replay_binding(
+        &self,
+        scid: u64,
+    ) -> Result<ProtectedReplayBinding, SessionError> {
+        self.established
+            .iter()
+            .find(|entry| entry.scid == scid)
+            .map(|entry| entry.session.protected_replay_binding())
+            .ok_or(SessionError::UnexpectedMessage)
+    }
+    pub fn commit_protected_replay(
+        &mut self,
+        scid: u64,
+        proof: &mut ProtectedReplayProof,
+        now_ms: u64,
+    ) -> Result<(), SessionError> {
+        self.expire(now_ms);
+        self.established
+            .iter_mut()
+            .find(|entry| entry.scid == scid)
+            .ok_or(SessionError::Replay)?
+            .session
+            .commit_protected_replay(proof)
     }
 
     pub fn promote_local_loc(&mut self, new_loc: [u8; 16]) {
@@ -2015,7 +2728,7 @@ struct SourceAllowance {
     response_bytes: usize,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct PrevalidationLimiter {
     sources: Vec<SourceAllowance>,
     tokens: u32,
@@ -2056,6 +2769,8 @@ impl PrevalidationLimiter {
         if self.tokens == 0 || response_bytes > request_bytes {
             return Err(SessionError::Capacity);
         }
+        self.sources
+            .retain(|entry| now_ms.saturating_sub(entry.last_seen_ms) < 20_000);
         let index = match self.sources.iter().position(|entry| entry.source == source) {
             Some(index) => index,
             None if self.sources.len() < 4096 => {
@@ -2068,23 +2783,7 @@ impl PrevalidationLimiter {
                 });
                 self.sources.len() - 1
             }
-            None => {
-                let index = self
-                    .sources
-                    .iter()
-                    .enumerate()
-                    .min_by_key(|(_, entry)| (entry.last_seen_ms, entry.source))
-                    .map(|(index, _)| index)
-                    .expect("full source registry is non-empty");
-                self.sources[index] = SourceAllowance {
-                    source,
-                    window_started_ms: now_ms,
-                    last_seen_ms: now_ms,
-                    request_bytes: 0,
-                    response_bytes: 0,
-                };
-                index
-            }
+            None => return Err(SessionError::Capacity),
         };
         let entry = &mut self.sources[index];
         if now_ms.saturating_sub(entry.window_started_ms) >= 20_000 {
@@ -2110,12 +2809,62 @@ impl PrevalidationLimiter {
         Ok(())
     }
 }
+
+redacted_debug!(Identity, "<Identity>");
+redacted_debug!(UdpBinding, "<UdpBinding>");
+redacted_debug!(ObservedBinding, "<ObservedBinding>");
+redacted_debug!(SessionMessage, "<SessionMessage>");
+redacted_debug!(ReplayWindow, "<ReplayWindow>");
+redacted_debug!(ReplayCommit, "<ReplayCommit>");
+redacted_debug!(HandshakeConfig, "<HandshakeConfig>");
+redacted_debug!(DataPreview, "<DataPreview>");
+redacted_debug!(PrevalidationLimiter, "<PrevalidationLimiter>");
 #[cfg(test)]
-mod limiter_tests {
-    use super::{PrevalidationLimiter, SourceAllowance};
+mod directional_session_tests {
+    use super::{DirectionalSession, SessionError};
+    use core::num::NonZeroU64;
+    use r8_proto::Header;
+    use zeroize::Zeroizing;
 
     #[test]
-    fn full_source_registry_replaces_oldest_then_lexicographic_source() {
+    fn can_reserve_transitions_at_the_maximum_counter() {
+        let mut session = DirectionalSession::new(
+            Zeroizing::new([1; 32]),
+            Zeroizing::new([2; 32]),
+            [3; 32],
+            1280,
+        );
+        session.send_counters.next = u64::MAX - 1;
+
+        assert!(session.can_reserve());
+        assert_eq!(session.send_counters.reserve(), Ok(u64::MAX - 1));
+        assert!(!session.can_reserve());
+    }
+    #[test]
+    fn profile3_reserves_the_maximum_delivery_id() {
+        let mut session = DirectionalSession::new(
+            Zeroizing::new([1; 32]),
+            Zeroizing::new([2; 32]),
+            [3; 32],
+            1280,
+        );
+        assert_eq!(
+            session.encrypt_profile3_data(
+                &Header::new(r8_proto::NH_SES, [1; 16], [2; 16]),
+                NonZeroU64::new(u64::MAX).expect("maximum is nonzero"),
+                b"",
+                1280,
+            ),
+            Err(SessionError::CounterRange)
+        );
+    }
+}
+#[cfg(test)]
+mod limiter_tests {
+    use super::{PrevalidationLimiter, SessionError, SourceAllowance};
+
+    #[test]
+    fn full_source_registry_rejects_new_until_entries_expire() {
         let mut limiter = PrevalidationLimiter::new();
         limiter.sources = (0u16..4096)
             .map(|index| {
@@ -2131,8 +2880,14 @@ mod limiter_tests {
             })
             .collect();
 
-        assert!(limiter.admit([9; 32], 1, 1, 11).is_ok());
-        assert!(!limiter.sources.iter().any(|entry| entry.source == [0; 32]));
+        assert_eq!(
+            limiter.admit([9; 32], 1, 1, 11),
+            Err(SessionError::Capacity)
+        );
+        assert!(limiter.sources.iter().any(|entry| entry.source == [0; 32]));
+        assert!(!limiter.sources.iter().any(|entry| entry.source == [9; 32]));
+        assert!(limiter.admit([9; 32], 1, 1, 20_010).is_ok());
+        assert_eq!(limiter.sources.len(), 1);
         assert!(limiter.sources.iter().any(|entry| entry.source == [9; 32]));
     }
 }

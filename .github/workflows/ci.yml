@@ -36,6 +36,10 @@ jobs:
         run: python3 tests/fuzz_session.py
       - name: Mobility fuzz smoke
         run: python3 tests/fuzz_mobility.py
+      - name: Redundant fuzz smoke
+        run: |
+          python3 tests/fuzz_redundant.py
+          python3 tests/fuzz_redundant_state.py
       - name: Privileged Q1 closed-lab smoke
         run: |
           SOURCE_IDENTITY="$(python3 bench/q1.py source-identity)"
@@ -130,3 +134,39 @@ jobs:
         run: python3 tests/session_interop.py --build
       - name: Python and Rust mobility interoperability
         run: python3 tests/mobility_interop.py
+  native-smoke:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          clean: true
+      - uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f76f15143fa04a2b3d
+        with:
+          toolchain: stable
+      - name: Build locked native binaries
+        working-directory: rust
+        run: cargo build --release --locked -p r8d --bin r8-native -p r8-redundant --bin r8-redundant-native
+      - name: Root native capability preflight
+        run: |
+          sudo --non-interactive true
+          sudo capsh --print | grep -Eq 'cap_net_admin.*cap_net_raw|cap_net_raw.*cap_net_admin'
+          command -v ip
+      - name: Bounded one-router native smoke
+        run: sudo python3 tests/native_netns.py --smoke --hops 1 --binary rust/target/release/r8-native > "$RUNNER_TEMP/native-smoke.json"
+      - name: Q2 root-only native preflight
+        run: |
+          sudo apt-get update
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install --yes iproute2 ethtool
+          sudo -E env PATH="$PATH" python3 bench/q2_run.py preflight --smoke --binary rust/target/release/r8-native --endpoint-binary rust/target/release/r8-redundant-native
+      - name: Restore diagnostic ownership
+        if: always()
+        run: |
+          if [ -e "$RUNNER_TEMP/native-smoke.json" ]; then sudo chown "$(id -u):$(id -g)" "$RUNNER_TEMP/native-smoke.json"; chmod u+rw "$RUNNER_TEMP/native-smoke.json"; fi
+      - name: Upload native smoke diagnostic
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
+        with:
+          name: native-smoke-diagnostic
+          path: ${{ runner.temp }}/native-smoke.json
+          if-no-files-found: warn

@@ -1,14 +1,19 @@
 //! Strict R8M1 candidate binding controls.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc, Mutex, Weak,
+};
 
+use aws_lc_rs::hmac;
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
-use hmac::{Hmac, Mac};
-use r8_session::{Identity, UdpBinding};
-use sha2::Sha256;
-use zeroize::Zeroizing;
+use r8_session::{
+    ClientMachine, DirectionalSession, Identity, ObservedBinding, Profile3ReplayBinding,
+    Profile3ReplayProof, ProtectedReplayBinding, ProtectedReplayProof, ServerMachine,
+};
+use zeroize::{Zeroize, Zeroizing};
 
-type HmacSha256 = Hmac<Sha256>;
+static NEXT_CANDIDATE_MANAGER_OWNER_ID: AtomicU64 = AtomicU64::new(1);
 
 pub const SESSION_VERSION: u8 = 1;
 pub const LOC_UPDATE: u8 = 1;
@@ -46,56 +51,7 @@ impl core::fmt::Display for MobilityError {
 }
 impl std::error::Error for MobilityError {}
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum ObservedBinding {
-    Udp(UdpBinding),
-    Native {
-        ingress_descriptor_id: u32,
-        next_hop_mac: [u8; 6],
-    },
-}
-impl ObservedBinding {
-    pub fn encode(&self) -> Vec<u8> {
-        match self {
-            Self::Udp(binding) => binding.as_bytes().to_vec(),
-            Self::Native {
-                ingress_descriptor_id,
-                next_hop_mac,
-            } => {
-                let mut out = vec![2];
-                out.extend_from_slice(&ingress_descriptor_id.to_be_bytes());
-                out.extend_from_slice(next_hop_mac);
-                out
-            }
-        }
-    }
-    pub fn parse(bytes: &[u8]) -> Result<Self, MobilityError> {
-        match bytes.first() {
-            Some(1) => UdpBinding::parse(bytes.to_vec())
-                .map(Self::Udp)
-                .map_err(|_| MobilityError::Candidate),
-            Some(2) if bytes.len() == 11 => {
-                let descriptor = u32::from_be_bytes(
-                    bytes[1..5]
-                        .try_into()
-                        .map_err(|_| MobilityError::Candidate)?,
-                );
-                if descriptor == 0 {
-                    return Err(MobilityError::Candidate);
-                }
-                Ok(Self::Native {
-                    ingress_descriptor_id: descriptor,
-                    next_hop_mac: bytes[5..]
-                        .try_into()
-                        .map_err(|_| MobilityError::Candidate)?,
-                })
-            }
-            _ => Err(MobilityError::Candidate),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Eq, PartialEq)]
 pub enum Control {
     LocUpdate {
         candidate_id: [u8; 16],
@@ -136,6 +92,25 @@ pub enum Control {
         path_slot: u8,
         result: u8,
     },
+}
+impl core::fmt::Debug for Control {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str(match self {
+            Self::LocUpdate { .. } => "Control::LocUpdate(<redacted>)",
+            Self::BindProbe { .. } => "Control::BindProbe(<redacted>)",
+            Self::BindChallenge { .. } => "Control::BindChallenge(<redacted>)",
+            Self::BindResponse { .. } => "Control::BindResponse(<redacted>)",
+            Self::CandidateResult { .. } => "Control::CandidateResult(<redacted>)",
+        })
+    }
+}
+impl Drop for Control {
+    fn drop(&mut self) {
+        match self {
+            Self::BindChallenge { token, .. } | Self::BindResponse { token, .. } => token.zeroize(),
+            _ => {}
+        }
+    }
 }
 impl Control {
     pub fn typ(&self) -> u8 {
@@ -452,7 +427,8 @@ pub fn token_input(
     context: MobilityContext<'_>,
     fields: TokenFields<'_>,
 ) -> Result<Vec<u8>, MobilityError> {
-    if context.profile > 3
+    if fields.binding.validate().is_err()
+        || context.profile > 3
         || !profile_allows_slot(context.profile, fields.path_slot)
         || context.sender.role == context.receiver.role
         || !(1..=2).contains(&context.sender.role)
@@ -482,16 +458,18 @@ pub fn token(
     context: MobilityContext<'_>,
     fields: TokenFields<'_>,
 ) -> Result<[u8; 32], MobilityError> {
-    let mut mac = HmacSha256::new_from_slice(secret).map_err(|_| MobilityError::Candidate)?;
-    mac.update(&token_input(context, fields)?);
-    Ok(mac.finalize().into_bytes().into())
+    let key = hmac::Key::new(hmac::HMAC_SHA256, secret);
+    Ok(hmac::sign(&key, &token_input(context, fields)?)
+        .as_ref()
+        .try_into()
+        .expect("SHA-256 HMAC length"))
 }
 
 #[derive(Clone, Debug)]
 pub struct Policy {
     pub policy_id: u32,
 }
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct Proposal {
     bytes: Vec<u8>,
     candidate_id: [u8; 16],
@@ -500,6 +478,11 @@ struct Proposal {
     slot: u8,
     expiry_ms: u64,
 }
+impl core::fmt::Debug for Proposal {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str("Proposal(<redacted>)")
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum CandidateState {
@@ -507,17 +490,21 @@ enum CandidateState {
     Proven,
     Failed,
     Promoted,
-    Released,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 struct BindResponseIdentity {
     loc: [u8; 16],
     binding: ObservedBinding,
     expiry_ms: u64,
-    token: [u8; 32],
+    token: Zeroizing<[u8; 32]>,
 }
-#[derive(Clone, Debug)]
+impl core::fmt::Debug for BindResponseIdentity {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str("BindResponseIdentity(<redacted>)")
+    }
+}
+#[derive(Clone)]
 struct Candidate {
     candidate_id: [u8; 16],
     loc: [u8; 16],
@@ -528,6 +515,11 @@ struct Candidate {
     response: Option<BindResponseIdentity>,
     state: CandidateState,
 }
+impl core::fmt::Debug for Candidate {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str("Candidate(<redacted>)")
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ResultOrigin {
@@ -535,19 +527,24 @@ enum ResultOrigin {
     Received,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct ResultEntry {
     candidate_id: [u8; 16],
     epoch: u64,
     slot: u8,
-    bytes: Vec<u8>,
+    bytes: Zeroizing<Vec<u8>>,
     expiry_ms: u64,
     response: Option<BindResponseIdentity>,
     origin: ResultOrigin,
     received_binding: Option<ObservedBinding>,
 }
+impl core::fmt::Debug for ResultEntry {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str("ResultEntry(<redacted>)")
+    }
+}
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct OutboundCandidate {
     candidate_id: [u8; 16],
     loc: [u8; 16],
@@ -555,6 +552,118 @@ struct OutboundCandidate {
     slot: u8,
     binding: Option<ObservedBinding>,
     expiry_ms: u64,
+}
+impl core::fmt::Debug for OutboundCandidate {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str("OutboundCandidate(<redacted>)")
+    }
+}
+struct AdmissionCapability;
+
+pub struct Profile3AdmissionIssuer {
+    capability: Weak<AdmissionCapability>,
+}
+
+impl Profile3AdmissionIssuer {
+    pub fn owner_is_live(&self) -> bool {
+        self.capability.strong_count() != 0
+    }
+
+    pub fn admits(&self, admission: &Profile3Admission) -> bool {
+        self.capability
+            .upgrade()
+            .is_some_and(|capability| Arc::ptr_eq(&capability, &admission.owner.capability))
+    }
+}
+
+impl core::fmt::Debug for Profile3AdmissionIssuer {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str("Profile3AdmissionIssuer(<redacted>)")
+    }
+}
+
+pub struct Profile3AdmissionOwner {
+    scid: u64,
+    policy_id: u32,
+    replay_binding: Profile3ReplayBinding,
+    capability: Arc<AdmissionCapability>,
+}
+
+impl Profile3AdmissionOwner {
+    pub fn issue(
+        scid: u64,
+        policy_id: u32,
+        replay_binding: Profile3ReplayBinding,
+    ) -> Result<(Self, Profile3AdmissionIssuer), MobilityError> {
+        if scid == 0 {
+            return Err(MobilityError::Candidate);
+        }
+        let capability = Arc::new(AdmissionCapability);
+        Ok((
+            Self {
+                scid,
+                policy_id,
+                replay_binding,
+                capability: capability.clone(),
+            },
+            Profile3AdmissionIssuer {
+                capability: Arc::downgrade(&capability),
+            },
+        ))
+    }
+    pub fn scid(&self) -> u64 {
+        self.scid
+    }
+    pub fn policy_id(&self) -> u32 {
+        self.policy_id
+    }
+}
+impl core::fmt::Debug for Profile3AdmissionOwner {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str("Profile3AdmissionOwner(<redacted>)")
+    }
+}
+
+pub struct Profile3Admission {
+    owner: Profile3AdmissionOwner,
+    scid: u64,
+    policy_id: u32,
+    binding: ObservedBinding,
+    local_loc: [u8; 16],
+    peer_loc: [u8; 16],
+    epoch: u64,
+}
+impl core::fmt::Debug for Profile3Admission {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter.write_str("Profile3Admission(<redacted>)")
+    }
+}
+impl Profile3Admission {
+    pub fn scid(&self) -> u64 {
+        self.scid
+    }
+    pub fn policy_id(&self) -> u32 {
+        self.policy_id
+    }
+    pub fn matches_replay_binding(&self, binding: &Profile3ReplayBinding) -> bool {
+        self.owner.replay_binding.matches_binding(binding)
+    }
+
+    pub fn binding(&self) -> &ObservedBinding {
+        &self.binding
+    }
+
+    pub fn local_loc(&self) -> [u8; 16] {
+        self.local_loc
+    }
+
+    pub fn peer_loc(&self) -> [u8; 16] {
+        self.peer_loc
+    }
+
+    pub fn epoch(&self) -> u64 {
+        self.epoch
+    }
 }
 
 struct State {
@@ -574,10 +683,14 @@ struct State {
     candidate_secret: Option<Zeroizing<[u8; 32]>>,
     frozen_cohort: Option<(u64, Vec<Proposal>)>,
     outbound: Vec<OutboundCandidate>,
-    emitted_results: Vec<Vec<u8>>,
+    emitted_results: Vec<Zeroizing<Vec<u8>>>,
+    profile3_slot1_admitted: bool,
+    profile3_admission: Option<Profile3Admission>,
+    profile3_owner: Option<Profile3AdmissionOwner>,
+    tombstones: Vec<([u8; 16], u64)>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 enum Action {
     CacheProposal {
         proposal: Proposal,
@@ -586,7 +699,7 @@ enum Action {
     },
     Challenge(Candidate),
     ExistingChallenge(Candidate),
-    Respond(Control),
+    Respond(Zeroizing<Vec<u8>>),
     CommitLocal {
         epoch: u64,
         loc: [u8; 16],
@@ -609,6 +722,21 @@ fn frozen_slots(state: &State) -> usize {
         .as_ref()
         .map_or(0, |(_, members)| members.len())
 }
+fn record_tombstone(state: &mut State, candidate_id: [u8; 16], now_ms: u64) {
+    if state
+        .tombstones
+        .iter()
+        .any(|(existing, _)| *existing == candidate_id)
+    {
+        return;
+    }
+    if state.tombstones.len() == RESULT_CACHE_SLOTS {
+        state.tombstones.remove(0);
+    }
+    state
+        .tombstones
+        .push((candidate_id, now_ms.saturating_add(10_000)));
+}
 
 fn result_entry(
     proposal: &Proposal,
@@ -620,14 +748,16 @@ fn result_entry(
         candidate_id: proposal.candidate_id,
         epoch: proposal.epoch,
         slot: proposal.slot,
-        bytes: Control::CandidateResult {
-            candidate_id: proposal.candidate_id,
-            epoch: proposal.epoch,
-            path_slot: proposal.slot,
-            result,
-        }
-        .encode()
-        .expect("fixed-width candidate result is valid"),
+        bytes: Zeroizing::new(
+            Control::CandidateResult {
+                candidate_id: proposal.candidate_id,
+                epoch: proposal.epoch,
+                path_slot: proposal.slot,
+                result,
+            }
+            .encode()
+            .expect("fixed-width candidate result is valid"),
+        ),
         expiry_ms: now_ms.saturating_add(10_000),
         response,
         origin: ResultOrigin::Emitted,
@@ -635,7 +765,7 @@ fn result_entry(
     }
 }
 
-fn settle_frozen_cohort(state: &mut State, now_ms: u64) -> bool {
+fn settle_frozen_cohort(state: &mut State, profile: u8, scid: u64, now_ms: u64) -> bool {
     let Some((epoch, members)) = state.frozen_cohort.clone() else {
         return false;
     };
@@ -644,9 +774,9 @@ fn settle_frozen_cohort(state: &mut State, now_ms: u64) -> bool {
             .proposals
             .iter()
             .any(|current| current.candidate_id == proposal.candidate_id)
-            && !state.candidates.iter().any(|candidate| {
+            && state.candidates.iter().any(|candidate| {
                 candidate.candidate_id == proposal.candidate_id
-                    && matches!(
+                    && !matches!(
                         candidate.state,
                         CandidateState::Proven | CandidateState::Failed
                     )
@@ -666,6 +796,9 @@ fn settle_frozen_cohort(state: &mut State, now_ms: u64) -> bool {
         .map(|proposal| proposal.candidate_id)
         .collect();
     proven.sort_unstable();
+    if state.emitted_results.len().saturating_add(members.len()) > RESULT_CACHE_SLOTS {
+        return false;
+    }
     let winner = proven.first().copied();
     let outcomes: Vec<_> = members
         .iter()
@@ -698,13 +831,43 @@ fn settle_frozen_cohort(state: &mut State, now_ms: u64) -> bool {
             .iter()
             .find(|candidate| candidate.candidate_id == winner)
             .expect("proven candidate is present");
-        state.peer_epoch = epoch;
-        state.peer_loc = candidate.loc;
-        state.old_binding = Some((
-            state.current_binding.clone(),
-            now_ms.saturating_add(OLD_BINDING_GRACE_MS),
-        ));
-        state.current_binding = candidate.binding.clone();
+        if profile == 3 {
+            if !state.profile3_slot1_admitted {
+                if let Some(owner) = state.profile3_owner.take() {
+                    state.profile3_admission = Some(Profile3Admission {
+                        scid,
+                        policy_id: owner.policy_id(),
+                        owner,
+                        binding: candidate.binding.clone(),
+                        local_loc: state.local_loc,
+                        peer_loc: candidate.loc,
+                        epoch,
+                    });
+                    state.profile3_slot1_admitted = true;
+                }
+            }
+            if state.profile3_slot1_admitted {
+                state.emitted_results.clear();
+                state
+                    .emitted_results
+                    .extend(outcomes.iter().map(|entry| entry.bytes.clone()));
+                state.results.clear();
+                state.proposals.clear();
+                state.candidates.clear();
+                state.outbound.clear();
+                state.frozen_cohort = None;
+                state.candidate_secret = None;
+                return true;
+            }
+        } else {
+            state.peer_epoch = epoch;
+            state.peer_loc = candidate.loc;
+            state.old_binding = Some((
+                state.current_binding.clone(),
+                now_ms.saturating_add(OLD_BINDING_GRACE_MS),
+            ));
+            state.current_binding = candidate.binding.clone();
+        }
         for candidate in &mut state.candidates {
             if candidate.epoch == epoch {
                 candidate.state = if candidate.candidate_id == winner {
@@ -727,7 +890,10 @@ fn settle_frozen_cohort(state: &mut State, now_ms: u64) -> bool {
 
 pub struct Transition {
     generation: u64,
+    owner_id: u64,
     action: Action,
+    protected_proof: Option<ProtectedReplayProof>,
+    profile3_proof: Option<Profile3ReplayProof>,
 }
 
 pub struct CandidateManagerConfig {
@@ -743,7 +909,6 @@ pub struct CandidateManagerConfig {
     pub candidate_secret: [u8; 32],
 }
 
-#[derive(Clone)]
 pub struct CandidateManager {
     signing: SigningKey,
     local: Identity,
@@ -751,7 +916,9 @@ pub struct CandidateManager {
     profile: u8,
     scid: u64,
     policy: Policy,
+    owner_id: u64,
     state: Arc<Mutex<State>>,
+    protected_replay_binding: Option<ProtectedReplayBinding>,
 }
 impl core::fmt::Debug for CandidateManager {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -763,7 +930,26 @@ impl core::fmt::Debug for CandidateManager {
     }
 }
 impl CandidateManager {
-    pub fn new(config: CandidateManagerConfig) -> Result<Self, MobilityError> {
+    /// Creates a manager bound to a protected-session replay authority.
+    pub fn new_with_protected_replay_binding(
+        config: CandidateManagerConfig,
+        protected_replay_binding: ProtectedReplayBinding,
+    ) -> Result<Self, MobilityError> {
+        Self::new_inner(config, None, Some(protected_replay_binding))
+    }
+
+    pub fn new_with_profile3_admission_owner(
+        config: CandidateManagerConfig,
+        owner: Profile3AdmissionOwner,
+    ) -> Result<Self, MobilityError> {
+        Self::new_inner(config, Some(owner), None)
+    }
+
+    fn new_inner(
+        config: CandidateManagerConfig,
+        profile3_owner: Option<Profile3AdmissionOwner>,
+        protected_replay_binding: Option<ProtectedReplayBinding>,
+    ) -> Result<Self, MobilityError> {
         let CandidateManagerConfig {
             signing,
             local,
@@ -780,12 +966,22 @@ impl CandidateManager {
             || scid == 0
             || local.validate().is_err()
             || peer.validate().is_err()
-            || ObservedBinding::parse(&initial_peer_binding.encode()).is_err()
+            || initial_peer_binding.validate().is_err()
             || local.role == peer.role
             || signing.verifying_key().to_bytes() != local.public_key
+            || (profile == 3
+                && profile3_owner.as_ref().is_none_or(|owner| {
+                    owner.scid() != scid || owner.policy_id() != policy.policy_id
+                }))
+            || (profile != 3 && profile3_owner.is_some())
+            || (profile != 3 && protected_replay_binding.is_none())
+            || (profile == 3 && protected_replay_binding.is_some())
         {
             return Err(MobilityError::Candidate);
         }
+        let owner_id = NEXT_CANDIDATE_MANAGER_OWNER_ID
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+            .map_err(|_| MobilityError::Replay)?;
         Ok(Self {
             signing,
             local,
@@ -793,6 +989,8 @@ impl CandidateManager {
             profile,
             scid,
             policy,
+            owner_id,
+            protected_replay_binding,
             state: Arc::new(Mutex::new(State {
                 generation: 0,
                 closed: false,
@@ -811,6 +1009,10 @@ impl CandidateManager {
                 frozen_cohort: None,
                 outbound: Vec::new(),
                 emitted_results: Vec::new(),
+                profile3_slot1_admitted: false,
+                profile3_admission: None,
+                profile3_owner,
+                tombstones: Vec::new(),
             })),
         })
     }
@@ -827,6 +1029,11 @@ impl CandidateManager {
             || candidate_id == [0; 16]
             || epoch <= state.local_epoch
             || !profile_allows_slot(self.profile, path_slot)
+            || (self.profile == 3 && state.profile3_slot1_admitted)
+            || state
+                .tombstones
+                .iter()
+                .any(|(existing, expiry)| *existing == candidate_id && now_ms < *expiry)
         {
             return Err(MobilityError::Candidate);
         }
@@ -898,8 +1105,9 @@ impl CandidateManager {
         probe_nonce: [u8; 16],
         now_ms: u64,
     ) -> Result<Control, MobilityError> {
+        carrier.validate().map_err(|_| MobilityError::Candidate)?;
         let mut state = self.state.lock().map_err(|_| MobilityError::Candidate)?;
-        if state.closed {
+        if state.closed || (self.profile == 3 && state.profile3_slot1_admitted) {
             return Err(MobilityError::Candidate);
         }
         let candidate = state
@@ -925,16 +1133,70 @@ impl CandidateManager {
             probe_nonce,
         })
     }
-    pub fn preview(
+    #[cfg(test)]
+    fn preview(
         &self,
         plaintext: &[u8],
         binding: &ObservedBinding,
         replay_token: u64,
         now_ms: u64,
     ) -> Result<Transition, MobilityError> {
-        if replay_token == 0 {
+        if self.profile == 3 || replay_token == 0 {
             return Err(MobilityError::Replay);
         }
+        self.preview_inner(plaintext, binding, now_ms, None, None)
+    }
+    pub fn preview_protected(
+        &self,
+        plaintext: &[u8],
+        binding: &ObservedBinding,
+        proof: ProtectedReplayProof,
+        now_ms: u64,
+    ) -> Result<Transition, MobilityError> {
+        if self.profile == 3
+            || !proof.matches_plaintext(plaintext)
+            || !self
+                .protected_replay_binding
+                .as_ref()
+                .is_some_and(|binding| binding.matches_proof(&proof))
+        {
+            return Err(MobilityError::Replay);
+        }
+        self.preview_inner(plaintext, binding, now_ms, Some(proof), None)
+    }
+
+    pub fn preview_profile3(
+        &self,
+        plaintext: &[u8],
+        binding: &ObservedBinding,
+        proof: Profile3ReplayProof,
+        now_ms: u64,
+    ) -> Result<Transition, MobilityError> {
+        if self.profile != 3 || !proof.matches_plaintext(plaintext) {
+            return Err(MobilityError::Candidate);
+        }
+        {
+            let state = self.state.lock().map_err(|_| MobilityError::Candidate)?;
+            if !state
+                .profile3_owner
+                .as_ref()
+                .is_some_and(|owner| owner.replay_binding.matches_proof(&proof))
+            {
+                return Err(MobilityError::Replay);
+            }
+        }
+        self.preview_inner(plaintext, binding, now_ms, None, Some(proof))
+    }
+
+    fn preview_inner(
+        &self,
+        plaintext: &[u8],
+        binding: &ObservedBinding,
+        now_ms: u64,
+        protected_proof: Option<ProtectedReplayProof>,
+        profile3_proof: Option<Profile3ReplayProof>,
+    ) -> Result<Transition, MobilityError> {
+        binding.validate().map_err(|_| MobilityError::Candidate)?;
         let control = Control::parse(plaintext)?;
         let path_slot = match &control {
             Control::LocUpdate { path_slot, .. }
@@ -947,7 +1209,10 @@ impl CandidateManager {
             return Err(MobilityError::Candidate);
         }
         let state = self.state.lock().map_err(|_| MobilityError::Candidate)?;
-        if state.closed || state.generation == u64::MAX {
+        if state.closed
+            || state.generation == u64::MAX
+            || (self.profile == 3 && state.profile3_slot1_admitted)
+        {
             return Err(MobilityError::Candidate);
         }
         let action = match &control {
@@ -969,7 +1234,10 @@ impl CandidateManager {
                         policy_id: self.policy.policy_id,
                     },
                 )?;
-                if *old_loc != state.peer_loc || *epoch <= state.peer_epoch {
+                if *old_loc != state.peer_loc
+                    || *epoch <= state.peer_epoch
+                    || (self.profile == 3 && state.profile3_slot1_admitted)
+                {
                     return Err(MobilityError::Candidate);
                 }
                 let bytes = control.encode()?;
@@ -999,10 +1267,20 @@ impl CandidateManager {
                         .results
                         .iter()
                         .any(|entry| entry.candidate_id == *candidate_id)
+                    || state
+                        .tombstones
+                        .iter()
+                        .any(|(existing, expiry)| *existing == *candidate_id && now_ms < *expiry)
                 {
                     return Err(MobilityError::Candidate);
                 } else {
-                    if state.proposals.len() == PROPOSAL_SLOTS {
+                    if !state.emitted_results.is_empty() {
+                        return Err(MobilityError::Capacity);
+                    }
+                    if state.proposals.len() == PROPOSAL_SLOTS
+                        || state.results.len().saturating_add(state.proposals.len())
+                            >= RESULT_CACHE_SLOTS
+                    {
                         return Err(MobilityError::Capacity);
                     }
                     let elapsed = now_ms.saturating_sub(state.proposal_refill_ms) / 1_000;
@@ -1092,10 +1370,10 @@ impl CandidateManager {
                             loc: *loc,
                             binding: binding.clone(),
                             expiry_ms: *expiry_ms,
-                            token: *supplied,
+                            token: Zeroizing::new(*supplied),
                         })
                     {
-                        Action::Respond(Control::parse(&result.bytes)?)
+                        Action::Respond(result.bytes.clone())
                     } else {
                         return Err(MobilityError::Candidate);
                     }
@@ -1176,7 +1454,7 @@ impl CandidateManager {
                             loc: *loc,
                             binding: binding.clone(),
                             expiry_ms: *expiry_ms,
-                            token: *supplied,
+                            token: Zeroizing::new(*supplied),
                         },
                     }
                 }
@@ -1201,14 +1479,17 @@ impl CandidateManager {
                             && now_ms < candidate.expiry_ms
                     })
                     .ok_or(MobilityError::Candidate)?;
-                Action::Respond(Control::BindResponse {
-                    candidate_id: candidate.candidate_id,
-                    loc: candidate.loc,
-                    epoch: candidate.epoch,
-                    path_slot: candidate.slot,
-                    expiry_ms: *expiry_ms,
-                    token: *token,
-                })
+                Action::Respond(Zeroizing::new(
+                    Control::BindResponse {
+                        candidate_id: candidate.candidate_id,
+                        loc: candidate.loc,
+                        epoch: candidate.epoch,
+                        path_slot: candidate.slot,
+                        expiry_ms: *expiry_ms,
+                        token: *token,
+                    }
+                    .encode()?,
+                ))
             }
             Control::CandidateResult {
                 candidate_id,
@@ -1223,7 +1504,7 @@ impl CandidateManager {
                         && now_ms < entry.expiry_ms
                 }) {
                     if entry.origin == ResultOrigin::Received
-                        && entry.bytes == control.encode()?
+                        && entry.bytes.as_slice() == control.encode()?.as_slice()
                         && entry.received_binding.as_ref() == Some(binding)
                     {
                         Action::None
@@ -1258,7 +1539,7 @@ impl CandidateManager {
                             candidate_id: *candidate_id,
                             epoch: *epoch,
                             slot: *path_slot,
-                            bytes: control.encode()?,
+                            bytes: Zeroizing::new(control.encode()?),
                             expiry_ms: now_ms.saturating_add(10_000),
                             response: None,
                             origin: ResultOrigin::Received,
@@ -1270,18 +1551,24 @@ impl CandidateManager {
         };
         Ok(Transition {
             generation: state.generation,
+            owner_id: self.owner_id,
             action,
+            protected_proof,
+            profile3_proof,
         })
     }
 
     pub fn response_for(&self, transition: &Transition) -> Result<Option<Control>, MobilityError> {
         let state = self.state.lock().map_err(|_| MobilityError::Candidate)?;
-        if state.closed || state.generation != transition.generation {
+        if state.closed
+            || transition.owner_id != self.owner_id
+            || state.generation != transition.generation
+        {
             return Err(MobilityError::Replay);
         }
         let candidate = match &transition.action {
             Action::Challenge(candidate) | Action::ExistingChallenge(candidate) => candidate,
-            Action::Respond(control) => return Ok(Some(control.clone())),
+            Action::Respond(control) => return Control::parse(control).map(Some),
             _ => return Ok(None),
         };
         let secret = state
@@ -1316,15 +1603,11 @@ impl CandidateManager {
         }))
     }
 
-    pub fn commit(
+    fn apply_after_replay(
         &self,
+        state: &mut State,
         transition: Transition,
-        replay_commit: impl FnOnce() -> Result<(), MobilityError>,
     ) -> Result<(), MobilityError> {
-        let mut state = self.state.lock().map_err(|_| MobilityError::Candidate)?;
-        if state.closed || state.generation != transition.generation {
-            return Err(MobilityError::Replay);
-        }
         let mutates = !matches!(
             &transition.action,
             Action::ExistingChallenge(_) | Action::Respond(_) | Action::None
@@ -1337,7 +1620,6 @@ impl CandidateManager {
         } else {
             state.generation
         };
-        replay_commit()?;
         match transition.action {
             Action::CacheProposal {
                 proposal,
@@ -1362,10 +1644,35 @@ impl CandidateManager {
                 let result_candidate_id = result.candidate_id;
                 state.results.push(result);
                 if promote {
-                    state.local_epoch = epoch;
-                    state.local_loc = loc;
-                    state.old_binding = Some((state.current_binding.clone(), result_expiry_ms));
-                    state.current_binding = binding;
+                    if self.profile == 3 {
+                        if !state.profile3_slot1_admitted {
+                            if let Some(owner) = state.profile3_owner.take() {
+                                state.profile3_admission = Some(Profile3Admission {
+                                    scid: self.scid,
+                                    policy_id: owner.policy_id(),
+                                    owner,
+                                    binding,
+                                    local_loc: loc,
+                                    peer_loc: state.peer_loc,
+                                    epoch,
+                                });
+                                state.profile3_slot1_admitted = true;
+                            }
+                        }
+                        if state.profile3_slot1_admitted {
+                            state.proposals.clear();
+                            state.candidates.clear();
+                            state.outbound.clear();
+                            state.results.clear();
+                            state.frozen_cohort = None;
+                            state.candidate_secret = None;
+                        }
+                    } else {
+                        state.local_epoch = epoch;
+                        state.local_loc = loc;
+                        state.old_binding = Some((state.current_binding.clone(), result_expiry_ms));
+                        state.current_binding = binding;
+                    }
                 }
                 if promote {
                     state.outbound.retain(|candidate| candidate.epoch > epoch);
@@ -1393,11 +1700,8 @@ impl CandidateManager {
                     .expect("transition generation protects candidate");
                 candidate.state = CandidateState::Proven;
                 candidate.response = Some(response);
-                if state.proposals.iter().map(|proposal| proposal.epoch).max() == Some(epoch)
-                    && state
-                        .frozen_cohort
-                        .as_ref()
-                        .is_none_or(|(cohort_epoch, _)| epoch > *cohort_epoch)
+                if state.frozen_cohort.is_none()
+                    && state.proposals.iter().map(|proposal| proposal.epoch).max() == Some(epoch)
                 {
                     let members = state
                         .proposals
@@ -1407,7 +1711,7 @@ impl CandidateManager {
                         .collect();
                     state.frozen_cohort = Some((epoch, members));
                 }
-                settle_frozen_cohort(&mut state, grace_until_ms);
+                settle_frozen_cohort(state, self.profile, self.scid, grace_until_ms);
             }
             Action::None => {}
         }
@@ -1417,31 +1721,253 @@ impl CandidateManager {
         Ok(())
     }
 
+    fn commit_protected_replay(
+        &self,
+        mut transition: Transition,
+        commit: impl FnOnce(&mut ProtectedReplayProof) -> Result<(), MobilityError>,
+    ) -> Result<(), MobilityError> {
+        if self.profile == 3 || transition.owner_id != self.owner_id {
+            return Err(MobilityError::Replay);
+        }
+        let mut proof = transition
+            .protected_proof
+            .take()
+            .ok_or(MobilityError::Replay)?;
+        let mut state = self.state.lock().map_err(|_| MobilityError::Candidate)?;
+        if state.closed || state.generation != transition.generation {
+            return Err(MobilityError::Replay);
+        }
+        commit(&mut proof)?;
+        if !proof.is_committed() {
+            return Err(MobilityError::Replay);
+        }
+        self.apply_after_replay(&mut state, transition)
+    }
+
+    pub fn commit_protected(
+        &self,
+        transition: Transition,
+        session: &mut DirectionalSession,
+    ) -> Result<(), MobilityError> {
+        self.commit_protected_replay(transition, |proof| {
+            session
+                .commit_protected_replay(proof)
+                .map_err(|_| MobilityError::Replay)
+        })
+    }
+
+    pub fn commit_protected_client(
+        &self,
+        transition: Transition,
+        client: &mut ClientMachine,
+    ) -> Result<(), MobilityError> {
+        self.commit_protected_replay(transition, |proof| {
+            client
+                .commit_protected_replay(proof)
+                .map_err(|_| MobilityError::Replay)
+        })
+    }
+
+    pub fn commit_protected_server(
+        &self,
+        transition: Transition,
+        server: &mut ServerMachine,
+        scid: u64,
+        now_ms: u64,
+    ) -> Result<(), MobilityError> {
+        self.commit_protected_replay(transition, |proof| {
+            server
+                .commit_protected_replay(scid, proof, now_ms)
+                .map_err(|_| MobilityError::Replay)
+        })
+    }
+
+    pub fn commit_profile3(
+        &self,
+        mut transition: Transition,
+        session: &mut DirectionalSession,
+    ) -> Result<(), MobilityError> {
+        if self.profile != 3 || transition.owner_id != self.owner_id {
+            return Err(MobilityError::Replay);
+        }
+        let mut proof = transition
+            .profile3_proof
+            .take()
+            .ok_or(MobilityError::Replay)?;
+        let mut state = self.state.lock().map_err(|_| MobilityError::Candidate)?;
+        if state.closed || state.generation != transition.generation {
+            return Err(MobilityError::Replay);
+        }
+        session
+            .commit_profile3_replay(&mut proof)
+            .map_err(|_| MobilityError::Replay)?;
+        if !proof.is_committed() {
+            return Err(MobilityError::Replay);
+        }
+        self.apply_after_replay(&mut state, transition)
+    }
+    #[cfg(test)]
+    fn commit(
+        &self,
+        transition: Transition,
+        replay_commit: impl FnOnce() -> Result<(), MobilityError>,
+    ) -> Result<(), MobilityError> {
+        let mut state = self.state.lock().map_err(|_| MobilityError::Candidate)?;
+        if state.closed
+            || transition.owner_id != self.owner_id
+            || transition.protected_proof.is_some()
+            || transition.profile3_proof.is_some()
+            || state.generation != transition.generation
+        {
+            return Err(MobilityError::Replay);
+        }
+        replay_commit()?;
+        self.apply_after_replay(&mut state, transition)
+    }
+
     pub fn expire(&self, now_ms: u64) {
         if let Ok(mut state) = self.state.lock() {
             if state.closed {
                 return;
             }
+            let frozen_members = state
+                .frozen_cohort
+                .as_ref()
+                .map(|(_, members)| members.clone())
+                .unwrap_or_default();
             let mut changed = false;
             for candidate in &mut state.candidates {
                 if now_ms >= candidate.expiry_ms && candidate.state == CandidateState::Challenged {
                     candidate.state = CandidateState::Failed;
+                    candidate.response = None;
                     changed = true;
                 }
             }
+            for proposal in &frozen_members {
+                let expired = now_ms >= proposal.expiry_ms;
+                match state
+                    .candidates
+                    .iter_mut()
+                    .find(|candidate| candidate.candidate_id == proposal.candidate_id)
+                {
+                    Some(candidate)
+                        if expired
+                            && !matches!(
+                                candidate.state,
+                                CandidateState::Proven | CandidateState::Failed
+                            ) =>
+                    {
+                        candidate.state = CandidateState::Failed;
+                        candidate.response = None;
+                        changed = true;
+                    }
+                    None if expired => changed = true,
+                    _ => {}
+                }
+                if expired {
+                    record_tombstone(&mut state, proposal.candidate_id, now_ms);
+                }
+            }
+            changed |= settle_frozen_cohort(&mut state, self.profile, self.scid, now_ms);
+            let results = state.results.len();
+            state.results.retain(|result| now_ms < result.expiry_ms);
+            changed |= state.results.len() != results;
+            let timeout_failures: Vec<_> = state
+                .candidates
+                .iter()
+                .filter(|candidate| {
+                    candidate.state == CandidateState::Failed
+                        && !frozen_members
+                            .iter()
+                            .any(|proposal| proposal.candidate_id == candidate.candidate_id)
+                })
+                .filter_map(|candidate| {
+                    state
+                        .proposals
+                        .iter()
+                        .find(|proposal| proposal.candidate_id == candidate.candidate_id)
+                        .cloned()
+                })
+                .collect();
+            for proposal in timeout_failures {
+                if state.results.len() >= RESULT_CACHE_SLOTS
+                    || state.emitted_results.len() >= RESULT_CACHE_SLOTS
+                    || state
+                        .results
+                        .iter()
+                        .any(|result| result.candidate_id == proposal.candidate_id)
+                {
+                    continue;
+                }
+                let result = result_entry(&proposal, 3, now_ms, None);
+                state.emitted_results.push(result.bytes.clone());
+                state.results.push(result);
+                changed = true;
+            }
+            let expired_ids: Vec<_> = state
+                .proposals
+                .iter()
+                .filter(|proposal| now_ms >= proposal.expiry_ms)
+                .map(|proposal| proposal.candidate_id)
+                .chain(
+                    state
+                        .outbound
+                        .iter()
+                        .filter(|candidate| now_ms >= candidate.expiry_ms)
+                        .map(|candidate| candidate.candidate_id),
+                )
+                .collect();
+            for candidate_id in expired_ids {
+                record_tombstone(&mut state, candidate_id, now_ms);
+            }
+            state.tombstones.retain(|(_, expiry)| now_ms < *expiry);
             let proposals = state.proposals.len();
             state
                 .proposals
                 .retain(|proposal| now_ms < proposal.expiry_ms);
             changed |= state.proposals.len() != proposals;
+            if state.frozen_cohort.as_ref().is_some_and(|(epoch, _)| {
+                !state
+                    .proposals
+                    .iter()
+                    .any(|proposal| proposal.epoch == *epoch)
+            }) {
+                state.frozen_cohort = None;
+                changed = true;
+            }
+            if state.frozen_cohort.is_none() {
+                if let Some(epoch) = state
+                    .proposals
+                    .iter()
+                    .filter(|proposal| {
+                        state.candidates.iter().any(|candidate| {
+                            candidate.candidate_id == proposal.candidate_id
+                                && candidate.state == CandidateState::Proven
+                        })
+                    })
+                    .map(|proposal| proposal.epoch)
+                    .max()
+                {
+                    state.frozen_cohort = Some((
+                        epoch,
+                        state
+                            .proposals
+                            .iter()
+                            .filter(|proposal| proposal.epoch == epoch)
+                            .cloned()
+                            .collect(),
+                    ));
+                    changed = true;
+                }
+            }
             let candidates = state.candidates.len();
-            state
-                .candidates
-                .retain(|candidate| candidate.state != CandidateState::Released);
+            state.candidates.retain(|candidate| {
+                candidate.state != CandidateState::Failed
+                    || frozen_members
+                        .iter()
+                        .any(|proposal| proposal.candidate_id == candidate.candidate_id)
+            });
             changed |= state.candidates.len() != candidates;
-            let results = state.results.len();
-            state.results.retain(|result| now_ms < result.expiry_ms);
-            changed |= state.results.len() != results;
             let outbound = state.outbound.len();
             state
                 .outbound
@@ -1455,9 +1981,24 @@ impl CandidateManager {
                 state.old_binding = None;
                 changed = true;
             }
-            changed |= settle_frozen_cohort(&mut state, now_ms);
+            changed |= settle_frozen_cohort(&mut state, self.profile, self.scid, now_ms);
             if changed {
-                state.generation = state.generation.wrapping_add(1);
+                if let Some(next_generation) = state.generation.checked_add(1) {
+                    state.generation = next_generation;
+                } else {
+                    state.closed = true;
+                    state.proposals.clear();
+                    state.candidates.clear();
+                    state.results.clear();
+                    state.outbound.clear();
+                    state.emitted_results.clear();
+                    state.profile3_admission = None;
+                    state.profile3_owner = None;
+                    state.old_binding = None;
+                    state.frozen_cohort = None;
+                    state.candidate_secret = None;
+                    state.tombstones.clear();
+                }
             }
         }
     }
@@ -1470,10 +2011,13 @@ impl CandidateManager {
             state.results.clear();
             state.outbound.clear();
             state.emitted_results.clear();
+            state.profile3_admission = None;
+            state.profile3_owner = None;
             state.old_binding = None;
             state.frozen_cohort = None;
             state.candidate_secret = None;
-            state.generation = state.generation.wrapping_add(1);
+            state.tombstones.clear();
+            state.generation = state.generation.saturating_add(1);
         }
     }
 
@@ -1506,13 +2050,14 @@ impl CandidateManager {
     }
 
     pub fn binding_allowed_inbound(&self, binding: &ObservedBinding, now_ms: u64) -> bool {
-        self.state.lock().is_ok_and(|state| {
-            binding == &state.current_binding
-                || state
-                    .old_binding
-                    .as_ref()
-                    .is_some_and(|(old, expiry)| binding == old && now_ms < *expiry)
-        })
+        binding.validate().is_ok()
+            && self.state.lock().is_ok_and(|state| {
+                binding == &state.current_binding
+                    || state
+                        .old_binding
+                        .as_ref()
+                        .is_some_and(|(old, expiry)| binding == old && now_ms < *expiry)
+            })
     }
 
     pub fn take_results(&self) -> Vec<Control> {
@@ -1524,12 +2069,21 @@ impl CandidateManager {
             .filter_map(|bytes| Control::parse(&bytes).ok())
             .collect()
     }
+    pub fn take_profile3_admissions(&self) -> Vec<Profile3Admission> {
+        let Ok(mut state) = self.state.lock() else {
+            return Vec::new();
+        };
+        if !state.emitted_results.is_empty() {
+            return Vec::new();
+        }
+        state.profile3_admission.take().into_iter().collect()
+    }
 }
 #[cfg(test)]
 mod corpus_negative_state_machine {
     use super::*;
     use serde_json::Value;
-    use sha2::Digest;
+    use sha2::{Digest, Sha256};
     use std::collections::BTreeSet;
 
     const VECTORS: &str = include_str!("../../../../tests/vectors/mobility-v0.1.json");
@@ -1626,6 +2180,10 @@ mod corpus_negative_state_machine {
             frozen_cohort: None,
             outbound: Vec::new(),
             emitted_results: Vec::new(),
+            profile3_slot1_admitted: false,
+            profile3_admission: None,
+            profile3_owner: None,
+            tombstones: Vec::new(),
         };
         if let Some(bucket) = setup.get("proposal_bucket") {
             state.proposal_tokens = field(bucket, "tokens").as_u64().expect("tokens") as u8;
@@ -1679,14 +2237,16 @@ mod corpus_negative_state_machine {
                 candidate_id: id,
                 epoch,
                 slot,
-                bytes: Control::CandidateResult {
-                    candidate_id: id,
-                    epoch,
-                    path_slot: slot,
-                    result: 2,
-                }
-                .encode()
-                .expect("result"),
+                bytes: Zeroizing::new(
+                    Control::CandidateResult {
+                        candidate_id: id,
+                        epoch,
+                        path_slot: slot,
+                        result: 2,
+                    }
+                    .encode()
+                    .expect("result"),
+                ),
                 expiry_ms: entry
                     .get("expiry_ms")
                     .and_then(Value::as_u64)
@@ -1769,6 +2329,8 @@ mod corpus_negative_state_machine {
                 profile: field(session, "profile").as_u64().expect("profile") as u8,
                 scid: field(session, "scid").as_u64().expect("scid"),
                 policy: Policy { policy_id },
+                protected_replay_binding: None,
+                owner_id: NEXT_CANDIDATE_MANAGER_OWNER_ID.fetch_add(1, Ordering::Relaxed),
                 state: Arc::new(Mutex::new(state)),
             },
             invalid_roles,
@@ -1792,28 +2354,37 @@ mod corpus_negative_state_machine {
             ingress_descriptor_id: 1,
             next_hop_mac: [0x33; 6],
         };
-        let manager = CandidateManager::new(CandidateManagerConfig {
-            signing: local_signing,
-            local: Identity {
-                role: 2,
-                service_context: 1,
-                eid: r8_session::eid(&local_key),
-                public_key: local_key,
+        let manager = CandidateManager::new_with_protected_replay_binding(
+            CandidateManagerConfig {
+                signing: local_signing,
+                local: Identity {
+                    role: 2,
+                    service_context: 1,
+                    eid: r8_session::eid(&local_key),
+                    public_key: local_key,
+                },
+                peer: Identity {
+                    role: 1,
+                    service_context: 1,
+                    eid: r8_session::eid(&peer_key),
+                    public_key: peer_key,
+                },
+                profile: 0,
+                scid: 1,
+                policy: Policy { policy_id: 1 },
+                local_loc: [0x41; 16],
+                peer_loc: [0x42; 16],
+                initial_peer_binding: binding.clone(),
+                candidate_secret: [0x43; 32],
             },
-            peer: Identity {
-                role: 1,
-                service_context: 1,
-                eid: r8_session::eid(&peer_key),
-                public_key: peer_key,
-            },
-            profile: 0,
-            scid: 1,
-            policy: Policy { policy_id: 1 },
-            local_loc: [0x41; 16],
-            peer_loc: [0x42; 16],
-            initial_peer_binding: binding.clone(),
-            candidate_secret: [0x43; 32],
-        })
+            DirectionalSession::new(
+                Zeroizing::new([0x44; 32]),
+                Zeroizing::new([0x45; 32]),
+                [0; 32],
+                1280,
+            )
+            .protected_replay_binding(),
+        )
         .expect("manager");
         (manager, peer_signing, binding)
     }
@@ -1921,6 +2492,7 @@ mod corpus_negative_state_machine {
             .commit(
                 Transition {
                     generation: 0,
+                    owner_id: manager.owner_id,
                     action: Action::Prove {
                         candidate_id: a,
                         epoch: 1,
@@ -1930,9 +2502,11 @@ mod corpus_negative_state_machine {
                             loc: [0x51; 16],
                             binding: binding.clone(),
                             expiry_ms: 3_000,
-                            token: [0; 32],
+                            token: Zeroizing::new([0; 32]),
                         },
                     },
+                    profile3_proof: None,
+                    protected_proof: None,
                 },
                 || Ok(()),
             )
@@ -1978,6 +2552,50 @@ mod corpus_negative_state_machine {
             manager.preview(&stale_result, &binding, 4, OLD_BINDING_GRACE_MS),
             Err(MobilityError::Candidate)
         ));
+    }
+    #[test]
+    fn expiry_settles_frozen_proven_and_unprobed_pair() {
+        let (manager, peer_signing, binding) = cohort_manager();
+        let a = [0x01; 16];
+        let b = [0x02; 16];
+        let cached_a = update(&manager, &peer_signing, a, [0x51; 16], 1);
+        let cached_b = update(&manager, &peer_signing, b, [0x52; 16], 1);
+        {
+            let mut state = manager.state.lock().expect("state lock");
+            let a_proposal = proposal(&cached_a, 5_000);
+            let b_proposal = proposal(&cached_b, 5_000);
+            state
+                .proposals
+                .extend([a_proposal.clone(), b_proposal.clone()]);
+            state.candidates.push(Candidate {
+                candidate_id: a,
+                loc: [0x51; 16],
+                epoch: 1,
+                slot: 0,
+                binding,
+                expiry_ms: 3_000,
+                response: None,
+                state: CandidateState::Proven,
+            });
+            state.frozen_cohort = Some((1, vec![a_proposal, b_proposal]));
+        }
+
+        manager.expire(5_000);
+
+        let state = manager.state.lock().expect("state lock");
+        assert_eq!(state.peer_loc, [0x51; 16]);
+        assert!(state.proposals.is_empty());
+        assert!(state.candidates.is_empty());
+        assert!(state.frozen_cohort.is_none());
+        assert_eq!(state.results.len(), 2);
+        assert!(state
+            .tombstones
+            .iter()
+            .any(|(candidate_id, _)| *candidate_id == a));
+        assert!(state
+            .tombstones
+            .iter()
+            .any(|(candidate_id, _)| *candidate_id == b));
     }
 
     #[test]

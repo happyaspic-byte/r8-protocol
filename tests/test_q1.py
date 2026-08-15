@@ -38,9 +38,12 @@ class Q1V4Tests(unittest.TestCase):
   self.assertIn('client_gate_r,client_gate_w=os.pipe()',source)
   self.assertIn('_read_exact(cpu_r,96)',source)
   self.assertIn('endpoint-server","--mechanism",mechanism,"--ready-fd",str(ready_w),"--schedule-fd"',source)
- def test_parent_closes_ready_writer_before_waiting(self):
+ def test_parent_bounds_readiness_and_closes_writer(self):
   source=(ROOT/"tests/mobility_netns.py").read_text()
-  self.assertLess(source.index("os.close(ready_w)"),source.index("_read_exact(ready_r,2)"))
+  self.assertIn("_read_endpoint_ready(ready_r,(server,client),count=2)",source)
+  self.assertIn("_read_endpoint_ready(ready_r,(server,))",source)
+  self.assertLess(source.rindex("_read_endpoint_ready("),source.index("os.close(ready_w)"))
+  self.assertIn("process.poll() is not None",source)
   self.assertIn("fds[fds.index(ready_w)]=None",source)
  def test_baseline_server_waits_for_gate_and_reports_cpu(self):
   source=(ROOT/'tests/mobility_netns.py').read_text()
@@ -229,6 +232,7 @@ class Q1V4Tests(unittest.TestCase):
   self.assertEqual((row['scheduled_payloads'],row['attempted_payloads'],row['sent_payloads']), (None,None,None)); self.assertTrue(row['failure'])
  def test_workflow_is_structural_and_always_uploads(self):
   workflow=(ROOT/'.github/workflows/q1-full.yml').read_text(); self.assertIn('if: always()',workflow); self.assertNotIn('shutil.rmtree',workflow); self.assertIn('publication_eligible.json',workflow); self.assertIn('counter_complete',workflow); self.assertIn('all(row[field] is True for field in completeness)',workflow); self.assertIn('proof(row)',workflow); self.assertIn('in {3, 4}',workflow)
+  self.assertIn('steps.upload.outputs.artifact-digest',workflow); self.assertIn('^[0-9a-f]{64}$',workflow); self.assertIn('GITHUB_STEP_SUMMARY',workflow)
  def test_preflight_uid_refusal(self):
   old=q1.os.geteuid; q1.os.geteuid=lambda:1000
   try:
@@ -290,8 +294,21 @@ class Q1V4Tests(unittest.TestCase):
   command=net._r8('connect',b'x'*32,net.Identity.from_seed(b'y'*32).public,'::1','::2','::3','10.88.1.2:0',['--peer','10.88.0.2:53104'])
   self.assertIn(str(ROOT/'reference/r8move.py'),command); self.assertNotIn('endpoint-client',command); self.assertEqual(command.count("--timeout"),0)
   source=(ROOT/'reference/r8move.py').read_text(); self.assertIn('--schedule-fd',source); self.assertIn('--attempt-fd',source)
+  for forbidden in ('--deterministic-scid','--deterministic-candidate-hex','--deterministic-secret-hex'):
+   self.assertNotIn(forbidden,command); self.assertNotIn(forbidden,source)
+  self.assertIn('retry_waits = (0.5, 1.0, 2.0)',source)
+  self.assertIn('retry_deadlines = (opened_at + 0.5, opened_at + 1.5, opened_at + 3.5)',source)
+  handshake=source[source.index('def _handshake'):source.index('def _exchange')]
+  self.assertNotIn('time.monotonic() + retry_waits[retry_index]',handshake)
+  self.assertIn('deadline=time.monotonic()+3',source)
   for due in (10,10_000_000,123_456_780):
    self.assertEqual((due+10_000_000)/1e9,due/1e9+10_000_000/1e9)
+ def test_r8_nonzero_identifiers_retry_fresh_os_randomness(self):
+  original=r8move._random
+  values=iter((b"\0"*8,b"\x01"+b"\0"*7))
+  r8move._random=lambda size: next(values)
+  try: self.assertEqual(r8move._nonzero_random(8),b"\x01"+b"\0"*7)
+  finally: r8move._random=original
  def test_supervisor_control_parse_failure(self):
   self.assertEqual(q1._supervisor_outcome('worker_exit',{'_parse_failure':True})['error_category'],'control_parse')
  def test_graceful_timeout_worker_payload_is_retained(self):
@@ -304,7 +321,7 @@ class Q1V4Tests(unittest.TestCase):
     if self.calls==1: raise subprocess.TimeoutExpired("worker",timeout)
     return json.dumps(payload),"graceful"
   original_popen,original_killpg,original_contract,original_cleanup=q1.subprocess.Popen,q1.os.killpg,q1.contract,q1._cleanup_worker_namespaces
-  q1.subprocess.Popen=lambda *args,**kwargs:Process(); q1.os.killpg=lambda pid,sig:None; q1.contract=lambda:{"contract_version":"r8-benchmark-preregistration-v4"}; q1._cleanup_worker_namespaces=lambda suffix:None
+  q1.subprocess.Popen=lambda *args,**kwargs:Process(); q1.os.killpg=lambda pid,sig:None; q1.contract=lambda:{"contract_version":"r8-benchmark-preregistration-v5"}; q1._cleanup_worker_namespaces=lambda suffix:None
   try:
    row=q1.invoke_worker({"trial_id":0,"block_id":0,"mechanism":"R8","arm":"abrupt-break","exclusion_reason":None},"config")
   finally:
@@ -359,7 +376,7 @@ class Q1V4Tests(unittest.TestCase):
  def test_summary_bootstrap_is_deterministic(self):
   plans=[p for p in q1.schedule() if p['exclusion_reason'] is None and p['mechanism']=='R8' and p['arm']=='abrupt-break']
   rows=[{'trial_id':p['trial_id'],'mechanism':p['mechanism'],'arm':p['arm'],'block_id':p['block_id'],'setup_status':'complete','failure':False,'outage_ns':p['block_id']+1} for p in plans]
-  original=q1.contract; q1.contract=lambda:{"contract_version":"r8-benchmark-preregistration-v4"}
+  original=q1.contract; q1.contract=lambda:{"contract_version":"r8-benchmark-preregistration-v5"}
   try: self.assertEqual(q1.summary(rows,'x'),q1.summary(rows,'x'))
   finally: q1.contract=original
  def test_manifest_tamper_is_refused(self):
@@ -397,6 +414,6 @@ class Q1V4Tests(unittest.TestCase):
   with self.assertRaises(net.StageError): net.observed_topology(Commands(),{"client":"a","server":"b","router":"c"})
  def test_retained_v2_artifact_is_not_current_contract(self):
   package=ROOT/'bench/results/q1-setup-failure-v2'; manifest=json.loads((package/'manifest.json').read_text()); raw=json.loads((package/'raw.json').read_text())
-  self.assertEqual(manifest['row_count'],1320); self.assertTrue(all(row['setup_status']=='failed' for row in raw)); self.assertEqual(json.loads((ROOT/'bench/protocols/q1.json').read_text())['contract_version'],'r8-benchmark-preregistration-v4'); self.assertNotEqual('r8-benchmark-preregistration-v4',raw[0]['contract_version'])
+  self.assertEqual(manifest['row_count'],1320); self.assertTrue(all(row['setup_status']=='failed' for row in raw)); self.assertEqual(json.loads((ROOT/'bench/protocols/q1.json').read_text())['contract_version'],'r8-benchmark-preregistration-v5'); self.assertNotEqual('r8-benchmark-preregistration-v5',raw[0]['contract_version'])
 
 if __name__=='__main__': unittest.main()

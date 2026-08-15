@@ -111,7 +111,7 @@
       "properties": {
         "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
         "status": {"enum": ["planned", "real"]},
-        "kind": {"enum": ["positive-bytes", "negative-error"]},
+        "kind": {"enum": ["positive-bytes", "negative-error", "state-transition"]},
         "coverage": {
           "type": "array",
           "minItems": 1,
@@ -165,7 +165,10 @@
             "E-CANDIDATE",
             "E-CAPACITY",
             "E-TIMEOUT",
-            "E-REPLAY"
+            "E-REPLAY",
+            "E-BUDGET",
+            "E-COUNTER",
+            "E-PATH"
           ]
         },
         "case_ids": {
@@ -174,7 +177,8 @@
           "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
           "uniqueItems": true
         },
-        "artifact": {"$ref": "#/$defs/artifact"}
+        "artifact": {"$ref": "#/$defs/artifact"},
+        "expected_outcome": {"enum": ["accept", "deliver", "suppress", "enqueue", "events"]}
       },
       "allOf": [
         {
@@ -188,6 +192,10 @@
         {
           "if": {"properties": {"status": {"const": "real"}, "kind": {"const": "negative-error"}}, "required": ["status", "kind"]},
           "then": {"required": ["expected_error_category", "artifact", "case_ids"], "not": {"required": ["expected_bytes"]}}
+        },
+        {
+          "if": {"properties": {"status": {"const": "real"}, "kind": {"const": "state-transition"}}, "required": ["status", "kind"]},
+          "then": {"required": ["expected_outcome", "artifact", "case_ids"], "not": {"anyOf": [{"required": ["expected_bytes"]}, {"required": ["expected_error_category"]}]}}
         }
       ]
     },

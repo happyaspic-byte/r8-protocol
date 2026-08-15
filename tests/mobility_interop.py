@@ -28,6 +28,7 @@ if BUILD:
 sys.path.insert(0, str(ROOT / "reference"))
 from r8session import Identity, PeerPin, UdpBinding, eid
 from r8mobility import MobilityManager, MobilityError
+import r8mobility
 import r8move
 
 SEED_A = "01" * 32
@@ -89,8 +90,7 @@ class Interop(unittest.TestCase):
             "--service-context", "7", "--server-context-id", "9", "--address", local,
             "--peer-address", remote, "--new-address", new, "--bind", bind,
             "--candidate-bind", "127.0.0.1:0", "--timeout", "3",
-            "--deterministic-scid", "17", "--deterministic-candidate-hex", "03" * 16,
-            "--deterministic-secret-hex", "04" * 32, "--moving-role", str(moving_role),
+            "--moving-role", str(moving_role),
             "--mode", mode,
         ) + tuple(fds)
         return base + (
@@ -432,7 +432,7 @@ class Interop(unittest.TestCase):
         else:
             sender = MobilityManager(role2, PeerPin(1, eid(role1.public), role1.public), 2, 0, 17, 1, "2001:db8::2", "2001:db8::1", old, b"c" * 32, now)
             receiver = MobilityManager(role1, PeerPin(2, eid(role2.public), role2.public), 1, 0, 17, 1, "2001:db8::1", "2001:db8::2", old, b"d" * 32, now)
-        receiver.peer_epoch = 1
+        r8mobility._MOBILITY_CORES[receiver].peer_epoch = 1
         candidate_id = b"e" * 16
         update = sender.propose_local("2001:db8::3", 2, candidate_id)
         state = lambda: copy.deepcopy((

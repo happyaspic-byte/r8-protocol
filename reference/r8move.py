@@ -12,6 +12,12 @@ def _raw(text, size):
     value = bytes.fromhex(text)
     if len(value) != size: raise ValueError("configuration")
     return value
+def _nonzero_random(size):
+    for _ in range(4):
+        value = _random(size)
+        if any(value):
+            return value
+    raise SessionError("RNG_FAILURE")
 def _write(fd, value):
     while value:
         written = os.write(fd, value)
@@ -77,7 +83,7 @@ def _arguments():
     parser = _Parser(prog="r8move", add_help=True); commands = parser.add_subparsers(dest="command", required=True, parser_class=_Parser)
     for name in ("serve", "connect"):
         arg = commands.add_parser(name)
-        for flag, kind, default in (("--local-seed-hex",str,None),("--peer-public-key-hex",str,None),("--service-context",int,None),("--server-context-id",int,None),("--address",str,None),("--peer-address",str,None),("--new-address",str,None),("--policy",int,1),("--binding-budget",int,BUDGET),("--timeout",float,5),("--candidate-bind",str,"127.0.0.1:0"),("--deterministic-scid",int,None),("--deterministic-candidate-hex",str,None),("--deterministic-secret-hex",str,None),("--stream-rate",int,0),("--stream-start-ns",int,0),("--stream-cutover-ns",int,0),("--stream-end-ns",int,0),("--events-fd",int,None),("--ready-fd",int,None),("--schedule-fd",int,None),("--gate-fd",int,None),("--cutover-gate-fd",int,None),("--scheduled-fd",int,None),("--attempt-fd",int,None),("--sent-fd",int,None),("--cpu-fd",int,None)):
+        for flag, kind, default in (("--local-seed-hex",str,None),("--peer-public-key-hex",str,None),("--service-context",int,None),("--server-context-id",int,None),("--address",str,None),("--peer-address",str,None),("--new-address",str,None),("--policy",int,1),("--binding-budget",int,BUDGET),("--timeout",float,5),("--candidate-bind",str,"127.0.0.1:0"),("--stream-rate",int,0),("--stream-start-ns",int,0),("--stream-cutover-ns",int,0),("--stream-end-ns",int,0),("--events-fd",int,None),("--ready-fd",int,None),("--schedule-fd",int,None),("--gate-fd",int,None),("--cutover-gate-fd",int,None),("--scheduled-fd",int,None),("--attempt-fd",int,None),("--sent-fd",int,None),("--cpu-fd",int,None)):
             arg.add_argument(flag, type=kind, required=default is None and flag in ("--local-seed-hex","--peer-public-key-hex","--service-context","--server-context-id","--address","--peer-address","--new-address"), default=default)
         arg.add_argument("--moving-role", choices=(1,2), type=int, default=1)
         arg.add_argument("--mode", choices=("abrupt","mbb"), default="mbb")
@@ -121,22 +127,39 @@ def _validate(a):
     return Identity.from_seed(seed), PeerPin(2 if a.command == "connect" else 1,eid(public),public), old,peer,new,bind,candidate,target
 def _handshake(a, identity, pin, old, peer, bind, target):
     client = ClientMachine(identity,pin,a.service_context,0,old,peer,time.monotonic,a.binding_budget)
-    sock = _udp_socket(); sock.bind(bind); scid = a.deterministic_scid or int.from_bytes(_random(8),"big")
-    if not 0 < scid <= 0xffffffffffffffff: raise ValueError("configuration")
-    packet = client.start(scid,_random(32),_random(32)); phase = 0; deadline = time.monotonic() + a.timeout
+    sock = _udp_socket(); sock.bind(bind); scid = int.from_bytes(_nonzero_random(8), "big")
+    packet = client.start(scid, _random(32), _random(32)); phase = 0
+    opened_at = time.monotonic(); deadline = opened_at + min(a.timeout, 5)
+    retry_waits = (0.5, 1.0, 2.0); retry_index = 0
+    retry_deadlines = (opened_at + 0.5, opened_at + 1.5, opened_at + 3.5)
+    _send(sock, packet, target); next_retry = min(deadline, retry_deadlines[0])
     while phase < 3 and time.monotonic() < deadline:
-        _send(sock,packet,target)
-        try: incoming, endpoint = _receive(sock,min(deadline,time.monotonic()+.5),a.binding_budget)
-        except SessionError as error:
-            if error.category == "TIMEOUT": continue
-            raise
-        if endpoint != target: continue
         try:
-            if phase == 0: packet = client.receive_verify(incoming); phase = 1
-            elif phase == 1: packet = client.receive_ack(incoming); phase = 2
-            if phase == 2: _send(sock,packet,target); phase = 3
-        except SessionError: continue
-    if phase != 3: raise SessionError("TIMEOUT")
+            incoming, endpoint = _receive(sock, min(deadline, next_retry), a.binding_budget)
+        except SessionError as error:
+            if error.category != "TIMEOUT":
+                raise
+            if time.monotonic() >= deadline:
+                break
+            if retry_index < len(retry_waits):
+                _send(sock, packet, target)
+                retry_index += 1
+                next_retry = (min(deadline, retry_deadlines[retry_index])
+                              if retry_index < len(retry_deadlines) else deadline)
+            continue
+        if endpoint != target:
+            continue
+        try:
+            if phase == 0:
+                packet = client.receive_verify(incoming); phase = 1
+                _send(sock, packet, target)
+            elif phase == 1:
+                packet = client.receive_ack(incoming); phase = 2
+                _send(sock, packet, target); phase = 3
+        except SessionError:
+            continue
+    if phase != 3:
+        raise SessionError("TIMEOUT")
     return client,sock,scid
 def _exchange(client,sock,target,payload,budget,deadline,event_fd=None,attempt_fd=None,sent_fd=None):
     sequence = struct.unpack("!Q", payload[:8])[0] if len(payload) == 64 else None
@@ -151,7 +174,7 @@ def _exchange(client,sock,target,payload,budget,deadline,event_fd=None,attempt_f
             return
     raise SessionError("TIMEOUT")
 def _move(a,client,old_sock,candidate_sock,target,manager,old,peer,new):
-    cid = _raw(a.deterministic_candidate_hex,16) if a.deterministic_candidate_hex else _random(16)
+    cid = _nonzero_random(16)
     update = manager.propose_local(new,1,cid)
     # MBB advertises over old carrier. Abrupt abandons it before advertising from candidate with old outer LOC.
     update_sock = old_sock if a.mode == "mbb" else candidate_sock
@@ -159,14 +182,19 @@ def _move(a,client,old_sock,candidate_sock,target,manager,old,peer,new):
     _send(update_sock,client.send_data_with_locs(update,old,peer),target)
     carrier = _binding(target,_random(16)); probe = manager.make_probe(cid,carrier,_random(16))
     _send(candidate_sock,client.send_data_with_locs(probe,new,peer),target)
-    deadline=time.monotonic()+a.timeout; retry=time.monotonic()+.4
+    deadline=time.monotonic()+3; retry_waits=(0.5,1.0,2.0); retry_index=0
+    retry=time.monotonic()+retry_waits[0]
     while time.monotonic() < deadline:
         try: packet, endpoint = _receive(candidate_sock,min(deadline,retry),a.binding_budget)
         except SessionError as error:
             if error.category != "TIMEOUT": raise
-            _send(update_sock,client.send_data_with_locs(update,old,peer),target)
-            _send(candidate_sock,client.send_data_with_locs(probe,new,peer),target)
-            retry=time.monotonic()+.4
+            if time.monotonic() >= deadline: break
+            if retry_index < len(retry_waits):
+                _send(update_sock,client.send_data_with_locs(update,old,peer),target)
+                _send(candidate_sock,client.send_data_with_locs(probe,new,peer),target)
+                retry_index += 1
+                retry=(time.monotonic()+retry_waits[retry_index]
+                       if retry_index < len(retry_waits) else deadline)
             continue
         if endpoint != target: continue
         try:
@@ -200,7 +228,7 @@ def _commit_server_control(server, manager, packet, observed, allowed_sources, a
         raise
 
 def _serve_role2_mover(a, server, old_sock, candidate_sock, target, scid, manager, old, peer, new):
-    cid = _raw(a.deterministic_candidate_hex,16) if a.deterministic_candidate_hex else _random(16)
+    cid = _nonzero_random(16)
     update = manager.propose_local(new,1,cid)
     carrier = _binding(target,_random(16))
     probe = manager.make_probe(cid,carrier,_random(16))
@@ -209,14 +237,19 @@ def _serve_role2_mover(a, server, old_sock, candidate_sock, target, scid, manage
     if not old_live: old_sock.close()
     _send(update_sock,server.send_data_with_locs(scid,update,old,peer),target)
     _send(candidate_sock,server.send_data_with_locs(scid,probe,new,peer),target)
-    deadline=time.monotonic()+a.timeout; retry=time.monotonic()+.4
+    deadline=time.monotonic()+3; retry_waits=(0.5,1.0,2.0); retry_index=0
+    retry=time.monotonic()+retry_waits[0]
     while time.monotonic() < deadline:
         try: packet, endpoint = _receive(candidate_sock,min(deadline,retry),a.binding_budget)
         except SessionError as error:
             if error.category != "TIMEOUT": raise
-            _send(update_sock,server.send_data_with_locs(scid,update,old,peer),target)
-            _send(candidate_sock,server.send_data_with_locs(scid,probe,new,peer),target)
-            retry=time.monotonic()+.4
+            if time.monotonic() >= deadline: break
+            if retry_index < len(retry_waits):
+                _send(update_sock,server.send_data_with_locs(scid,update,old,peer),target)
+                _send(candidate_sock,server.send_data_with_locs(scid,probe,new,peer),target)
+                retry_index += 1
+                retry=(time.monotonic()+retry_waits[retry_index]
+                       if retry_index < len(retry_waits) else deadline)
             continue
         if endpoint != target: continue
         try:
@@ -291,7 +324,7 @@ def _connect_role2_stream(a, client, sock, target, manager, old, peer, new, star
     if not promoted: raise SessionError("TIMEOUT")
 def _connect(a,identity,pin,old,peer,new,bind,candidate_bind,target):
     client,old_sock,scid=_handshake(a,identity,pin,old,peer,bind,target)
-    manager=MobilityManager(identity,pin,1,0,scid,a.policy,old,peer,_binding(target,_random(16)),_raw(a.deterministic_secret_hex,32) if a.deterministic_secret_hex else _random(32),_ms,client.commit_data)
+    manager=MobilityManager(identity,pin,1,0,scid,a.policy,old,peer,_binding(target,_random(16)),_nonzero_random(32),_ms,client.commit_data)
     payload=bytes.fromhex(a.message_hex)
     if not payload or len(payload)>a.binding_budget-76: raise ValueError("configuration")
     if not a.stream_rate: _ready(a.ready_fd)

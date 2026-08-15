@@ -9,3 +9,10 @@ publish.workspace = true
 [dependencies]
 libc = "0.2"
 r8-proto = { path = "../r8-proto" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+r8-session = { path = "../r8-session" }
+
+[[bin]]
+name = "r8-native"
+path = "src/bin/r8-native.rs"

@@ -1,0 +1,257 @@
+name: Native full
+
+on:
+  workflow_dispatch:
+    inputs:
+      gate3_run:
+        description: Successful Q1 Full run ID at this exact commit
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  native-full:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          clean: true
+      - name: Require successful Gate 3 evidence at exact HEAD
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GATE3_RUN: ${{ inputs.gate3_run }}
+        run: |
+          [[ "$GATE3_RUN" =~ ^[0-9]+$ ]]
+          RUN="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GATE3_RUN")"
+          test "$(jq -r .name <<<"$RUN")" = "Q1 Full"
+          test "$(jq -r .conclusion <<<"$RUN")" = "success"
+          test "$(jq -r .head_sha <<<"$RUN")" = "$GITHUB_SHA"
+      - uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f76f15143fa04a2b3d
+        with:
+          toolchain: stable
+      - name: Build locked native daemon
+        working-directory: rust
+        run: cargo build --release --locked -p r8d --bin r8-native -p r8-redundant --bin r8-redundant-native
+      - name: Root native capability preflight
+        run: |
+          {
+            sudo --non-interactive id -u
+            sudo capsh --print
+            command -v ip
+          } > "$RUNNER_TEMP/native-capability-preflight.txt"
+          grep -qx '0' "$RUNNER_TEMP/native-capability-preflight.txt"
+          grep -Eq 'cap_net_admin.*cap_net_raw|cap_net_raw.*cap_net_admin' "$RUNNER_TEMP/native-capability-preflight.txt"
+          grep -Eq '^/' "$RUNNER_TEMP/native-capability-preflight.txt"
+      - name: Native one-router proof
+        run: sudo python3 tests/native_netns.py --hops 1 --binary rust/target/release/r8-native > "$RUNNER_TEMP/native-one-hop.json"
+      - name: Native two-router proof
+        run: sudo python3 tests/native_netns.py --hops 2 --binary rust/target/release/r8-native > "$RUNNER_TEMP/native-two-hop.json"
+      - name: Redundant native proof
+        run: sudo python3 tests/redundant_netns.py --binary rust/target/release/r8-native --endpoint-binary rust/target/release/r8-redundant-native > "$RUNNER_TEMP/redundant-native.json"
+      - name: Validate redacted diagnostics
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, sys
+
+          root = pathlib.Path.cwd()
+          temp = pathlib.Path(os.environ["RUNNER_TEMP"])
+          common_fields = {"ok", "error_category", "counts", "source_hash", "binary_hash",
+                           "manifest_hash", "filter_hash", "interface_ordinals"}
+          redundant_fields = common_fields | {"endpoint_binary_hash", "privilege_dropped",
+                                               "revocation_verified", "cleanup_verified"}
+          native_paths = (
+              "tests/native_netns.py", "tests/vectors/session-v0.1.json",
+              "spec/0004-wire-format-v0.2.md", "spec/0005-session-security-v0.1.md",
+              "spec/0007-native-binding-v0.1.md", "spec/parameters-v0.1.md",
+              "reference/r8ref.py", "reference/r8session.py",
+              "rust/Cargo.toml", "rust/Cargo.lock",
+              "rust/crates/r8d/Cargo.toml", "rust/crates/r8d/src/bin/r8-native.rs",
+              "rust/crates/r8d/src/lib.rs", "rust/crates/r8d/src/native.rs",
+              "rust/crates/r8d/src/linux.rs", "rust/crates/r8d/src/manifest.rs",
+              "rust/crates/r8d/src/forward.rs",
+              "rust/crates/r8-proto/Cargo.toml", "rust/crates/r8-proto/src/lib.rs",
+              "rust/crates/r8-session/Cargo.toml", "rust/crates/r8-session/src/lib.rs",
+              ".github/workflows/native-full.yml", ".github/workflows/ci.yml",
+          )
+          redundant_paths = (
+              "tests/redundant_netns.py", "tests/vectors/session-v0.1.json",
+              "spec/0004-wire-format-v0.2.md", "spec/0005-session-security-v0.1.md",
+              "spec/0006-mobility-v0.1.md", "spec/0007-native-binding-v0.1.md",
+              "spec/0008-redundant-v0.1.md", "spec/parameters-v0.1.md",
+              "reference/r8ref.py", "reference/r8session.py", "reference/r8mobility.py",
+              "reference/r8redundant.py",
+              "rust/Cargo.toml", "rust/Cargo.lock",
+              "rust/crates/r8d/Cargo.toml", "rust/crates/r8d/src/bin/r8-native.rs",
+              "rust/crates/r8d/src/lib.rs", "rust/crates/r8d/src/native.rs",
+              "rust/crates/r8d/src/linux.rs", "rust/crates/r8d/src/manifest.rs",
+              "rust/crates/r8d/src/forward.rs",
+              "rust/crates/r8-proto/Cargo.toml", "rust/crates/r8-proto/src/lib.rs",
+              "rust/crates/r8-session/Cargo.toml", "rust/crates/r8-session/src/lib.rs",
+              "rust/crates/r8-redundant/Cargo.toml", "rust/crates/r8-redundant/src/lib.rs",
+              "rust/crates/r8-redundant/src/bin/r8-redundant-native.rs",
+              "rust/crates/r8-mobility/Cargo.toml", "rust/crates/r8-mobility/src/lib.rs",
+              ".github/workflows/native-full.yml", ".github/workflows/ci.yml",
+          )
+
+          def sha(data):
+              return hashlib.sha256(data).hexdigest()
+
+          def aggregate(domain, records):
+              encoded = bytearray()
+              domain = domain.encode()
+              encoded += len(domain).to_bytes(8, "big") + domain
+              for path, ordinal, value in sorted(records):
+                  path = path.encode()
+                  encoded += len(path).to_bytes(8, "big") + path
+                  encoded += ordinal.to_bytes(8, "big") + len(value).to_bytes(8, "big") + value
+              return sha(bytes(encoded))
+
+          def source_hash(domain, paths):
+              return aggregate(domain, [(path, n, (root / path).read_bytes()) for n, path in enumerate(paths)])
+
+          def mac(number):
+              return [2, 0x52, 0x38, 0, number >> 8, number & 255]
+
+          def native_manifests(hops):
+              packet = bytes.fromhex(json.loads((root / "tests/vectors/session-v0.1.json").read_text())["positive_cases"][4]["protected"]["packet_hex"])
+              session_destination = list(packet[32:48])
+              docs = []
+              for n in range(1, hops + 1):
+                  left, right = n * 2, n * 2 + 1
+                  destinations = [(0x20010db800000000 << 64).to_bytes(16, "big"),
+                                  ((0x20010db800000000 << 64) | hops + 1).to_bytes(16, "big")]
+                  doc = {
+                      "local_locs": [],
+                      "interfaces": [
+                          {"descriptor_id": left, "interface_name": f"e{n - 1}", "allowed_source_macs": [mac(n - 1)], "local_delivery": False, "transit": True},
+                          {"descriptor_id": right, "interface_name": f"e{n}", "allowed_source_macs": [mac(n + 1)], "local_delivery": False, "transit": True},
+                      ],
+                      "routes": [
+                          {"destination_prefix": {"network": list(destinations[0]), "prefix_length": 128}, "egress_descriptor_id": left, "next_hop_mac": mac(n - 1)},
+                          {"destination_prefix": {"network": list(destinations[1]), "prefix_length": 128}, "egress_descriptor_id": right, "next_hop_mac": mac(n + 1)},
+                          {"destination_prefix": {"network": session_destination, "prefix_length": 128}, "egress_descriptor_id": right, "next_hop_mac": mac(n + 1)},
+                      ],
+                  }
+                  docs.append(json.dumps(doc, sort_keys=True, separators=(",", ":")).encode())
+              return docs
+
+          def redundant_manifests():
+              locations = [list(bytes.fromhex("00112233445566778899aabbccddeeff")),
+                           list(bytes.fromhex("ffeeddccbbaa99887766554433221100"))]
+              docs = []
+              for descriptors, links, peers in (((2, 3), (0, 1), (0, 3)), ((4, 5), (2, 3), (0, 3))):
+                  interfaces = [
+                      {"descriptor_id": descriptor, "interface_name": f"p{link}", "allowed_source_macs": [mac(link * 4 + peer)], "local_delivery": False, "transit": True}
+                      for descriptor, link, peer in zip(descriptors, links, peers)
+                  ]
+                  routes = [
+                      {"destination_prefix": {"network": location, "prefix_length": 128}, "egress_descriptor_id": descriptor, "next_hop_mac": mac(link * 4 + peer)}
+                      for location, descriptor, link, peer in zip(locations, descriptors, links, peers)
+                  ]
+                  docs.append(json.dumps({"local_locs": [], "interfaces": interfaces, "routes": routes}, sort_keys=True, separators=(",", ":")).encode())
+              return docs
+
+          preflight = (temp / "native-capability-preflight.txt").read_text()
+          if (not preflight.startswith("0\n")
+                  or not ("cap_net_admin" in preflight and "cap_net_raw" in preflight)
+                  or not any(line.startswith("/") for line in preflight.splitlines())):
+              sys.exit("missing root capability preflight evidence")
+
+          specs = {
+              "native-one-hop.json": {
+                  "source": source_hash("r8-native-source-v1", native_paths),
+                  "manifest": aggregate("r8-native-manifest-v1", [("manifest", n, doc) for n, doc in enumerate(native_manifests(1))]),
+                  "binary": root / "rust/target/release/r8-native",
+                  "counts": {"frames_sent": 3, "frames_received": 3, "negative_timeouts": 4, "local_budget_rejects": 1, "daemon_exits": 1, "cleanup_failures": 0},
+                  "ordinals": [2, 3],
+              },
+              "native-two-hop.json": {
+                  "source": source_hash("r8-native-source-v1", native_paths),
+                  "manifest": aggregate("r8-native-manifest-v1", [("manifest", n, doc) for n, doc in enumerate(native_manifests(2))]),
+                  "binary": root / "rust/target/release/r8-native",
+                  "counts": {"frames_sent": 3, "frames_received": 3, "negative_timeouts": 4, "local_budget_rejects": 1, "daemon_exits": 2, "cleanup_failures": 0},
+                  "ordinals": [2, 3, 4, 5],
+              },
+              "redundant-native.json": {
+                  "source": source_hash("r8-redundant-source-v1", redundant_paths),
+                  "manifest": aggregate("r8-redundant-manifest-v1", [("manifest", n, doc) for n, doc in enumerate(redundant_manifests())]),
+                  "binary": root / "rust/target/release/r8-native",
+                  "endpoint": root / "rust/target/release/r8-redundant-native",
+                  "counts": {"frames_sent": 27, "frames_received": 27, "application_deliveries": 6, "suppressions": 5, "rust_endpoint_authentications": 1, "cached_retries": 1, "degraded_events": 2, "path_removals": 2, "negative_drops": 4, "budget_rejects": 1, "daemon_exits": 2, "cleanup_failures": 0},
+                  "ordinals": [2, 3, 4, 5],
+              },
+          }
+          filter_hash = aggregate("r8-native-filter-v1", [("rust/crates/r8d/src/linux.rs", 0, (root / "rust/crates/r8d/src/linux.rs").read_bytes())])
+          for name, spec in specs.items():
+              path = temp / name
+              if not path.is_file():
+                  sys.exit(f"missing diagnostic: {name}")
+              text = path.read_text()
+              try:
+                  def reject_duplicates(pairs):
+                      value = {}
+                      for key, item in pairs:
+                          if key in value:
+                              raise ValueError("duplicate JSON member")
+                          value[key] = item
+                      return value
+                  value = json.loads(text, object_pairs_hook=reject_duplicates)
+              except (json.JSONDecodeError, ValueError):
+                  sys.exit(f"invalid diagnostic: {name}")
+              expected_fields = redundant_fields if "endpoint" in spec else common_fields
+              if (not isinstance(value, dict) or set(value) != expected_fields
+                      or text != json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n"):
+                  sys.exit(f"unsafe diagnostic: {name}")
+              if value.get("ok") is not True or value.get("error_category") is not None:
+                  sys.exit(f"failed proof: {name}")
+              counts = value.get("counts")
+              ordinals = value.get("interface_ordinals")
+              if (not isinstance(counts, dict)
+                      or any(type(item) is not int or item < 0 for item in counts.values())
+                      or not isinstance(ordinals, list)
+                      or any(type(item) is not int for item in ordinals)
+                      or counts != spec["counts"]
+                      or ordinals != spec["ordinals"]):
+                  sys.exit(f"unexpected proof counters: {name}")
+              if value.get("source_hash") != spec["source"] or value.get("filter_hash") != filter_hash or value.get("manifest_hash") != spec["manifest"]:
+                  sys.exit(f"unexpected canonical hash: {name}")
+              binary = spec["binary"]
+              if not binary.is_file() or value.get("binary_hash") != sha(binary.read_bytes()):
+                  sys.exit(f"unexpected daemon binary hash: {name}")
+              if "endpoint" in spec:
+                  endpoint = spec["endpoint"]
+                  if (not endpoint.is_file()
+                          or value.get("endpoint_binary_hash") != sha(endpoint.read_bytes())
+                          or value.get("privilege_dropped") is not True
+                          or value.get("revocation_verified") is not True
+                          or value.get("cleanup_verified") is not True):
+                      sys.exit("unexpected redundant proof evidence")
+          PY
+      - name: Restore diagnostic ownership
+        if: always()
+        run: |
+          for file in "$RUNNER_TEMP"/native-one-hop.json "$RUNNER_TEMP"/native-two-hop.json "$RUNNER_TEMP"/redundant-native.json; do
+            [ ! -e "$file" ] || { chown "$(id -u):$(id -g)" "$file"; chmod u+rw "$file"; }
+          done
+      - name: Upload native diagnostics
+        id: upload
+        if: ${{ success() }}
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
+        with:
+          name: native-full-diagnostics
+          path: |
+            ${{ runner.temp }}/native-one-hop.json
+            ${{ runner.temp }}/native-two-hop.json
+            ${{ runner.temp }}/redundant-native.json
+          if-no-files-found: error
+      - name: Bind native artifact digest
+        env:
+          ARTIFACT_DIGEST: ${{ steps.upload.outputs.artifact-digest }}
+        run: |
+          [[ "$ARTIFACT_DIGEST" =~ ^[0-9a-f]{64}$ ]]
+          printf '### Native Gate 4/5 evidence\n\n`artifact-digest: %s`\n' "$ARTIFACT_DIGEST" >> "$GITHUB_STEP_SUMMARY"

@@ -1,5 +1,6 @@
 import hashlib
 import importlib.util
+import io
 import inspect
 import json
 import subprocess
@@ -104,12 +105,16 @@ class Q3Tests(unittest.TestCase):
         self.assertEqual(q3.source_identity(), expected)
         self.assertEqual(q3.source_identity(), q3.source_identity())
         self.assertEqual(set(sources), {
+            ".github/workflows/q3-full.yml",
             "bench/fixtures/q3-cert.pem",
             "bench/fixtures/q3-key.pem",
             "bench/protocols/q3.json",
             "bench/q3.py",
             "reference/r8session.py",
             "requirements-dev.txt",
+            "spec/0004-wire-format-v0.2.md",
+            "spec/0005-session-security-v0.1.md",
+            "spec/parameters-v0.1.md",
         })
 
     def test_full_run_rejects_wrong_source_identity(self):
@@ -244,7 +249,12 @@ class Q3Tests(unittest.TestCase):
 
         def ready(name):
             events.append(name + "-ready")
-            return lambda: (events.append(name + "-client") or ({key: 0 for key in q3.net()}, 0, 0))
+            def client():
+                events.append(name + "-client")
+                return {key: 0 for key in q3.net()}, 0, 0
+            client.close = lambda: events.append(name + "-close")
+            client.join = lambda: events.append(name + "-join")
+            return client
 
         def measurement_start():
             events.append("measurement-start")
@@ -258,7 +268,7 @@ class Q3Tests(unittest.TestCase):
                 events.clear()
                 result = q3.trial(mechanism)
                 self.assertEqual(result["status"], "success")
-                self.assertEqual(events, [name + "-ready", "measurement-start", name + "-client"])
+                self.assertEqual(events, [name + "-ready", "measurement-start", name + "-client", name + "-close", name + "-join"])
         finally:
             q3._r8_server_ready, q3._tls_server_ready = original_r8_ready, original_tls_ready
             q3._measurement_start = original_measurement_start
@@ -284,24 +294,166 @@ class Q3Tests(unittest.TestCase):
             self.assertEqual({row[2] for row in entries}, set(q3.MECHANISMS))
             self.assertEqual(sum(row[2] == q3.MECHANISMS[0] for row in entries), 10)
 
-    def test_bootstrap_failure_timeout_and_p99_rules(self):
+    def test_censor_aware_summary_and_nonestimable_cells(self):
         rows = []
         for block in range(10):
             for mechanism in q3.MECHANISMS:
                 for _ in range(10):
                     rows.append({"series": "warm-process", "mechanism": mechanism, "excluded": False, "block": block, "status": "success", "latency_ns": 10 + block, "cpu_ns": 1, "network": {k: 1 for k in q3.net()}})
-                    rows.append({"series": "cold-process-primary", "mechanism": mechanism, "excluded": False, "block": block, "status": "success", "latency_ns": 5_000_000_000, "cpu_ns": 1, "network": {k: 1 for k in q3.net()}})
-        rows.append({"series": "warm-process", "mechanism": q3.MECHANISMS[0], "excluded": False, "block": 0, "status": "timeout", "latency_ns": 5_000_000_000, "cpu_ns": 1, "network": {k: 1 for k in q3.net()}})
+                    rows.append({"series": "cold-process-primary", "mechanism": mechanism, "excluded": False, "block": block, "status": "timeout", "latency_ns": 5_000_000_000, "cpu_ns": 1, "network": {k: 1 for k in q3.net()}})
+        rows.append({"series": "warm-process", "mechanism": q3.MECHANISMS[0], "excluded": False, "block": 0, "status": "timeout", "latency_ns": 5_000_000_000, "cpu_ns": 7, "network": {k: 3 for k in q3.net()}})
         result = q3.summary(rows)
         warm = result["series"]["warm-process"][q3.MECHANISMS[0]]
         cold = result["series"]["cold-process-primary"][q3.MECHANISMS[0]]
+        self.assertEqual(warm["latency_ns"]["estimator"], "kaplan-meier-right-censored")
         self.assertTrue(warm["latency_ns"]["confidence_intervals_95"]["p50"])
-        self.assertTrue(warm["p99_supported"])
         self.assertGreater(warm["failure_rate"], 0)
-        self.assertEqual(cold["latency_ns"]["p99"], "unsupported")
-        self.assertFalse(cold["p99_supported"])
-        insufficient = rows[:10]
-        self.assertEqual(q3.summary(insufficient)["series"]["warm-process"][q3.MECHANISMS[0]]["latency_ns"]["p99"], "unsupported")
+        self.assertIsNone(cold["latency_ns"]["p50"])
+        self.assertIsNone(cold["latency_ns"]["confidence_intervals_95"]["p50"])
+        self.assertEqual(set(warm["latency_ns"]), {"estimator", "p50", "p90", "confidence_intervals_95"})
+        self.assertGreater(warm["mean_cpu_ns"], 1)
+        self.assertGreater(warm["mean_network"]["rx_bytes"], 1)
+
+    def test_post_start_failure_retains_observed_deltas(self):
+        start = ({key: 10 for key in q3.net()}, 20, 30)
+        end = ({key: 14 for key in q3.net()}, 25, 40)
+        original_ready, original_start, original_end = q3._tls_server_ready, q3._measurement_start, q3._measurement_end
+        def broken():
+            raise RuntimeError("broken")
+        broken.close = lambda: None
+        broken.join = lambda: None
+        q3._tls_server_ready = lambda: broken
+        q3._measurement_start = lambda: start
+        q3._measurement_end = lambda: end
+        try:
+            result = q3.trial(q3.MECHANISMS[1])
+        finally:
+            q3._tls_server_ready, q3._measurement_start, q3._measurement_end = original_ready, original_start, original_end
+        self.assertEqual((result["status"], result["error_category"]), ("failure", "RuntimeError"))
+        self.assertEqual((result["latency_ns"], result["cpu_ns"]), (10, 5))
+        self.assertEqual(result["network"], {key: 4 for key in q3.net()})
+
+    def test_setup_failure_is_separately_typed(self):
+        original_ready = q3._tls_server_ready
+        q3._tls_server_ready = lambda: (_ for _ in ()).throw(RuntimeError("setup"))
+        try:
+            result = q3.trial(q3.MECHANISMS[1])
+        finally:
+            q3._tls_server_ready = original_ready
+        self.assertEqual(result["error_category"], "setup:RuntimeError")
+        self.assertEqual((result["latency_ns"], result["cpu_ns"]), (0, 0))
+    def test_cold_normal_exit_returns_authoritative_child_snapshot(self):
+        parent, child = q3.socket.socketpair()
+        marker = {"network": {key: 10 for key in q3.LO_COUNTERS}, "cpu_ns": 20, "started_ns": q3.time.monotonic_ns()}
+        child.sendall(json.dumps(marker).encode())
+        snapshot = {"status": "success", "error_category": None, "latency_ns": 41, "cpu_ns": 42, "network": {key: 43 for key in q3.LO_COUNTERS}}
+        process = type("Process", (), {"pid": 123, "stdout": io.StringIO(json.dumps(snapshot))})()
+        usage = type("Usage", (), {"ru_utime": 99, "ru_stime": 99})()
+        with (
+            mock.patch.object(q3.socket, "socketpair", return_value=(parent, child)),
+            mock.patch.object(q3.subprocess, "Popen", return_value=process),
+            mock.patch.object(q3.os, "wait4", return_value=(123, 0, usage)),
+            mock.patch.object(q3, "_measurement_end", return_value=({key: 100 for key in q3.LO_COUNTERS}, 100, 100)) as measurement_end,
+        ):
+            self.assertEqual(q3.invoke_worker(q3.MECHANISMS[0]), snapshot)
+            measurement_end.assert_not_called()
+
+    def test_readiness_factory_failures_join_started_threads_boundedly(self):
+        threads = []
+
+        class Thread:
+            def __init__(self, target):
+                self.target, self.join_timeouts = target, []
+
+            def start(self):
+                pass
+
+            def join(self, timeout):
+                self.join_timeouts.append(timeout)
+
+        def make_thread(*args, **kwargs):
+            thread = Thread(*args, **kwargs)
+            threads.append(thread)
+            return thread
+
+        with mock.patch.object(q3.threading, "Thread", side_effect=make_thread), mock.patch.object(q3, "TIMEOUT", 0):
+            for factory in (q3._r8_server_ready, q3._tls_server_ready):
+                with self.assertRaises(TimeoutError):
+                    factory()
+        self.assertEqual([thread.join_timeouts for thread in threads], [[0], [0]])
+
+    def test_post_ready_construction_failures_terminate_server_threads(self):
+        actual_thread, threads = q3.threading.Thread, []
+
+        def make_thread(*args, **kwargs):
+            thread = actual_thread(*args, **kwargs)
+            threads.append(thread)
+            return thread
+
+        with mock.patch.object(q3.threading, "Thread", side_effect=make_thread):
+            with mock.patch.object(q3.r8, "ClientMachine", side_effect=RuntimeError("R8 client setup")):
+                with self.assertRaisesRegex(RuntimeError, "R8 client setup"):
+                    q3._r8_server_ready()
+            self.assertFalse(threads[-1].is_alive())
+            with mock.patch.object(q3.ssl, "create_default_context", side_effect=RuntimeError("TLS client setup")):
+                with self.assertRaisesRegex(RuntimeError, "TLS client setup"):
+                    q3._tls_server_ready()
+            self.assertFalse(threads[-1].is_alive())
+
+    def test_validator_requires_exact_runtime_outcome(self):
+        source_identity = "sha256:" + "0" * 64
+        rows = []
+        for series in ("cold-process-primary", "warm-process"):
+            for block, position, mechanism, ordinal, excluded in q3.planned_trials(q3.WARMUPS + q3.MEASURED, False):
+                failed = series == "cold-process-primary" and mechanism == q3.MECHANISMS[0] and ordinal == q3.WARMUPS
+                rows.append({"schema": "q3-raw-v1", "source_identity": source_identity, "series": series, "mechanism": mechanism, "host_epoch": "closed-lab-epoch-001", "block": block, "order": position, "trial": ordinal, "excluded": excluded, "smoke_non_result": False, "status": "failure" if failed else "success", "error_category": "RuntimeError" if failed else None, "latency_ns": 1, "cpu_ns": 0, "network": {key: 0 for key in q3.net()}})
+        groups = [{"series": series, "mechanism": mechanism, "warmups": 50, "measured": 1000, "rows": 1050, "failures": sum(row["series"] == series and row["mechanism"] == mechanism and row["status"] != "success" for row in rows)} for series in ("cold-process-primary", "warm-process") for mechanism in q3.MECHANISMS]
+        manifest = {"status": "completed-evidence", "source_identity": source_identity, "host_epoch": "closed-lab-epoch-001", "git_commit": "0" * 40, "isolated_netns_proof": True, "group_counts": groups, "row_count": 4200, "failures": 1, "post_hoc_exclusions": 0, "publication_eligible": True, "runtime_outcome": "success"}
+        saved = {"source_identity": source_identity, "isolated_netns_proof": True, "loopback_interface": "lo", "loopback_mtu": 65536}
+        with self.assertRaisesRegex(ValueError, "completed evidence status"):
+            q3._validate_rows(manifest, saved, rows)
+    def test_full_validator_retains_mixed_outcomes(self):
+        source_identity = "sha256:" + "0" * 64
+        rows = []
+        for series in ("cold-process-primary", "warm-process"):
+            for block, position, mechanism, ordinal, excluded in q3.planned_trials(q3.WARMUPS + q3.MEASURED, False):
+                setup_failure = series == "cold-process-primary" and mechanism == q3.MECHANISMS[0] and ordinal == q3.WARMUPS
+                rows.append({"schema": "q3-raw-v1", "source_identity": source_identity, "series": series, "mechanism": mechanism, "host_epoch": "closed-lab-epoch-001", "block": block, "order": position, "trial": ordinal, "excluded": excluded, "smoke_non_result": False, "status": "failure" if setup_failure else "success", "error_category": "setup:RuntimeError" if setup_failure else None, "latency_ns": 0 if setup_failure else 1, "cpu_ns": 0, "network": {key: 0 for key in q3.net()}})
+        groups = []
+        for series in ("cold-process-primary", "warm-process"):
+            for mechanism in q3.MECHANISMS:
+                group = [row for row in rows if row["series"] == series and row["mechanism"] == mechanism]
+                groups.append({"series": series, "mechanism": mechanism, "warmups": 50, "measured": 1000, "rows": 1050, "failures": sum(row["status"] != "success" for row in group)})
+        manifest = {"status": "completed-evidence", "source_identity": source_identity, "host_epoch": "closed-lab-epoch-001", "git_commit": "0" * 40, "isolated_netns_proof": True, "group_counts": groups, "row_count": 4200, "failures": 1, "post_hoc_exclusions": 0, "publication_eligible": True, "runtime_outcome": "failures-retained"}
+        saved = {"source_identity": source_identity, "isolated_netns_proof": True, "loopback_interface": "lo", "loopback_mtu": 65536}
+        q3._validate_rows(manifest, saved, rows)
+    def test_workflow_accepts_zero_delta_setup_failures_and_exact_outcomes(self):
+        workflow = (ROOT / ".github/workflows/q3-full.yml").read_text()
+        self.assertNotIn('row["status"] == "success" or row["latency_ns"] > 0', workflow)
+        self.assertIn('manifest["runtime_outcome"] == ("success" if manifest["failures"] == 0 else "failures-retained")', workflow)
+
+    def test_setup_categories_are_prefixed_once(self):
+        result = q3._measurement_result("failure", "worker_marker_invalid", None, None, None)
+        self.assertEqual(result["error_category"], "setup:worker_marker_invalid")
+    def test_historical_source_bound_package_is_not_resummarized(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            source_identity = "source-A"
+            historical_sources = {key: "0" * 64 for key in q3.SOURCE_INPUTS}
+            implementation_identity = q3.implementation_source_identity(historical_sources)
+            rows = []
+            for series in ("cold-process-primary", "warm-process"):
+                for block, position, mechanism, ordinal, excluded in q3.planned_trials(2, True):
+                    rows.append({"schema": "q3-raw-v1", "source_identity": source_identity, "series": series, "mechanism": mechanism, "host_epoch": "epoch-A", "block": block, "order": position, "trial": ordinal, "excluded": excluded, "smoke_non_result": True, "status": "success", "error_category": None, "latency_ns": 1, "cpu_ns": 1, "network": {key: 0 for key in q3.net()}})
+            environment = {"source_identity": source_identity, "isolated_netns_proof": True, "loopback_interface": "lo", "loopback_mtu": 65536, "implementation_sources": historical_sources, "implementation_source_identity": implementation_identity}
+            (directory / "raw.jsonl").write_text("".join(json.dumps(row, sort_keys=True) + "\n" for row in rows))
+            (directory / "environment.json").write_text(json.dumps(environment, sort_keys=True) + "\n")
+            (directory / "summary.json").write_text('{"historical":"v8"}\n')
+            manifest = {"schema": "q3-run-manifest-v1", "status": q3.SMOKE_STATUS, "runtime_outcome": q3.SMOKE_STATUS, "source_identity": source_identity, "implementation_sources": historical_sources, "implementation_source_identity": implementation_identity, "host_epoch": "epoch-A", "git_commit": None, "isolated_netns_proof": True, "group_counts": [{"series": series, "mechanism": mechanism, "warmups": 0, "measured": 2, "rows": 2, "failures": 0} for series in ("cold-process-primary", "warm-process") for mechanism in q3.MECHANISMS], "row_count": 8, "failures": 0, "post_hoc_exclusions": 0, "sha256": {name: q3.digest(directory / name) for name in ("raw.jsonl", "environment.json", "summary.json")}}
+            (directory / "run-manifest.json").write_text(json.dumps(manifest, sort_keys=True) + "\n")
+            before = (directory / "summary.json").read_bytes()
+            q3.regenerate(type("Args", (), {"output": str(directory)})())
+            self.assertEqual((directory / "summary.json").read_bytes(), before)
 
     def test_preregistration_has_no_results_and_fixed_counts(self):
         prereg = json.loads(q3.PROTOCOL.read_text())
@@ -309,6 +461,8 @@ class Q3Tests(unittest.TestCase):
         self.assertEqual(q3.WARMUPS, 50)
         self.assertEqual(prereg["measured_trials"]["count"], q3.MEASURED)
         self.assertEqual(q3.MEASURED, 1000)
+        self.assertEqual(prereg["analysis"]["quantiles"], ["p50", "p90"])
+        self.assertEqual(prereg["analysis"]["estimators"][1], "Kaplan-Meier-right-censored-latency-quantiles")
         self.assertTrue(set(prereg).isdisjoint({"observed_values", "digests", "summary", "confidence_intervals"}))
 
     def test_regenerate_requires_manifest(self):
@@ -349,12 +503,16 @@ class Q3Tests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             q3._disable_server_tickets(Ineffective())
 
-    def test_tls_snapshot_precedes_server_release_and_teardown(self):
-        source = inspect.getsource(q3._tls_server_ready)
-        client = source.split("def client():", 1)[1]
-        self.assertLess(client.index("captured = _measurement_end()"), client.index("release.set()"))
-        self.assertLess(client.index("release.set()"), client.index("thread.join"))
-        self.assertIn("if not release.wait(TIMEOUT):", source)
+    def test_warm_cleanup_is_outside_the_snapshot_and_unconditional(self):
+        source = inspect.getsource(q3._attempt)
+        cleanup = source.index("client.close()")
+        self.assertLess(source.index("snapshot = client()"), cleanup)
+        self.assertLess(source.index("except TimeoutError"), cleanup)
+        self.assertLess(source.index("except Exception"), cleanup)
+        self.assertEqual(source.count("_measurement_end()"), 2)
+        self.assertLess(source.rindex("_measurement_end()"), cleanup)
+        self.assertLess(source.index("finally:"), cleanup)
+        self.assertLess(cleanup, source.index("client.join()"))
     def test_run_creates_missing_nested_output_parent(self):
         with tempfile.TemporaryDirectory() as temporary:
             destination = Path(temporary) / "missing" / "nested" / "result"
@@ -497,3 +655,24 @@ class Q3Tests(unittest.TestCase):
         q3.require_loopback_delta({"rx_bytes": 1, "tx_bytes": 1, "rx_packets": 2, "tx_packets": 2})
         with self.assertRaises(ValueError):
             q3.require_loopback_delta({"rx_bytes": 1, "tx_bytes": 2, "rx_packets": 1, "tx_packets": 1})
+    def test_cold_worker_marker_owns_post_start_exposure_and_child_cpu(self):
+        source = inspect.getsource(q3.invoke_worker)
+        self.assertIn("select.select([parent], [], [], TIMEOUT)", source)
+        self.assertIn("started + int(TIMEOUT * 1_000_000_000)", source)
+        self.assertIn("usage.ru_utime + usage.ru_stime", source)
+        self.assertNotIn("_supervisor_cpu - child_cpu", source)
+
+    def test_current_q3_and_v8_history_are_explicitly_separated(self):
+        registry = json.loads((ROOT / "bench/protocols/manifest.json").read_text())
+        entry = next(item for item in registry["preregistrations"] if item["protocol_id"] == "Q3")
+        historical = entry["prior_source_evidence"][0]
+        self.assertEqual(entry["status"], "frozen-preregistered-no-current-source-results")
+        self.assertEqual(historical["contract_sha256"], "86de498d4690d9de98333d8a99b74c985e8561e57f060b7c6bb68a833ba58cbf")
+        self.assertEqual(historical["contract_size_bytes"], 3014)
+        self.assertIn("does not evidence the current censor-aware Q3 contract", historical["interpretation"])
+
+    def test_strict_source_key_sets_and_full_public_binding_are_required(self):
+        source = inspect.getsource(q3.regenerate)
+        self.assertIn("recorded_keys not in (set(SOURCE_INPUTS), set(HISTORICAL_V8_SOURCE_INPUTS))", source)
+        self.assertIn("full package public source identity binding verification failed", source)
+        self.assertIn("recorded component hash verification failed", source)

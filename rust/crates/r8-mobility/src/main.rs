@@ -1,6 +1,5 @@
 //! Native closed-lab R8 protected-mobility UDP endpoint.
 use std::{
-    cell::RefCell,
     collections::HashMap,
     env,
     net::{IpAddr, SocketAddr, UdpSocket},
@@ -8,18 +7,17 @@ use std::{
     time::{Duration, Instant},
 };
 
+use aws_lc_rs::hmac;
 use ed25519_dalek::SigningKey;
 use getrandom::getrandom;
-use hmac::{Hmac, Mac};
-use r8_mobility::{
-    CandidateManager, CandidateManagerConfig, Control, MobilityError, ObservedBinding, Policy,
-};
+use r8_mobility::{CandidateManager, CandidateManagerConfig, Control, MobilityError, Policy};
 use r8_proto::{parse_loc, Header};
 use r8_session::{
-    ClientMachine, ClientMaterial, HandshakeConfig, Identity, PrevalidationLimiter,
-    ServerHandshakeMaterial, ServerMachine, ServerMaterial, SessionError, UdpBinding,
+    ClientMachine, ClientMaterial, HandshakeConfig, Identity, ObservedBinding,
+    PrevalidationLimiter, ServerHandshakeMaterial, ServerMachine, ServerMaterial, SessionError,
+    UdpBinding,
 };
-use sha2::Sha256;
+use zeroize::Zeroizing;
 
 const BUDGET: usize = 1252;
 const RECV_EXTRA: usize = 1;
@@ -91,9 +89,6 @@ struct Options {
     policy: u32,
     budget: usize,
     timeout: Duration,
-    scid: Option<u64>,
-    candidate: Option<[u8; 16]>,
-    secret: Option<[u8; 32]>,
     message: Vec<u8>,
     mode: MoveMode,
     moving_role: MovingRole,
@@ -190,9 +185,6 @@ fn validate_args(args: &[String], command: Command) -> Result<(), CliError> {
         "--policy",
         "--binding-budget",
         "--timeout",
-        "--deterministic-scid",
-        "--deterministic-candidate-hex",
-        "--deterministic-secret-hex",
         "--message-hex",
         "--mode",
         "--moving-role",
@@ -398,13 +390,6 @@ fn options() -> Result<Options, CliError> {
     {
         return err();
     }
-    let scid = optional(&args, "--deterministic-scid")
-        .map(|v| v.parse())
-        .transpose()
-        .map_err(|_| CliError::Config)?;
-    if scid == Some(0) {
-        return err();
-    }
     if command == Command::Serve && moving_role == MovingRole::Role2 && max_sessions != 1 {
         return err();
     }
@@ -428,13 +413,6 @@ fn options() -> Result<Options, CliError> {
         policy,
         budget,
         timeout: Duration::from_secs_f64(timeout),
-        scid,
-        candidate: optional(&args, "--deterministic-candidate-hex")
-            .map(|v| fixed(&v))
-            .transpose()?,
-        secret: optional(&args, "--deterministic-secret-hex")
-            .map(|v| fixed(&v))
-            .transpose()?,
         message,
         mode,
         moving_role,
@@ -475,13 +453,17 @@ fn random<const N: usize>() -> Result<[u8; N], CliError> {
     getrandom(&mut out).map_err(|_| SessionError::RngFailure)?;
     Ok(out)
 }
-fn scid() -> Result<u64, CliError> {
-    loop {
-        let value = u64::from_be_bytes(random()?);
-        if value != 0 {
+fn nonzero_random<const N: usize>() -> Result<[u8; N], CliError> {
+    for _ in 0..4 {
+        let value = random()?;
+        if value.iter().any(|byte| *byte != 0) {
             return Ok(value);
         }
     }
+    Err(CliError::Session(SessionError::RngFailure))
+}
+fn scid() -> Result<u64, CliError> {
+    Ok(u64::from_be_bytes(nonzero_random()?))
 }
 fn binding(endpoint: SocketAddr, selector: [u8; 16]) -> Result<UdpBinding, CliError> {
     match endpoint.ip() {
@@ -494,7 +476,8 @@ fn binding(endpoint: SocketAddr, selector: [u8; 16]) -> Result<UdpBinding, CliEr
     }
 }
 fn opaque_source(endpoint: SocketAddr, key: &[u8; 32]) -> [u8; 32] {
-    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(key).expect("fixed key");
+    let key = hmac::Key::new(hmac::HMAC_SHA256, key);
+    let mut mac = hmac::Context::with_key(&key);
     match endpoint.ip() {
         IpAddr::V4(ip) => {
             mac.update(&[4]);
@@ -506,7 +489,7 @@ fn opaque_source(endpoint: SocketAddr, key: &[u8; 32]) -> [u8; 32] {
         }
     }
     mac.update(&endpoint.port().to_be_bytes());
-    mac.finalize().into_bytes().into()
+    mac.sign().as_ref().try_into().expect("SHA-256 HMAC length")
 }
 fn send(socket: &UdpSocket, packet: &[u8], peer: SocketAddr) -> Result<(), CliError> {
     if packet.len() > BUDGET {
@@ -769,7 +752,7 @@ fn handshake(
     let mut client = ClientMachine::new(config(local, peer, options), signing)?;
     let socket = UdpSocket::bind(options.bind).map_err(|_| CliError::Io)?;
     configure_df(&socket)?;
-    let id = options.scid.unwrap_or(scid()?);
+    let id = scid()?;
     let mut packet = client.start(
         id,
         ClientMaterial {
@@ -778,15 +761,39 @@ fn handshake(
         },
         now_ms(start),
     )?;
-    let deadline = Instant::now() + options.timeout;
+    let opened_at = Instant::now();
+    let deadline = opened_at + options.timeout.min(Duration::from_secs(5));
+    let retry_deadlines = [
+        opened_at + Duration::from_millis(500),
+        opened_at + Duration::from_millis(1_500),
+        opened_at + Duration::from_millis(3_500),
+    ];
+    let mut retry_index = 0usize;
     let mut phase = 0;
+    send(&socket, &packet, target)?;
+    let mut next_retry = retry_deadlines[0].min(deadline);
     while Instant::now() < deadline && phase < 3 {
-        send(&socket, &packet, target)?;
+        if Instant::now() >= next_retry {
+            if retry_index < retry_deadlines.len() {
+                send(&socket, &packet, target)?;
+                retry_index += 1;
+                next_retry = if retry_index < retry_deadlines.len() {
+                    retry_deadlines[retry_index].min(deadline)
+                } else {
+                    deadline
+                };
+            }
+            continue;
+        }
+        let receive_deadline = next_retry.min(deadline);
         match receive(
             &socket,
-            match receive_timeout(deadline, Duration::from_millis(500)) {
+            match receive_timeout(
+                receive_deadline,
+                receive_deadline.saturating_duration_since(Instant::now()),
+            ) {
                 Some(timeout) => timeout,
-                None => break,
+                None => continue,
             },
             options.budget,
         ) {
@@ -795,6 +802,7 @@ fn handshake(
                     if let Ok(next) = client.receive_verify(&incoming, now_ms(start)) {
                         packet = next;
                         phase = 1;
+                        send(&socket, &packet, target)?;
                     }
                 }
                 1 => {
@@ -805,9 +813,19 @@ fn handshake(
                 }
                 _ => {}
             },
-            Err(CliError::Session(SessionError::Timeout)) => continue,
+            Err(CliError::Session(SessionError::Timeout)) => {
+                if Instant::now() < deadline && retry_index < retry_deadlines.len() {
+                    send(&socket, &packet, target)?;
+                    retry_index += 1;
+                    next_retry = if retry_index < retry_deadlines.len() {
+                        retry_deadlines[retry_index].min(deadline)
+                    } else {
+                        deadline
+                    };
+                }
+            }
             Err(CliError::Io) => return Err(CliError::Io),
-            _ => continue,
+            _ => {}
         }
         if phase == 2 {
             send(&socket, &packet, target)?;
@@ -878,7 +896,7 @@ fn move_client(
 ) -> Result<UdpSocket, CliError> {
     let candidate_socket = UdpSocket::bind(options.candidate_bind).map_err(|_| CliError::Io)?;
     configure_df(&candidate_socket)?;
-    let candidate_id = options.candidate.unwrap_or(random()?);
+    let candidate_id = nonzero_random()?;
     let update = manager.propose_local(candidate_id, options.new, 1, 0, now_ms(start))?;
     let carrier = ObservedBinding::Udp(binding(target, random()?)?);
     let probe = manager.make_probe(candidate_id, carrier.clone(), random()?, now_ms(start))?;
@@ -896,7 +914,7 @@ fn move_client(
         &client.send_data_with_locs(&probe_bytes, options.new, options.peer_loc)?,
         target,
     )?;
-    let deadline = Instant::now() + options.timeout;
+    let deadline = Instant::now() + Duration::from_secs(3);
     let mut retry = Instant::now() + Duration::from_millis(400);
     while Instant::now() < deadline {
         match receive(
@@ -916,31 +934,25 @@ fn move_client(
                     Ok(value) => value,
                     Err(_) => continue,
                 };
-                let plain = preview.plaintext().to_vec();
+                let plain = match preview.plaintext() {
+                    Ok(value) => value.to_vec(),
+                    Err(_) => continue,
+                };
                 let control = match Control::parse(&plain) {
                     Ok(value) => value,
                     Err(_) => continue,
                 };
-                let transition =
-                    match manager.preview(&plain, &carrier, now_ms(start) + 1, now_ms(start)) {
-                        Ok(value) => value,
-                        Err(_) => continue,
-                    };
+                let transition = match manager.preview_protected(
+                    &plain,
+                    &carrier,
+                    preview.into_replay_proof(),
+                    now_ms(start),
+                ) {
+                    Ok(value) => value,
+                    Err(_) => continue,
+                };
                 let reply = manager.response_for(&transition)?;
-                let session_error = RefCell::new(None);
-                if manager
-                    .commit(transition, || match client.commit_data(preview) {
-                        Ok(_) => Ok(()),
-                        Err(error) => {
-                            *session_error.borrow_mut() = Some(error);
-                            Err(MobilityError::Candidate)
-                        }
-                    })
-                    .is_err()
-                {
-                    if let Some(error) = session_error.into_inner() {
-                        return Err(error.into());
-                    }
+                if manager.commit_protected_client(transition, client).is_err() {
                     continue;
                 }
                 if let Some(reply) = reply {
@@ -1127,7 +1139,10 @@ fn connect_role1_responder(
             Ok(value) => value,
             Err(_) => continue,
         };
-        let plaintext = preview.plaintext().to_vec();
+        let plaintext = match preview.plaintext() {
+            Ok(value) => value.to_vec(),
+            Err(_) => continue,
+        };
         if plaintext.starts_with(b"R8M1") {
             let header = match Header::unpack_with_budget(&packet, options.budget) {
                 Ok((header, _)) => header,
@@ -1137,29 +1152,20 @@ fn connect_role1_responder(
                 Ok(value) => value,
                 Err(_) => continue,
             };
-            let transition =
-                match manager.preview(&plaintext, &observed, now_ms(start) + 1, now_ms(start)) {
-                    Ok(value) => value,
-                    Err(_) => continue,
-                };
+            let transition = match manager.preview_protected(
+                &plaintext,
+                &observed,
+                preview.into_replay_proof(),
+                now_ms(start),
+            ) {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
             let reply = match manager.response_for(&transition) {
                 Ok(value) => value,
                 Err(_) => continue,
             };
-            let session_error = RefCell::new(None);
-            if manager
-                .commit(transition, || match client.commit_data(preview) {
-                    Ok(_) => Ok(()),
-                    Err(error) => {
-                        *session_error.borrow_mut() = Some(error);
-                        Err(MobilityError::Candidate)
-                    }
-                })
-                .is_err()
-            {
-                if let Some(error) = session_error.into_inner() {
-                    return Err(error.into());
-                }
+            if manager.commit_protected_client(transition, client).is_err() {
                 continue;
             }
             if matches!(control, Control::BindResponse { .. })
@@ -1248,20 +1254,23 @@ fn connect(
     let cpu_before = (options.stream_rate != 0).then(cpu_usage).transpose()?;
     let selector = random()?;
     let carrier = ObservedBinding::Udp(binding(target, selector)?);
-    let manager = CandidateManager::new(CandidateManagerConfig {
-        signing,
-        local,
-        peer,
-        profile: 0,
-        scid: id,
-        policy: Policy {
-            policy_id: options.policy,
+    let manager = CandidateManager::new_with_protected_replay_binding(
+        CandidateManagerConfig {
+            signing,
+            local,
+            peer,
+            profile: 0,
+            scid: id,
+            policy: Policy {
+                policy_id: options.policy,
+            },
+            local_loc: options.old,
+            peer_loc: options.peer_loc,
+            initial_peer_binding: carrier.clone(),
+            candidate_secret: nonzero_random()?,
         },
-        local_loc: options.old,
-        peer_loc: options.peer_loc,
-        initial_peer_binding: carrier.clone(),
-        candidate_secret: options.secret.unwrap_or(random()?),
-    })
+        client.protected_replay_binding()?,
+    )
     .map_err(|_| CliError::Config)?;
     if options.moving_role == MovingRole::Role2 {
         return connect_role1_responder(
@@ -1414,13 +1423,14 @@ fn serve_role2_mover(options: &Options, path: ServerMoverPath<'_>) -> Result<(),
     }
     let candidate_socket = UdpSocket::bind(options.candidate_bind).map_err(|_| CliError::Io)?;
     configure_df(&candidate_socket)?;
-    let candidate_id = options.candidate.unwrap_or(random()?);
+    let candidate_id = nonzero_random()?;
     let update = manager.propose_local(candidate_id, options.new, 1, 0, now_ms(start))?;
     let carrier = ObservedBinding::Udp(binding(target, selector)?);
     let probe = manager.make_probe(candidate_id, carrier, selector, now_ms(start))?;
     let update = update.encode()?;
     let probe = probe.encode()?;
     let deadline = Instant::now() + options.timeout;
+    let proof_deadline = Instant::now() + Duration::from_secs(3);
     let mut retry = Instant::now();
     let mut promoted = false;
     let mut post = 0usize;
@@ -1441,7 +1451,7 @@ fn serve_role2_mover(options: &Options, path: ServerMoverPath<'_>) -> Result<(),
         }
         let now = now_ms(start);
         manager.expire(now);
-        if !promoted && Instant::now() >= deadline {
+        if !promoted && Instant::now() >= proof_deadline {
             return Err(CliError::Session(SessionError::Timeout));
         }
         if !promoted && Instant::now() >= retry {
@@ -1473,7 +1483,10 @@ fn serve_role2_mover(options: &Options, path: ServerMoverPath<'_>) -> Result<(),
                             &[options.old],
                             now,
                         ) {
-                            let plain = preview.plaintext().to_vec();
+                            let plain = match preview.plaintext() {
+                                Ok(value) => value.to_vec(),
+                                Err(_) => continue,
+                            };
                             if !plain.starts_with(b"R8M1") {
                                 let payload = server.commit_data(preview, now)?;
                                 let output = server.send_data(scid, &payload)?;
@@ -1519,13 +1532,21 @@ fn serve_role2_mover(options: &Options, path: ServerMoverPath<'_>) -> Result<(),
             Ok(value) => value,
             Err(_) => continue,
         };
-        let plain = preview.plaintext().to_vec();
+        let plain = match preview.plaintext() {
+            Ok(value) => value.to_vec(),
+            Err(_) => continue,
+        };
         if plain.starts_with(b"R8M1") {
             let control = match Control::parse(&plain) {
                 Ok(value) => value,
                 Err(_) => continue,
             };
-            let transition = match manager.preview(&plain, &observed, now + 1, now) {
+            let transition = match manager.preview_protected(
+                &plain,
+                &observed,
+                preview.into_replay_proof(),
+                now,
+            ) {
                 Ok(value) => value,
                 Err(_) => continue,
             };
@@ -1533,18 +1554,10 @@ fn serve_role2_mover(options: &Options, path: ServerMoverPath<'_>) -> Result<(),
                 Ok(value) => value,
                 Err(_) => continue,
             };
-            let session_error = RefCell::new(None);
             if manager
-                .commit(transition, || match server.commit_data(preview, now) {
-                    Ok(_) => Ok(()),
-                    Err(error) => {
-                        *session_error.borrow_mut() = Some(error);
-                        Err(MobilityError::Candidate)
-                    }
-                })
+                .commit_protected_server(transition, server, scid, now)
                 .is_err()
             {
-                let _ = session_error.into_inner();
                 continue;
             }
             if let Some(reply) = reply {
@@ -1618,7 +1631,7 @@ fn serve(
         },
     )?;
     let mut limiter = PrevalidationLimiter::new();
-    let source_key = random()?;
+    let source_key = Zeroizing::new(random()?);
     let mut associations: HashMap<u64, Association> = HashMap::new();
     let deadline = Instant::now() + options.timeout;
     let mut complete = 0usize;
@@ -1666,10 +1679,7 @@ fn serve(
         let output = match typ {
             1 => server.receive_open_limited(
                 &packet,
-                match &observed {
-                    ObservedBinding::Udp(value) => value,
-                    _ => unreachable!(),
-                },
+                &observed,
                 opaque_source(endpoint, &source_key),
                 now,
                 now / 10_000,
@@ -1678,10 +1688,7 @@ fn serve(
             3 => {
                 let output = match server.receive_open_auth(
                     &packet,
-                    match &observed {
-                        ObservedBinding::Udp(value) => value,
-                        _ => unreachable!(),
-                    },
+                    &observed,
                     now,
                     now / 10_000,
                     Some(ServerHandshakeMaterial {
@@ -1756,23 +1763,29 @@ fn serve(
                     Ok(value) => value,
                     Err(_) => continue,
                 };
-                let plain = preview.plaintext().to_vec();
+                let plain = match preview.plaintext() {
+                    Ok(value) => value.to_vec(),
+                    Err(_) => continue,
+                };
                 if initial {
                     record.manager = Some(
-                        CandidateManager::new(CandidateManagerConfig {
-                            signing: signing.clone(),
-                            local: local.clone(),
-                            peer: peer.clone(),
-                            profile: 0,
-                            scid: header.scid,
-                            policy: Policy {
-                                policy_id: options.policy,
+                        CandidateManager::new_with_protected_replay_binding(
+                            CandidateManagerConfig {
+                                signing: signing.clone(),
+                                local: local.clone(),
+                                peer: peer.clone(),
+                                profile: 0,
+                                scid: header.scid,
+                                policy: Policy {
+                                    policy_id: options.policy,
+                                },
+                                local_loc: options.old,
+                                peer_loc: options.peer_loc,
+                                initial_peer_binding: record.binding.clone(),
+                                candidate_secret: nonzero_random()?,
                             },
-                            local_loc: options.old,
-                            peer_loc: options.peer_loc,
-                            initial_peer_binding: record.binding.clone(),
-                            candidate_secret: options.secret.unwrap_or(random()?),
-                        })
+                            server.protected_replay_binding(header.scid)?,
+                        )
                         .map_err(|_| CliError::Config)?,
                     );
                 }
@@ -1785,7 +1798,12 @@ fn serve(
                         .manager
                         .as_ref()
                         .ok_or(CliError::Session(SessionError::AuthFailed))?;
-                    let transition = match manager.preview(&plain, &observed, now + 1, now) {
+                    let transition = match manager.preview_protected(
+                        &plain,
+                        &observed,
+                        preview.into_replay_proof(),
+                        now,
+                    ) {
                         Ok(value) => value,
                         Err(_) => continue,
                     };
@@ -1793,18 +1811,10 @@ fn serve(
                         Ok(reply) => reply,
                         Err(_) => continue,
                     };
-                    let session_error = RefCell::new(None);
                     if manager
-                        .commit(transition, || match server.commit_data(preview, now) {
-                            Ok(_) => Ok(()),
-                            Err(error) => {
-                                *session_error.borrow_mut() = Some(error);
-                                Err(MobilityError::Candidate)
-                            }
-                        })
+                        .commit_protected_server(transition, &mut server, header.scid, now)
                         .is_err()
                     {
-                        let _ = session_error.into_inner();
                         continue;
                     }
                     if let Control::LocUpdate { new_loc, .. } = control {

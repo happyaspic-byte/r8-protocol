@@ -2,6 +2,8 @@ use ed25519_dalek::SigningKey;
 use r8_proto::Header;
 use r8_session::*;
 use serde_json::Value;
+use x25519_dalek::{PublicKey, StaticSecret};
+use zeroize::Zeroizing;
 
 const VECTORS: &str = include_str!("../../../../tests/vectors/session-v0.1.json");
 
@@ -60,7 +62,9 @@ fn corpus_crypto_is_byte_identical() {
     .unwrap();
     assert_eq!(client.eid, array(field(identities, "client_eid_hex")));
     assert_eq!(server.eid, array(field(identities, "server_eid_hex")));
-    let binding = UdpBinding::parse(hex(field(context, "udp_binding_ipv4_hex"))).unwrap();
+    let binding = ObservedBinding::Udp(
+        UdpBinding::parse(hex(field(context, "udp_binding_ipv4_hex"))).unwrap(),
+    );
     let cookie_input_bytes = cookie_input(&CookieContext {
         binding: &binding,
         client: &client,
@@ -131,22 +135,22 @@ fn corpus_crypto_is_byte_identical() {
     let hash = transcript_hash(&actual, &client_signature, &server_signature);
     assert_eq!(hash, array(field(transcript, "transcript_hash_hex")));
     let shared = x25519(
-        array(field(identities, "client_x25519_secret_hex")),
-        array(field(identities, "server_ephemeral_hex")),
+        StaticSecret::from(array(field(identities, "client_x25519_secret_hex"))),
+        PublicKey::from(array(field(identities, "server_ephemeral_hex"))),
     )
     .unwrap();
-    assert_eq!(shared, array(field(identities, "shared_secret_hex")));
     assert_eq!(
-        hkdf_prk(shared, hash),
-        array(field(&vectors["key_schedule"], "hkdf_prk_hex"))
+        shared.as_bytes(),
+        &array(field(identities, "shared_secret_hex"))
+    );
+    let shared_key = Zeroizing::new(array(field(identities, "shared_secret_hex")));
+    assert_eq!(
+        &*derive_key(&shared_key, hash, 0, 1, 2, 0).unwrap(),
+        &array(field(&vectors["key_schedule"], "c2s_slot0_key_hex"))
     );
     assert_eq!(
-        derive_key(shared, hash, 0, 1, 2, 0).unwrap(),
-        array(field(&vectors["key_schedule"], "c2s_slot0_key_hex"))
-    );
-    assert_eq!(
-        derive_key(shared, hash, 0, 2, 1, 0).unwrap(),
-        array(field(&vectors["key_schedule"], "s2c_slot0_key_hex"))
+        &*derive_key(&shared_key, hash, 0, 2, 1, 0).unwrap(),
+        &array(field(&vectors["key_schedule"], "s2c_slot0_key_hex"))
     );
 }
 
@@ -191,7 +195,10 @@ fn finite_negative_fixture_categories_have_concrete_operations() {
     replay.commit(preview).unwrap();
     assert_eq!(replay.check(2), Err(SessionError::Replay));
     assert_eq!(nonce(0), Err(SessionError::CounterRange));
-    assert_eq!(x25519([1; 32], [0; 32]), Err(SessionError::AuthFailed));
+    assert!(matches!(
+        x25519(StaticSecret::from([1; 32]), PublicKey::from([0; 32])),
+        Err(SessionError::AuthFailed)
+    ));
     assert_eq!(
         SessionMessage::decode(&[OPEN, 1, 0, 0], 0, 1280),
         Err(SessionError::Truncated)
@@ -201,6 +208,96 @@ fn finite_negative_fixture_categories_have_concrete_operations() {
     assert_eq!(SessionError::Binding.as_str(), "BINDING_INVALID");
     assert_eq!(SessionError::ConfigError.as_str(), "CONFIG_ERROR");
     assert_eq!(SessionError::RngFailure.as_str(), "RNG_FAILURE");
+}
+#[test]
+fn current_aad_replay_counter_binding_and_secret_contracts() {
+    let header = Header {
+        profile: 0,
+        tc: 0,
+        next_header: r8_proto::NH_SES,
+        hop_limit: 64,
+        flags: 1,
+        path_slot: 0,
+        scid: 1,
+        src: [1; 16],
+        dst: [2; 16],
+    };
+    let mut sender = DirectionalSession::new(
+        Zeroizing::new([7; 32]),
+        Zeroizing::new([8; 32]),
+        [9; 32],
+        1280,
+    );
+    let mut receiver = DirectionalSession::new(
+        Zeroizing::new([8; 32]),
+        Zeroizing::new([7; 32]),
+        [9; 32],
+        1280,
+    );
+    let mut hop_changed = sender
+        .encrypt(&header, SESSION_DATA, b"data", 1280)
+        .unwrap();
+    hop_changed[5] = 1;
+    assert_eq!(receiver.decrypt(&hop_changed), Ok(b"data".to_vec()));
+    let mut other_changed = sender
+        .encrypt(&header, SESSION_DATA, b"data", 1280)
+        .unwrap();
+    other_changed[16] ^= 1;
+    assert_eq!(
+        receiver.decrypt(&other_changed),
+        Err(SessionError::AuthFailed)
+    );
+    assert_eq!(nonce(u64::MAX), Err(SessionError::CounterRange));
+
+    let mut replay = ReplayWindow::new();
+    replay.mark_after_auth(1).unwrap();
+    replay.mark_after_auth(4097).unwrap();
+    assert!(replay.check(2).is_ok());
+    assert_eq!(replay.check(1), Err(SessionError::Replay));
+    let mut forward_replay = ReplayWindow::new();
+    forward_replay.mark_after_auth(1).unwrap();
+    assert!(forward_replay.check(65_537).is_ok());
+    assert_eq!(forward_replay.check(65_538), Err(SessionError::Replay));
+    assert_eq!(
+        forward_replay.check(u64::MAX),
+        Err(SessionError::CounterRange)
+    );
+
+    let udp = ObservedBinding::Udp(UdpBinding::ipv4([192, 0, 2, 1], 1234, 1, [0; 16]).unwrap());
+    let native = ObservedBinding::Native {
+        ingress_descriptor_id: 1,
+        next_hop_mac: [1, 2, 3, 4, 5, 6],
+    };
+    assert_eq!(ObservedBinding::parse(&native.encode()), Ok(native.clone()));
+    assert_eq!(
+        ObservedBinding::parse(&[2, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6]),
+        Err(SessionError::Binding)
+    );
+    let client = Identity::from_public_key(1, 1, [1; 32]).unwrap();
+    let server = Identity::from_public_key(2, 1, [2; 32]).unwrap();
+    let udp_context = CookieContext {
+        binding: &udp,
+        client: &client,
+        server: &server,
+        scid: 1,
+        client_ephemeral: [3; 32],
+        boot: [4; 16],
+        bucket: 1,
+        server_context_id: 1,
+    };
+    let native_context = CookieContext {
+        binding: &native,
+        ..udp_context
+    };
+    assert_ne!(
+        cookie_input(&udp_context).unwrap(),
+        cookie_input(&native_context).unwrap()
+    );
+
+    let debug = format!("{sender:?}");
+    assert!(debug.contains("[REDACTED]"));
+    assert!(!debug.contains("7, 7"));
+    drop(sender);
 }
 #[test]
 fn deterministic_client_server_cookie_handshake_reaches_authenticated_accept() {
@@ -261,7 +358,9 @@ fn deterministic_client_server_cookie_handshake_reaches_authenticated_accept() {
         },
     )
     .unwrap();
-    let binding = UdpBinding::parse(hex(field(context, "udp_binding_ipv4_hex"))).unwrap();
+    let binding = ObservedBinding::Udp(
+        UdpBinding::parse(hex(field(context, "udp_binding_ipv4_hex"))).unwrap(),
+    );
     let open = client
         .start(
             context["scid"].as_u64().unwrap(),
@@ -323,21 +422,13 @@ fn deterministic_client_server_cookie_handshake_reaches_authenticated_accept() {
         ))
     );
     let hash: [u8; 32] = array(field(&vectors["transcript"], "transcript_hash_hex"));
-    let mut semantic_session = DirectionalSession {
-        send_key: derive_key(
-            array(field(identities, "shared_secret_hex")),
-            hash,
-            0,
-            1,
-            2,
-            0,
-        )
-        .unwrap(),
-        receive_key: [0; 32],
-        send_counters: Counters::new(),
-        replay: ReplayWindow::new(),
-        transcript_hash: hash,
-    };
+    let shared_key = Zeroizing::new(array(field(identities, "shared_secret_hex")));
+    let mut semantic_session = DirectionalSession::new(
+        derive_key(&shared_key, hash, 0, 1, 2, 0).unwrap(),
+        Zeroizing::new([0; 32]),
+        hash,
+        1280,
+    );
     let mut invalid_plaintext = b"R8 ACCEPT v1".to_vec();
     invalid_plaintext.extend_from_slice(&[0; 32]);
     let semantic_accept = semantic_session
@@ -399,7 +490,7 @@ fn deterministic_client_server_cookie_handshake_reaches_authenticated_accept() {
     let preview = server
         .preview_data_with_locs(&data, &[], &[], base + 1)
         .unwrap();
-    assert_eq!(preview.plaintext(), b"synthetic session data");
+    assert_eq!(preview.plaintext().unwrap(), b"synthetic session data");
     let stale = server
         .preview_data_with_locs(&data, &[], &[], base + 1)
         .unwrap();
@@ -663,7 +754,9 @@ fn open_auth_budget_failure_releases_cookie_wait() {
         },
     )
     .unwrap();
-    let binding = UdpBinding::parse(hex(field(context, "udp_binding_ipv4_hex"))).unwrap();
+    let binding = ObservedBinding::Udp(
+        UdpBinding::parse(hex(field(context, "udp_binding_ipv4_hex"))).unwrap(),
+    );
     let open = client
         .start(
             1,
@@ -712,7 +805,7 @@ fn handshake_config_and_previous_cookie_key_boundaries_are_strict() {
     }
     .validate()
     .is_ok());
-    let binding = UdpBinding::ipv4([192, 0, 2, 1], 1234, 1, [0; 16]).unwrap();
+    let binding = ObservedBinding::Udp(UdpBinding::ipv4([192, 0, 2, 1], 1234, 1, [0; 16]).unwrap());
     let context = CookieContext {
         binding: &binding,
         client: &local,

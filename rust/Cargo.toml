@@ -6,6 +6,7 @@ members = [
     "crates/r8ping",
     "crates/r8-session",
     "crates/r8-mobility",
+    "crates/r8-redundant",
 ]
 
 [workspace.package]

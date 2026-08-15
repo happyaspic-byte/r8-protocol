@@ -110,6 +110,20 @@ def _read_exact(fd,n):
   if not part: raise StageError("endpoint_ready")
   value+=part
  return value
+def _read_endpoint_ready(fd, processes, count=1, timeout=5):
+ selector=selectors.DefaultSelector(); previous=os.get_blocking(fd); deadline=time.monotonic()+timeout; received=0
+ try:
+  os.set_blocking(fd,False); selector.register(fd,selectors.EVENT_READ)
+  while time.monotonic()<deadline:
+   if any(process.poll() is not None for process in processes): raise StageError("endpoint_ready")
+   if not selector.select(min(.1,max(0,deadline-time.monotonic()))): continue
+   part=os.read(fd,count-received)
+   if not part or part != b"R"*len(part): raise StageError("endpoint_ready")
+   received+=len(part)
+   if received==count: return
+  raise StageError("endpoint_ready")
+ finally:
+  selector.close(); os.set_blocking(fd,previous)
 def _schedule(schedule_fd,gate_fd):
  start,cut,end=struct.unpack("!QQQ",_read_exact(schedule_fd,24)); _read_exact(gate_fd,1)
  if cut-start!=3_000_000_000 or end-cut!=5_000_000_000: raise StageError("timeline")
@@ -245,7 +259,7 @@ def actions(c,t,mech,arm,cut,control_path=None):
  elif arm=="abrupt-break": _stage("link_activate",lambda:c.inside(s,"ip","link","set",n["si0"],"down"))
  return activation_start,activation_complete
 def _r8(command,seed,peer,address,peer_address,new_address,bind,extra):
- return [sys.executable,str(ROOT/"reference/r8move.py"),command,"--local-seed-hex",seed.hex(),"--peer-public-key-hex",peer.hex(),"--service-context","1","--server-context-id","1","--address",address,"--peer-address",peer_address,"--new-address",new_address,"--bind",bind,"--allow-isolated-underlay","--binding-budget","1252","--deterministic-scid","1","--deterministic-candidate-hex","01"*16,"--deterministic-secret-hex","02"*32]+extra
+ return [sys.executable,str(ROOT/"reference/r8move.py"),command,"--local-seed-hex",seed.hex(),"--peer-public-key-hex",peer.hex(),"--service-context","1","--server-context-id","1","--address",address,"--peer-address",peer_address,"--new-address",new_address,"--bind",bind,"--allow-isolated-underlay","--binding-budget","1252"]+extra
 def _events(fd):
  os.lseek(fd,0,os.SEEK_SET); raw=os.read(fd,1<<20)
  if len(raw)%16: raise StageError("authenticated_events")
@@ -337,11 +351,14 @@ def worker(mechanism,arm,commands=None,control_path=None,evidence_dir=None,suffi
     server=_stage("endpoint_setup",lambda:c.spawn(t["client"],*_r8("serve",stable,Identity.from_seed(moving).public,"::2","::1","::3","10.88.0.2:53104",shared+["--schedule-fd",str(server_schedule_r),"--gate-fd",str(server_gate_r),"--cpu-fd",str(cpu_w),"--max-sessions","1","--expected-post-move","1"]),pass_fds=(ready_w,server_schedule_r,server_gate_r,cpu_w))); children.append(server)
     client_args=shared+["--schedule-fd",str(client_schedule_r),"--gate-fd",str(client_gate_r),"--cutover-gate-fd",str(cutover_r),"--events-fd",str(records["received"]),"--attempt-fd",str(records["attempted"]),"--sent-fd",str(records["sent"]),"--cpu-fd",str(cpu_w),"--peer","10.88.0.2:53104","--candidate-bind","10.88.1.3:0","--mode","abrupt" if arm=="abrupt-break" else "mbb"]
     client=_stage("endpoint_setup",lambda:c.spawn(t["server"],*_r8("connect",moving,Identity.from_seed(stable).public,"::1","::2","::3","10.88.1.2:0",client_args),pass_fds=(ready_w,client_schedule_r,client_gate_r,cutover_r,records["received"],records["attempted"],records["sent"],cpu_w))); children.append(client)
+    _read_endpoint_ready(ready_r,(server,client),count=2)
    else:
     stop=str(directory/"stop")
     server=_stage("endpoint_setup",lambda:c.spawn(t["server"],sys.executable,str(Path(__file__).resolve()),"endpoint-server","--mechanism",mechanism,"--ready-fd",str(ready_w),"--schedule-fd",str(server_schedule_r),"--gate-fd",str(server_gate_r),"--stop",stop,"--old-dev",t["names"]["si0"],"--new-dev",t["names"]["si1"],"--cpu-fd",str(cpu_w),pass_fds=(ready_w,server_schedule_r,server_gate_r,cpu_w))); children.append(server)
+    _read_endpoint_ready(ready_r,(server,))
     client=_stage("endpoint_setup",lambda:c.spawn(t["client"],sys.executable,str(Path(__file__).resolve()),"endpoint-client","--mechanism",mechanism,"--ready-fd",str(ready_w),"--schedule-fd",str(client_schedule_r),"--gate-fd",str(client_gate_r),"--attempt-fd",str(records["attempted"]),"--sent-fd",str(records["sent"]),"--received-fd",str(records["received"]),"--cpu-fd",str(cpu_w),pass_fds=(ready_w,client_schedule_r,client_gate_r,records["attempted"],records["sent"],records["received"],cpu_w))); children.append(client)
-   os.close(ready_w); fds[fds.index(ready_w)]=None; _read_exact(ready_r,2)
+    _read_endpoint_ready(ready_r,(client,))
+   os.close(ready_w); fds[fds.index(ready_w)]=None
    pre_interfaces=counters(t["server"],(t["names"]["si0"],t["names"]["si1"]),c); pre_counter_ns=time.monotonic_ns(); start=pre_counter_ns+BOUNDARY_SKEW_NS; pre_cpu=resource.getrusage(resource.RUSAGE_SELF); parent_cpu_pre_ns=time.monotonic_ns()
    if parent_cpu_pre_ns>=start: raise StageError("timeline")
    cut=start+3_000_000_000; end=cut+5_000_000_000

@@ -1,21 +1,45 @@
 {
-  "contract_version": "r8-benchmark-preregistration-v4",
+  "contract_version": "r8-benchmark-preregistration-v5",
   "protocol_id": "Q1",
   "status": "preregistered-no-results",
   "scope": "private-experimental-closed-lab",
   "additional_properties": false,
   "supersession": {
-    "supersedes_contract_version": "r8-benchmark-preregistration-v3",
-    "supersedes_sha256": "fc55647092b6c8e007b9e2f9f1b913d114e264f6a84e27e42b2bcbf0f9d200e6",
-    "status": "cancelled-non-result",
-    "run": "31804033453",
-    "application_observations": "none",
-    "artifact_or_package_published": false,
-    "reason": "Run began and was cancelled after read-only QA found measurement and runtime defects; no artifact, package, or result was published."
+    "supersedes_contract_version": "r8-benchmark-preregistration-v4",
+    "supersedes_sha256": "656fbb20ced377c946e16cdc3935786787678b6453f992ba1b69a3772d89a9f0",
+    "status": "superseded-invalid-diagnostic",
+    "run": "31835854041",
+    "application_observations": "retained-unpublished",
+    "artifact_or_package_published": true,
+    "retained_package_path": "bench/results/q1-closed-lab-v4-invalid-run-31835854041",
+    "reason": "All 1,320 rows are retained, but 63 pre-runtime worker_timeout setup failures made publication ineligible and suppressed every estimator; the remaining 1,257 source-bound runtime rows are diagnostic observations only. The cause was an unbounded aggregate readiness read when a TCP/GARP endpoint exited before its readiness byte."
   },
   "normative_references": {
-    "sections": [{"document": "spec/0003-test-plan.md", "section": "4"}, {"document": "spec/parameters-v0.1.md", "section": "2"}, {"document": "spec/parameters-v0.1.md", "section": "7"}],
-    "parameter_ids": ["P-APPLICATION-BUDGET", "P-Q1-WARMUPS", "P-Q1-MEASURED-TRIALS", "P-Q1-BLOCK-SIZE", "P-Q1-MAKE-BEFORE-BREAK-NOTICE", "P-Q1-READINESS-DELIVERIES", "P-Q1-SUPPORTED-QUANTILES", "P-Q1-BLOCK-BOOTSTRAP-RESAMPLES"]
+    "sections": [
+      {
+        "document": "spec/0003-test-plan.md",
+        "section": "4"
+      },
+      {
+        "document": "spec/parameters-v0.1.md",
+        "section": "2"
+      },
+      {
+        "document": "spec/parameters-v0.1.md",
+        "section": "7"
+      }
+    ],
+    "parameter_ids": [
+      "P-APPLICATION-BUDGET",
+      "P-Q1-WARMUPS",
+      "P-Q1-MEASURED-TRIALS",
+      "P-Q1-BLOCK-SIZE",
+      "P-Q1-MAKE-BEFORE-BREAK-NOTICE",
+      "P-Q1-READINESS-DELIVERIES",
+      "P-Q1-SUPPORTED-QUANTILES",
+      "P-Q1-BOUNDARY-SKEW-NS",
+      "P-Q1-BLOCK-BOOTSTRAP-RESAMPLES"
+    ]
   },
   "hypothesis": "Under identical isolated-lab notice, trust, and load, Q1 reports R8 mobility, TCP reconnect, and GARP VIP movement without post-hoc tuning.",
   "topology": {
@@ -23,7 +47,16 @@
     "links_and_addresses": "Client/router is 10.88.0.2/24 and 10.88.0.1/24. Router bridge is 10.88.1.1/24. Server old and candidate interfaces are 10.88.1.2/24 and 10.88.1.3/24. VIP is 10.88.1.100/32.",
     "fixed_mac_addresses": "While down assign router bridge 02:00:00:00:01:01, old server interface 02:00:00:00:01:02, and candidate server interface 02:00:00:00:01:03.",
     "routing": "Client default route is via 10.88.0.1. Server main client-prefix route initially uses gateway 10.88.1.1 on old. Table 101 first has 10.88.1.0/24 dev old scope link then client prefix via gateway old for source 10.88.1.2/32. Table 102 first has 10.88.1.0/24 dev candidate scope link then client prefix via gateway candidate onlink for source 10.88.1.3/32. Table 103 first has 10.88.1.0/24 dev old scope link then client prefix via gateway old for VIP source. At common candidate activation replace the main client-prefix route via gateway candidate onlink. Table 103 is separately replaced only at GARP cutover.",
-    "setup_order": ["namespace/veth/bridge setup", "fixed MAC assignment while down", "address and MTU setup", "loopbacks, client link, router links and bridge, and old server link up", "temporarily candidate up solely for static table 102 route installation", "install routes/rules and strong-host sysctls", "install permanent static neighbors", "candidate down before pre-trial counters and clock"],
+    "setup_order": [
+      "namespace/veth/bridge setup",
+      "fixed MAC assignment while down",
+      "address and MTU setup",
+      "loopbacks, client link, router links and bridge, and old server link up",
+      "temporarily candidate up solely for static table 102 route installation",
+      "install routes/rules and strong-host sysctls",
+      "install permanent static neighbors",
+      "candidate down before pre-trial counters and clock"
+    ],
     "static_neighbors": "Before the clock and identically for all mechanisms and arms, router bridge permanently maps old and candidate numeric addresses to their fixed MACs; each server interface permanently maps gateway 10.88.1.1 to bridge MAC. No static VIP neighbor exists; GARP remains measured. No neighbor flush or dynamic discovery is permitted.",
     "server_strong_host_sysctls": "Only in the isolated server namespace before trials, set IPv4 rp_filter=0 and arp_ignore=1, arp_announce=2 for all, default, old, and candidate interfaces.",
     "environment": "All non-loopback links use MTU 1500 and fq_codel. Effective socket send and receive buffers are exactly 262144. GRO, GSO, and TSO are disabled and verified with ethtool; ethtool is a prerequisite.",
@@ -31,8 +64,15 @@
     "privileges": "runner MUST start as root and retain CAP_NET_ADMIN and CAP_NET_RAW; missing privilege fails setup and never skips",
     "evidence_counts": "interface_count is exactly 10 including three loopbacks; non_loopback_interface_count is exactly 7; veth_pair_count is exactly 3."
   },
-  "arms": ["abrupt-break", "make-before-break"],
-  "mechanisms": ["R8", "TCP-reconnect", "GARP-VIP"],
+  "arms": [
+    "abrupt-break",
+    "make-before-break"
+  ],
+  "mechanisms": [
+    "R8",
+    "TCP-reconnect",
+    "GARP-VIP"
+  ],
   "traffic": {
     "payload": "exactly 64 bytes: big-endian u64 sequence followed by 56 zero bytes",
     "rate": "100 Hz; exactly 800 due payloads at equal next-due 10 ms deadlines",
@@ -40,7 +80,12 @@
     "accounting": "scheduled, attempted, full-send, and authenticated-receive are distinct; schedule misses are retained",
     "transport": "TCP_NODELAY; TCP reconnect retries on each due deadline. TCP old/new listeners are numeric address/port and SO_BINDTODEVICE-bound to corresponding server interfaces; no wildcard or weak-host listener."
   },
-  "trial_counts": {"warmups": 20, "warmups_excluded_from_analysis": true, "measured": 200, "unit": "trial per mechanism per arm"},
+  "trial_counts": {
+    "warmups": 20,
+    "warmups_excluded_from_analysis": true,
+    "measured": 200,
+    "unit": "trial per mechanism per arm"
+  },
   "blocking": {
     "block_size": 20,
     "global_schedule": "66 balanced consecutive blocks of 20: every pair occurs 3 or 4 times per block, exactly two pairs have four occurrences in each block, and every pair has exactly 22 four-count blocks and 220 total occurrences.",
@@ -52,27 +97,166 @@
   },
   "timing_and_actions": {
     "candidate_proof_timeout": "3 seconds matching challenge expiry and never extending T+5 observation",
-    "worker_supervisor": "phase-aware; up to 40 seconds only for bounded teardown and error capture, never measurement. It may probe static source-policy route selection without output or traffic.",
+    "worker_supervisor": "phase-aware; each endpoint readiness wait is bounded to 5 seconds and fails immediately on child exit, TCP/GARP servers become ready before their clients launch, and aggregate R8 readiness is child-liveness-aware. The outer 40-second bound is only for teardown and error capture, never measurement. It may probe static source-policy route selection without output or traffic.",
     "common_candidate_activation": "For every arm/mechanism, immediately after candidate link-up at T-2 in make-before-break or T in abrupt-break, replace and verify server main client-prefix route via gateway candidate onlink. This is one identical explicit static underlay action, not dynamic routing.",
     "abrupt-break": "At T activate candidate and common main route, then perform the mechanism action. R8 sends one authenticated LOC_UPDATE and sole candidate proof; TCP makes new listener usable, takes old interface down, and reconnects; GARP atomically moves VIP, replaces only table 103 client prefix via candidate onlink, and runs exactly three arping -U -c 1 -w 1 operations 100 ms apart, each returning before next and accepting return 0 or 1.",
     "make-before-break": "At T-2 activate candidate and common main route without traffic cutover. At T R8 sends one authenticated LOC_UPDATE and sole proof, TCP takes old interface down and reconnects, and GARP moves VIP/table 103 then performs its three bounded announcements."
   },
-  "readiness_and_outage": {"readiness": "ten temporally consecutive numeric post-T authenticated echoes, each with due <= receive < due+10 ms", "outage_start": "last successfully received pre-T on-schedule payload", "outage_end": "timestamp of readiness", "timeout": "censor at T+5 seconds"},
+  "readiness_and_outage": {
+    "readiness": "ten temporally consecutive numeric post-T authenticated echoes, each with due <= receive < due+10 ms",
+    "outage_start": "last successfully received pre-T on-schedule payload",
+    "outage_end": "timestamp of readiness",
+    "timeout": "censor at T+5 seconds"
+  },
   "collection": {
     "boundaries": "Record interface counters at scheduled T-3, T, and T+5 boundaries. Record worker and both endpoint CPU exactly from shared gate through T+5. Record actual activation start and complete separately from scheduled activation.",
     "identifier_redaction": "Evidence records configuration and command hashes only; raw IPs, MACs, ports, argv, LOC, namespace/interface/veth names, routes, commands, stderr, and child output are prohibited.",
-    "raw_row_fields": ["protocol_id", "contract_version", "trial_id", "block_id", "host_epoch", "mechanism", "arm", "randomization_position", "setup_status", "exclusion_reason", "error_category", "t_minus_3_ns", "activation_ns", "activation_start_ns", "activation_complete_ns", "cutover_ns", "observation_end_ns", "readiness_ns", "censored", "failure", "scheduled_payloads", "attempted_payloads", "sent_payloads", "received_payloads", "lost_payloads", "duplicate_payloads", "reordered_payloads", "outage_ns", "interface_counter_by_ordinal", "interface_counter_timestamp_ns_by_ordinal", "counter_complete", "process_user_cpu_ns", "process_system_cpu_ns", "process_cpu_timestamp_ns_by_ordinal", "cpu_complete", "cleanup_complete", "evidence_complete", "environment_complete", "topology_complete", "namespace_count", "interface_count", "non_loopback_interface_count", "veth_pair_count", "configuration_sha256"],
-    "error_category": {"success_value": null, "enum": ["namespace_create", "forwarding_config", "veth_create", "namespace_move", "bridge_create", "address_config", "link_activate", "route_client_default", "route_server_main", "route_old_policy", "route_candidate_policy", "route_vip_policy", "neighbor_config", "candidate_deactivate", "environment_setup", "environment_verify", "counter_read", "endpoint_setup", "endpoint_ready", "endpoint_exit", "timeline", "authenticated_events", "garp_announce", "endpoint_runtime", "r8_move_timeout", "r8_move_io", "r8_move_protocol", "worker_internal", "worker_timeout", "worker_exit", "worker_output", "cleanup_delete", "cleanup_reap", "cleanup_residual", "control_parse"]},
+    "raw_row_fields": [
+      "protocol_id",
+      "contract_version",
+      "trial_id",
+      "block_id",
+      "host_epoch",
+      "mechanism",
+      "arm",
+      "randomization_position",
+      "setup_status",
+      "exclusion_reason",
+      "error_category",
+      "t_minus_3_ns",
+      "activation_ns",
+      "activation_start_ns",
+      "activation_complete_ns",
+      "cutover_ns",
+      "observation_end_ns",
+      "readiness_ns",
+      "censored",
+      "failure",
+      "scheduled_payloads",
+      "attempted_payloads",
+      "sent_payloads",
+      "received_payloads",
+      "lost_payloads",
+      "duplicate_payloads",
+      "reordered_payloads",
+      "outage_ns",
+      "interface_counter_by_ordinal",
+      "interface_counter_timestamp_ns_by_ordinal",
+      "counter_complete",
+      "process_user_cpu_ns",
+      "process_system_cpu_ns",
+      "process_cpu_timestamp_ns_by_ordinal",
+      "cpu_complete",
+      "cleanup_complete",
+      "evidence_complete",
+      "environment_complete",
+      "topology_complete",
+      "namespace_count",
+      "interface_count",
+      "non_loopback_interface_count",
+      "veth_pair_count",
+      "configuration_sha256"
+    ],
+    "error_category": {
+      "success_value": null,
+      "enum": [
+        "namespace_create",
+        "forwarding_config",
+        "veth_create",
+        "namespace_move",
+        "bridge_create",
+        "address_config",
+        "link_activate",
+        "route_client_default",
+        "route_server_main",
+        "route_old_policy",
+        "route_candidate_policy",
+        "route_vip_policy",
+        "neighbor_config",
+        "candidate_deactivate",
+        "environment_setup",
+        "environment_verify",
+        "counter_read",
+        "endpoint_setup",
+        "endpoint_ready",
+        "endpoint_exit",
+        "timeline",
+        "authenticated_events",
+        "garp_announce",
+        "endpoint_runtime",
+        "r8_move_timeout",
+        "r8_move_io",
+        "r8_move_protocol",
+        "worker_internal",
+        "worker_timeout",
+        "worker_exit",
+        "worker_output",
+        "cleanup_delete",
+        "cleanup_reap",
+        "cleanup_residual",
+        "control_parse"
+      ]
+    },
     "failure_classification": "Only pre-gate launch/readiness failures are setup failures. Runtime and endpoint failures after the shared gate retain setup_status=complete and all available parent-owned append-only event/counter evidence. Corrupt or unavailable evidence is null and evidence_complete=false; no count is inferred. Missing or false cleanup, evidence, CPU, environment, or topology proof suppresses publication eligibility while retaining diagnostic upload.",
-    "boundary_skew": {"parameter_id": "P-Q1-BOUNDARY-SKEW-NS", "nanoseconds": 100000000},
+    "boundary_skew": {
+      "parameter_id": "P-Q1-BOUNDARY-SKEW-NS",
+      "nanoseconds": 100000000
+    },
     "event_writer_trust": "Event writers are source-bound measured implementations. Parent-owned persistent files prevent supervisor fabrication but do not defend a root-compromised endpoint, which is outside the trusted-host model."
   },
   "implementation_binding": {
-    "runner_semantics": "Frozen against current bench/q1.py and tests/mobility_netns.py semantics; implementation source identity is the canonical sorted JSON SHA-256 map below and is independently bound to the supplied git commit.",
-    "source_map": {"bench/q1.py": "6f5616ab3a44ede7cff2231cb87fd1b00277b9dc6f14176ccfc99ebaa60b0a2e", "reference/r8mobility.py": "9ff8f8e852d7baf78420008e20abef0639f49529bb853c42e8016c9af0746141", "reference/r8move.py": "8ef237eb755c1356ea23abda506489953cd78450ea05f57f2d48beef808b00cf", "reference/r8ref.py": "add7bf864b5841ce6c10c07524942e93c538430b4904b0b2471efe3fa2658134", "reference/r8session.py": "316c7782ab510e03ab0e1fdc1426055448c287d96e8f684e00bb8e66724d6916", "requirements-dev.txt": "7615cdb4d14c77a941e81dff308882ca529e021441a7a3a25554878ccffe9b6f", "tests/mobility_netns.py": "3d480e8bb2819aa0724c21bdc985417726077c0de74c3537f113dc9a6fa2ac7c"},
-    "source_map_sha256": "947acaf75cf79b4c7d1c8367f550a7cdf2bea9bb303258dffcf8e04e9e881be6",
+    "runner_semantics": "Frozen against current workflow, bench/q1.py, and tests/mobility_netns.py semantics; implementation source identity is the canonical sorted JSON SHA-256 map below and is independently bound to the supplied git commit.",
+    "source_map": {
+      ".github/workflows/q1-full.yml": "188e6b3be58d1c6eb76c206f02277e1373f4619fe10b3c5dd7f013c30e1e1f7b",
+      "bench/q1.py": "621e8dea74deff987c456fafa47ed3b38775859a22c663cdcb4a824079fe40af",
+      "reference/r8mobility.py": "c9da7638a77934d83fa0691a41e9890dc289e41078dd04c36f355c192df4db88",
+      "reference/r8move.py": "dc553753a3a13eeb4cb184a9d3c6bce07d96d75a1a1e6279d1412cac42de6f96",
+      "reference/r8ref.py": "add7bf864b5841ce6c10c07524942e93c538430b4904b0b2471efe3fa2658134",
+      "reference/r8session.py": "f049418c818e301eee3880a1a5d68b9731b311cc0c9e2ed8b9e7952071ee8540",
+      "requirements-dev.txt": "7615cdb4d14c77a941e81dff308882ca529e021441a7a3a25554878ccffe9b6f",
+      "spec/0004-wire-format-v0.2.md": "845dc82ba63da281a458c0566a916c54b0636ba52d1300bf6bb251e971804279",
+      "spec/0005-session-security-v0.1.md": "3bf91be91847bd9a1a37da89161abd88c4491901a30576cd6c210977da19e8d9",
+      "spec/0006-mobility-v0.1.md": "71b493ac7d1609fe6d3317993e815455ac528371025b5b1697929bb23bf1b165",
+      "spec/parameters-v0.1.md": "0edc4b0fd693acbbc2e20bcdc23ea6a87b6e4afeab05fafc523a59fb8d9e060a",
+      "tests/mobility_netns.py": "2f6a7fda9c8278c605dd7128ca7de03e8d4841fcf5d37714607d9091128ba1db"
+    },
+    "source_map_sha256": "41035b381d09112693bd43c6961b77d3f9955ef7703883ab2f7610a26cee0c2b",
     "verification": "Before publication regenerate from raw data, recompute source-map identity, and verify it separately against the exact supplied git commit; mismatch invalidates publication."
   },
-  "analysis": {"estimators": ["failure-rate", "outage-p50", "outage-p95", "block-bootstrap-95-percent-CI"], "quantiles": ["p50", "p95"], "forbidden_quantiles": ["p99"], "quantile_convention": "nearest-rank: sorted[min(n-1,floor((n-1)q))]", "block_bootstrap_95_percent_ci": {"object_fields_exactly": ["failure_rate", "outage_p50_ns", "outage_p95_ns"], "value_form": "each field is [2.5th percentile, 97.5th percentile] or null when undefined", "resamples": 10000, "seed": "r8-q1-block-bootstrap-v2", "sampling": "deterministically resample complete blocks with replacement", "outage_quantiles": "nonfailed uncensored outage values only"}, "post_hoc_changes": "require a new labeled series"},
-  "result_fields_prohibited": ["observed_values", "digests", "summary", "confidence_intervals", "results"]
+  "analysis": {
+    "estimators": [
+      "failure-rate",
+      "outage-p50",
+      "outage-p95",
+      "block-bootstrap-95-percent-CI"
+    ],
+    "quantiles": [
+      "p50",
+      "p95"
+    ],
+    "forbidden_quantiles": [
+      "p99"
+    ],
+    "quantile_convention": "nearest-rank: sorted[min(n-1,floor((n-1)q))]",
+    "block_bootstrap_95_percent_ci": {
+      "object_fields_exactly": [
+        "failure_rate",
+        "outage_p50_ns",
+        "outage_p95_ns"
+      ],
+      "value_form": "each field is [2.5th percentile, 97.5th percentile] or null when undefined",
+      "resamples": 10000,
+      "seed": "r8-q1-block-bootstrap-v2",
+      "sampling": "deterministically resample complete blocks with replacement",
+      "outage_quantiles": "nonfailed uncensored outage values only"
+    },
+    "post_hoc_changes": "require a new labeled series"
+  },
+  "result_fields_prohibited": [
+    "observed_values",
+    "digests",
+    "summary",
+    "confidence_intervals",
+    "results"
+  ]
 }

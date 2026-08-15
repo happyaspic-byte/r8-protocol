@@ -1,0 +1,37 @@
+{
+  "$schema":"https://json-schema.org/draft/2020-12/schema",
+  "$id":"q2-packet-v5.schema.json",
+  "title":"Q2 v5 logical packet row",
+  "type":"object",
+  "additionalProperties":false,
+  "required":["trial_id","packet_index","scheduled_relative_ns","send_relative_ns","mechanism_active_path_count","authenticated_delivery","suppression","outcome","path_A_received_relative_ns","path_B_received_relative_ns","path_A_receive_count","path_B_receive_count","first_authenticated_receive_relative_ns","on_schedule"],
+  "properties":{
+    "trial_id":{"$ref":"#/$defs/id"},
+    "packet_index":{"type":"integer","minimum":0,"maximum":399},
+    "scheduled_relative_ns":{"type":"integer","minimum":-1000000000,"maximum":2990000000,"description":"Exactly -1000000000 + packet_index * 10000000."},
+    "send_relative_ns":{"type":["integer","null"],"description":"Null exactly when outcome is not_sent; otherwise it is at least scheduled_relative_ns, enforced by the relational contract validator."},
+    "mechanism_active_path_count":{"enum":[1,2]},
+    "authenticated_delivery":{"type":"boolean"},
+    "suppression":{"enum":["none","duplicate","not_received","trial_failure"]},
+    "outcome":{"enum":["delivered","late","lost","not_sent"]},
+    "path_A_received_relative_ns":{"type":["integer","null"],"minimum":-1000000000,"maximum":2999999999},
+    "path_B_received_relative_ns":{"type":["integer","null"],"minimum":-1000000000,"maximum":2999999999},
+    "path_A_receive_count":{"type":"integer","minimum":0,"maximum":1},
+    "path_B_receive_count":{"type":"integer","minimum":0,"maximum":1},
+    "first_authenticated_receive_relative_ns":{"type":["integer","null"],"minimum":-1000000000,"maximum":2999999999},
+    "on_schedule":{"type":["boolean","null"]}
+  },
+  "allOf":[
+    {"if":{"properties":{"path_A_receive_count":{"const":0}}},"then":{"properties":{"path_A_received_relative_ns":{"const":null}}}},
+    {"if":{"properties":{"path_B_receive_count":{"const":0}}},"then":{"properties":{"path_B_received_relative_ns":{"const":null}}}},
+    {"if":{"properties":{"path_A_receive_count":{"minimum":1}}},"then":{"properties":{"path_A_received_relative_ns":{"type":"integer"}}}},
+    {"if":{"properties":{"path_B_receive_count":{"minimum":1}}},"then":{"properties":{"path_B_received_relative_ns":{"type":"integer"}}}},
+    {"if":{"properties":{"path_A_received_relative_ns":{"type":"integer"}}},"then":{"properties":{"path_A_receive_count":{"minimum":1}}}},
+    {"if":{"properties":{"path_B_received_relative_ns":{"type":"integer"}}},"then":{"properties":{"path_B_receive_count":{"minimum":1}}}},
+    {"if":{"properties":{"authenticated_delivery":{"const":true}}},"then":{"properties":{"first_authenticated_receive_relative_ns":{"type":"integer"},"on_schedule":{"type":"boolean"},"suppression":{"enum":["none","duplicate"]},"outcome":{"enum":["delivered","late"]}}}},
+    {"if":{"properties":{"authenticated_delivery":{"const":false}}},"then":{"properties":{"first_authenticated_receive_relative_ns":{"const":null},"on_schedule":{"const":null},"outcome":{"enum":["lost","not_sent"]}}}},
+    {"if":{"properties":{"outcome":{"const":"not_sent"}}},"then":{"properties":{"send_relative_ns":{"const":null},"authenticated_delivery":{"const":false},"suppression":{"const":"trial_failure"},"path_A_receive_count":{"const":0},"path_B_receive_count":{"const":0}}}},
+    {"if":{"properties":{"mechanism_active_path_count":{"const":1}}},"then":{"anyOf":[{"properties":{"path_A_receive_count":{"const":0},"path_A_received_relative_ns":{"const":null}}},{"properties":{"path_B_receive_count":{"const":0},"path_B_received_relative_ns":{"const":null}}}]}}
+  ],
+  "$defs":{"id":{"type":"string","pattern":"^[a-f0-9]{64}$"}}
+}

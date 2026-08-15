@@ -45,8 +45,34 @@ jobs:
           HOST_EPOCH: ${{ inputs.host_epoch }}
         run: |
           PYTHON_BIN="$(command -v python3)"
-          "$PYTHON_BIN" -c 'import hashlib, json, os, pathlib, runpy; output = pathlib.Path(os.environ["RUNNER_TEMP"]) / "q3-full"; q3 = runpy.run_path("bench/q3.py"); manifest = json.loads((output / "run-manifest.json").read_text()); environment = json.loads((output / "environment.json").read_text()); rows = [json.loads(line) for line in (output / "raw.jsonl").read_text().splitlines()]; assert len(rows) == 4200 and manifest["row_count"] == 4200 and manifest["failures"] == 0 and manifest["status"] == "completed" and manifest["host_epoch"] == os.environ["HOST_EPOCH"] and manifest["git_commit"] == os.environ["GITHUB_SHA"] and manifest["source_identity"] == q3["source_identity"]() and manifest["isolated_netns_proof"] is True and environment["isolated_netns_proof"] is True; assert all(row["status"] == "success" and row["network"]["rx_bytes"] == row["network"]["tx_bytes"] and row["network"]["rx_packets"] == row["network"]["tx_packets"] for row in rows); assert set(manifest["sha256"]) == {"raw.jsonl", "environment.json", "summary.json"}; assert all(hashlib.sha256((output / name).read_bytes()).hexdigest() == digest for name, digest in manifest["sha256"].items())'
+          "$PYTHON_BIN" - <<'PY'
+          import hashlib, json, os, pathlib, runpy
+          output = pathlib.Path(os.environ["RUNNER_TEMP"]) / "q3-full"
+          q3 = runpy.run_path("bench/q3.py")
+          manifest = json.loads((output / "run-manifest.json").read_text())
+          environment = json.loads((output / "environment.json").read_text())
+          rows = [json.loads(line) for line in (output / "raw.jsonl").read_text().splitlines()]
+          registry = json.loads(pathlib.Path("bench/protocols/manifest.json").read_text())
+          q3_registry = next(item for item in registry["preregistrations"] if item["protocol_id"] == "Q3")
+          historical = q3_registry["prior_source_evidence"][0]
+          assert q3_registry["status"] == "frozen-preregistered-no-current-source-results"
+          assert historical["status"] == "historical-prior-source-evidence-not-current-contract"
+          assert historical["contract_sha256"] == "86de498d4690d9de98333d8a99b74c985e8561e57f060b7c6bb68a833ba58cbf"
+          assert len(rows) == 4200 and manifest["row_count"] == 4200
+          assert manifest["status"] == "completed-evidence" and manifest["publication_eligible"] is True
+          assert manifest["runtime_outcome"] == ("success" if manifest["failures"] == 0 else "failures-retained")
+          assert manifest["host_epoch"] == os.environ["HOST_EPOCH"] and manifest["git_commit"] == os.environ["GITHUB_SHA"]
+          assert manifest["source_identity"] == q3["source_identity"]() == manifest["implementation_source_identity"]
+          assert environment["source_identity"] == manifest["source_identity"] and environment["implementation_sources"] == manifest["implementation_sources"]
+          assert environment["isolated_netns_proof"] is True and manifest["isolated_netns_proof"] is True
+          assert environment["workflow_sha256"] == manifest["implementation_sources"][".github/workflows/q3-full.yml"]
+          assert all(group["warmups"] == 50 and group["measured"] == 1000 and group["rows"] == 1050 for group in manifest["group_counts"])
+          assert all(row["network"]["rx_bytes"] == row["network"]["tx_bytes"] and row["network"]["rx_packets"] == row["network"]["tx_packets"] for row in rows)
+          assert set(manifest["sha256"]) == {"raw.jsonl", "environment.json", "summary.json"}
+          assert all(hashlib.sha256((output / name).read_bytes()).hexdigest() == digest for name, digest in manifest["sha256"].items())
+          PY
       - name: Upload Q3 package
+        id: upload
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
         with:
@@ -54,3 +80,10 @@ jobs:
           path: ${{ runner.temp }}/q3-full
           if-no-files-found: warn
           retention-days: 30
+      - name: Bind Q3 artifact digest
+        if: always()
+        env:
+          ARTIFACT_DIGEST: ${{ steps.upload.outputs.artifact-digest }}
+        run: |
+          [[ "$ARTIFACT_DIGEST" =~ ^[0-9a-f]{64}$ ]]
+          printf '### Q3 evidence\n\n`artifact-digest: %s`\n' "$ARTIFACT_DIGEST" >> "$GITHUB_STEP_SUMMARY"

@@ -4235,48 +4235,1682 @@
       }
     },
     {
-      "id": "redundant-positive-bytes",
-      "status": "planned",
+      "id": "redundant-p3-data-slot0",
+      "status": "real",
       "kind": "positive-bytes",
       "coverage": [
-        "redundant"
+        "redundant",
+        "profile3-data"
       ],
       "normative_references": {
         "sections": [
           {
             "document": "spec/0008-redundant-v0.1.md",
             "section": "2"
-          }
-        ],
-        "parameter_ids": [
-          "P-PATH-SLOTS"
-        ]
-      }
-    },
-    {
-      "id": "binding-and-delivery-negative-errors",
-      "status": "planned",
-      "kind": "negative-error",
-      "coverage": [
-        "binding",
-        "slot",
-        "divergent delivery"
-      ],
-      "normative_references": {
-        "sections": [
-          {
-            "document": "spec/0006-mobility-v0.1.md",
-            "section": "4"
           },
           {
             "document": "spec/0008-redundant-v0.1.md",
             "section": "3"
+          },
+          {
+            "document": "spec/0005-session-security-v0.1.md",
+            "section": "2.1"
           }
         ],
         "parameter_ids": [
           "P-PATH-SLOTS",
-          "P-DELIVERY-ID"
+          "P-DELIVERY-ID",
+          "P-REPLAY-WINDOW",
+          "P-REPLAY-FORWARD-GAP-MAX"
         ]
+      },
+      "expected_bytes": "8300003f03400100010203040506070820010db800000000000000000000000120010db80000000000000000000000020601030000000000000000011112131415161718735fe3853808bf81d5f71c6605ffc8421d921b3ec8e9ea0fc47bc31d467f2d75e05e85ade74a0d12f15b16",
+      "case_ids": [
+        "p3-data-slot0"
+      ],
+      "artifact": {
+        "path": "tests/vectors/redundant-v0.1.json",
+        "sha256": "3e1c8cdee7d5857344cb8ea764e05e1dbfff9fa71dec54ab2457495e5b1510b0",
+        "provenance": {
+          "source_revision": "independent-synthetic-v1",
+          "producer": "independent-maintained-cryptography-construction"
+        }
+      }
+    },
+    {
+      "id": "redundant-p3-data-slot1",
+      "status": "real",
+      "kind": "positive-bytes",
+      "coverage": [
+        "redundant",
+        "profile3-data"
+      ],
+      "normative_references": {
+        "sections": [
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "2"
+          },
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "3"
+          },
+          {
+            "document": "spec/0005-session-security-v0.1.md",
+            "section": "2.1"
+          }
+        ],
+        "parameter_ids": [
+          "P-PATH-SLOTS",
+          "P-DELIVERY-ID",
+          "P-REPLAY-WINDOW",
+          "P-REPLAY-FORWARD-GAP-MAX"
+        ]
+      },
+      "expected_bytes": "8300003f03400301010203040506070820010db800000000000000000000000120010db80000000000000000000000020601030000000000000000011112131415161718fb680ee7738640417821977d7cdb0505c4254bfe7b9c4df8109ca8130917eac918b4f9e2a23ac3810a93db",
+      "case_ids": [
+        "p3-data-slot1"
+      ],
+      "artifact": {
+        "path": "tests/vectors/redundant-v0.1.json",
+        "sha256": "3e1c8cdee7d5857344cb8ea764e05e1dbfff9fa71dec54ab2457495e5b1510b0",
+        "provenance": {
+          "source_revision": "independent-synthetic-v1",
+          "producer": "independent-maintained-cryptography-construction"
+        }
+      }
+    },
+    {
+      "id": "redundant-p3-empty-slot0",
+      "status": "real",
+      "kind": "positive-bytes",
+      "coverage": [
+        "redundant",
+        "profile3-data"
+      ],
+      "normative_references": {
+        "sections": [
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "2"
+          },
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "3"
+          },
+          {
+            "document": "spec/0005-session-security-v0.1.md",
+            "section": "2.1"
+          }
+        ],
+        "parameter_ids": [
+          "P-PATH-SLOTS",
+          "P-DELIVERY-ID",
+          "P-REPLAY-WINDOW",
+          "P-REPLAY-FORWARD-GAP-MAX"
+        ]
+      },
+      "expected_bytes": "8300002403400100010203040506070820010db800000000000000000000000120010db800000000000000000000000206010300000000000000000211121314151617195607ec43e2c5ab813385fb32419f9f75",
+      "case_ids": [
+        "p3-empty-slot0"
+      ],
+      "artifact": {
+        "path": "tests/vectors/redundant-v0.1.json",
+        "sha256": "3e1c8cdee7d5857344cb8ea764e05e1dbfff9fa71dec54ab2457495e5b1510b0",
+        "provenance": {
+          "source_revision": "independent-synthetic-v1",
+          "producer": "independent-maintained-cryptography-construction"
+        }
+      }
+    },
+    {
+      "id": "redundant-p3-boundary-slot0",
+      "status": "real",
+      "kind": "positive-bytes",
+      "coverage": [
+        "redundant",
+        "profile3-data"
+      ],
+      "normative_references": {
+        "sections": [
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "2"
+          },
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "3"
+          },
+          {
+            "document": "spec/0005-session-security-v0.1.md",
+            "section": "2.1"
+          }
+        ],
+        "parameter_ids": [
+          "P-PATH-SLOTS",
+          "P-DELIVERY-ID",
+          "P-REPLAY-WINDOW",
+          "P-REPLAY-FORWARD-GAP-MAX"
+        ]
+      },
+      "expected_bytes": "830004d003400100010203040506070820010db800000000000000000000000120010db8000000000000000000000002060103000000000000000003111213141516171a341e9c5160c6066de4bdc61f2a5c0be18727cf49cdadacb4bc76dd4dbd1b9b7002ce83d99814851b54b5437ba8f8da603f527152371acfabd5e40f7d9039b632443baea9578cc0a90a1910f84ffa323195a7348cf804b93d22748d48652341faa5633b5e9cb52704afbedc6817f90978fa68cbfeeeebe51a3dd92fb0cb24d39269fa356bace617b3e0b546e0acc309573b15bf8af7d4e62ee24e1c1aa06879f8408fa34ce852365c745229e3c4bd239c2284264e2364aabd85d1fa8e4e4886b177cf28ee55f17f3c479ae812130bbec6a25d67c072065ffa674bb5dc54b359f093665282642c4132d5562ef90ac5acbe465bd98ecab90ca01bc2e0039e1bc68d13277d9f46fe5e0e466327361285259c96726e7336c2bf6663b739474ea9d6c41133477d1f6f6f5b1d47ad88801e09f0d27b6492f069a0110b453a2e9d1cdca4befeb5642f78a2ee6d4a85e26f105a6af50cd6f79fd662045ef603d84bf6d273bb9ae43fb35914b5c5bcad2b1d302ec4b3c320ae78485a11ca64d5b8b90b12a579d14c90dde767c9bca3e6f2fc69f1bf3f46a4f19772d45e00114a069c9c71e7896744e82813d53913d9fb32d7c33dec322b93189103941635860470cfee3c7c8b20645acc831e116221c7de9b10da7c9156c214a1744bb02b1da5faf8908db0602d71fab73f5143ed64569233ec7ca51f74e5a1e279b3f66b1af9a31bddaa619e207dcb0fc37ad39e003da8af28638a9d198be0e7153c1badf2891886cdd0eb12f43fe2ffbf59522cb51d14550cd5d0f3698c7d18b1cf7446f1fa75204b048a6aa337259be6e39f63f9ffbbe1275d6faf2963a94655042933b83f9c2a07f95db7468b9f6a8ca94afe4f24ced8c09025c3d1311e522b44b3cc1a5f7855e24666d86b419e2675d62b3a338694f0427b4a31ec42b8d97c975fc3316a57225467022dbcb7b4e7a163631ecd9e5d30b4a9d101e1ff1c8f568f0643c82d45c7168bd0f32dccbf09f750d73063b505a6b19c7fcb3dd58257ff9c85751c606401b6ea9f11309ac583afa29aab680d5c83ec538d41bb8a5c7f56a23213735d344d5ca051771918209592958e53fdcc7bed7392965af9b6ddd9d0328a54ecad14c70d11845a5e38ac8430a7d9fc8c0fe7e703a416bb86093593579496b4ee351153a9b01f2c47f2fd280901c07b270b0f1b602d000c44a069ea9c5e89484412426505e03023e7395ea5216f5c1abd7453184503a8bca554c3b68bc75478f31bc4ec592ad30e4bc60256d521bf75ac4291bab4518769c65ef7c70a007588b4c816c2c0f8785e23a8f3d0eed6660f83b44c760e412ef387e84402063525172b33c5f8ae82de86e5788f9861df4decb2b78738c196ba25d9a1ffc1ce0d2ed5e66277d9b433421e81ae5e6ee4f55764bb4a53c711a78f454242c49f6e78178a90e0284441517f4970d87eda6c73792773fad4964587b316217e854fd7ff57090418adca266999e976d6aae19c3e0eafde0f713309ef32c24fc1f4e1b0d9204c35ad028eb13a06c9e39495986bf142aeac5aa64dcb11ab96d786e8dc0a970cf5d54d8a6b84616367d9bec47b6479c9aa5855a8b32e939b03b29bea0e6ff250cda8b31156e79bcdbfdbfac853683d2ba28c25db7f749e5ef33c1a168d4e62ecea3af473501bc8171dfc441aad5a5fec21116947c540751f86ecc8911a79d0e37d6b0ea0",
+      "case_ids": [
+        "p3-boundary-slot0"
+      ],
+      "artifact": {
+        "path": "tests/vectors/redundant-v0.1.json",
+        "sha256": "3e1c8cdee7d5857344cb8ea764e05e1dbfff9fa71dec54ab2457495e5b1510b0",
+        "provenance": {
+          "source_revision": "independent-synthetic-v1",
+          "producer": "independent-maintained-cryptography-construction"
+        }
+      }
+    },
+    {
+      "id": "redundant-delivery-zero",
+      "status": "real",
+      "kind": "negative-error",
+      "coverage": [
+        "redundant",
+        "negative-mutation"
+      ],
+      "normative_references": {
+        "sections": [
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "2"
+          },
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "3"
+          },
+          {
+            "document": "spec/0005-session-security-v0.1.md",
+            "section": "2.1"
+          }
+        ],
+        "parameter_ids": [
+          "P-PATH-SLOTS",
+          "P-DELIVERY-ID",
+          "P-REPLAY-WINDOW",
+          "P-REPLAY-FORWARD-GAP-MAX"
+        ]
+      },
+      "expected_error_category": "E-PATH",
+      "case_ids": [
+        "delivery-zero"
+      ],
+      "artifact": {
+        "path": "tests/vectors/redundant-v0.1.json",
+        "sha256": "3e1c8cdee7d5857344cb8ea764e05e1dbfff9fa71dec54ab2457495e5b1510b0",
+        "provenance": {
+          "source_revision": "independent-synthetic-v1",
+          "producer": "independent-maintained-cryptography-construction"
+        }
+      }
+    },
+    {
+      "id": "redundant-delivery-max",
+      "status": "real",
+      "kind": "negative-error",
+      "coverage": [
+        "redundant",
+        "negative-mutation"
+      ],
+      "normative_references": {
+        "sections": [
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "2"
+          },
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "3"
+          },
+          {
+            "document": "spec/0005-session-security-v0.1.md",
+            "section": "2.1"
+          }
+        ],
+        "parameter_ids": [
+          "P-PATH-SLOTS",
+          "P-DELIVERY-ID",
+          "P-REPLAY-WINDOW",
+          "P-REPLAY-FORWARD-GAP-MAX"
+        ]
+      },
+      "expected_error_category": "E-PATH",
+      "case_ids": [
+        "delivery-max"
+      ],
+      "artifact": {
+        "path": "tests/vectors/redundant-v0.1.json",
+        "sha256": "3e1c8cdee7d5857344cb8ea764e05e1dbfff9fa71dec54ab2457495e5b1510b0",
+        "provenance": {
+          "source_revision": "independent-synthetic-v1",
+          "producer": "independent-maintained-cryptography-construction"
+        }
+      }
+    },
+    {
+      "id": "redundant-truncate-before-prefix",
+      "status": "real",
+      "kind": "negative-error",
+      "coverage": [
+        "redundant",
+        "negative-mutation"
+      ],
+      "normative_references": {
+        "sections": [
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "2"
+          },
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "3"
+          },
+          {
+            "document": "spec/0005-session-security-v0.1.md",
+            "section": "2.1"
+          }
+        ],
+        "parameter_ids": [
+          "P-PATH-SLOTS",
+          "P-DELIVERY-ID",
+          "P-REPLAY-WINDOW",
+          "P-REPLAY-FORWARD-GAP-MAX"
+        ]
+      },
+      "expected_error_category": "TRUNCATED",
+      "case_ids": [
+        "truncate-before-prefix"
+      ],
+      "artifact": {
+        "path": "tests/vectors/redundant-v0.1.json",
+        "sha256": "3e1c8cdee7d5857344cb8ea764e05e1dbfff9fa71dec54ab2457495e5b1510b0",
+        "provenance": {
+          "source_revision": "independent-synthetic-v1",
+          "producer": "independent-maintained-cryptography-construction"
+        }
+      }
+    },
+    {
+      "id": "redundant-truncate-prefix",
+      "status": "real",
+      "kind": "negative-error",
+      "coverage": [
+        "redundant",
+        "negative-mutation"
+      ],
+      "normative_references": {
+        "sections": [
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "2"
+          },
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "3"
+          },
+          {
+            "document": "spec/0005-session-security-v0.1.md",
+            "section": "2.1"
+          }
+        ],
+        "parameter_ids": [
+          "P-PATH-SLOTS",
+          "P-DELIVERY-ID",
+          "P-REPLAY-WINDOW",
+          "P-REPLAY-FORWARD-GAP-MAX"
+        ]
+      },
+      "expected_error_category": "TRUNCATED",
+      "case_ids": [
+        "truncate-prefix"
+      ],
+      "artifact": {
+        "path": "tests/vectors/redundant-v0.1.json",
+        "sha256": "3e1c8cdee7d5857344cb8ea764e05e1dbfff9fa71dec54ab2457495e5b1510b0",
+        "provenance": {
+          "source_revision": "independent-synthetic-v1",
+          "producer": "independent-maintained-cryptography-construction"
+        }
+      }
+    },
+    {
+      "id": "redundant-truncate-counter",
+      "status": "real",
+      "kind": "negative-error",
+      "coverage": [
+        "redundant",
+        "negative-mutation"
+      ],
+      "normative_references": {
+        "sections": [
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "2"
+          },
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "3"
+          },
+          {
+            "document": "spec/0005-session-security-v0.1.md",
+            "section": "2.1"
+          }
+        ],
+        "parameter_ids": [
+          "P-PATH-SLOTS",
+          "P-DELIVERY-ID",
+          "P-REPLAY-WINDOW",
+          "P-REPLAY-FORWARD-GAP-MAX"
+        ]
+      },
+      "expected_error_category": "TRUNCATED",
+      "case_ids": [
+        "truncate-counter"
+      ],
+      "artifact": {
+        "path": "tests/vectors/redundant-v0.1.json",
+        "sha256": "3e1c8cdee7d5857344cb8ea764e05e1dbfff9fa71dec54ab2457495e5b1510b0",
+        "provenance": {
+          "source_revision": "independent-synthetic-v1",
+          "producer": "independent-maintained-cryptography-construction"
+        }
+      }
+    },
+    {
+      "id": "redundant-truncate-delivery-id",
+      "status": "real",
+      "kind": "negative-error",
+      "coverage": [
+        "redundant",
+        "negative-mutation"
+      ],
+      "normative_references": {
+        "sections": [
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "2"
+          },
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "3"
+          },
+          {
+            "document": "spec/0005-session-security-v0.1.md",
+            "section": "2.1"
+          }
+        ],
+        "parameter_ids": [
+          "P-PATH-SLOTS",
+          "P-DELIVERY-ID",
+          "P-REPLAY-WINDOW",
+          "P-REPLAY-FORWARD-GAP-MAX"
+        ]
+      },
+      "expected_error_category": "TRUNCATED",
+      "case_ids": [
+        "truncate-delivery-id"
+      ],
+      "artifact": {
+        "path": "tests/vectors/redundant-v0.1.json",
+        "sha256": "3e1c8cdee7d5857344cb8ea764e05e1dbfff9fa71dec54ab2457495e5b1510b0",
+        "provenance": {
+          "source_revision": "independent-synthetic-v1",
+          "producer": "independent-maintained-cryptography-construction"
+        }
+      }
+    },
+    {
+      "id": "redundant-truncate-tag",
+      "status": "real",
+      "kind": "negative-error",
+      "coverage": [
+        "redundant",
+        "negative-mutation"
+      ],
+      "normative_references": {
+        "sections": [
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "2"
+          },
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "3"
+          },
+          {
+            "document": "spec/0005-session-security-v0.1.md",
+            "section": "2.1"
+          }
+        ],
+        "parameter_ids": [
+          "P-PATH-SLOTS",
+          "P-DELIVERY-ID",
+          "P-REPLAY-WINDOW",
+          "P-REPLAY-FORWARD-GAP-MAX"
+        ]
+      },
+      "expected_error_category": "TRUNCATED",
+      "case_ids": [
+        "truncate-tag"
+      ],
+      "artifact": {
+        "path": "tests/vectors/redundant-v0.1.json",
+        "sha256": "3e1c8cdee7d5857344cb8ea764e05e1dbfff9fa71dec54ab2457495e5b1510b0",
+        "provenance": {
+          "source_revision": "independent-synthetic-v1",
+          "producer": "independent-maintained-cryptography-construction"
+        }
+      }
+    },
+    {
+      "id": "redundant-wrong-profile",
+      "status": "real",
+      "kind": "negative-error",
+      "coverage": [
+        "redundant",
+        "negative-mutation"
+      ],
+      "normative_references": {
+        "sections": [
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "2"
+          },
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "3"
+          },
+          {
+            "document": "spec/0005-session-security-v0.1.md",
+            "section": "2.1"
+          }
+        ],
+        "parameter_ids": [
+          "P-PATH-SLOTS",
+          "P-DELIVERY-ID",
+          "P-REPLAY-WINDOW",
+          "P-REPLAY-FORWARD-GAP-MAX"
+        ]
+      },
+      "expected_error_category": "PROFILE",
+      "case_ids": [
+        "wrong-profile"
+      ],
+      "artifact": {
+        "path": "tests/vectors/redundant-v0.1.json",
+        "sha256": "3e1c8cdee7d5857344cb8ea764e05e1dbfff9fa71dec54ab2457495e5b1510b0",
+        "provenance": {
+          "source_revision": "independent-synthetic-v1",
+          "producer": "independent-maintained-cryptography-construction"
+        }
+      }
+    },
+    {
+      "id": "redundant-wrong-flags",
+      "status": "real",
+      "kind": "negative-error",
+      "coverage": [
+        "redundant",
+        "negative-mutation"
+      ],
+      "normative_references": {
+        "sections": [
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "2"
+          },
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "3"
+          },
+          {
+            "document": "spec/0005-session-security-v0.1.md",
+            "section": "2.1"
+          }
+        ],
+        "parameter_ids": [
+          "P-PATH-SLOTS",
+          "P-DELIVERY-ID",
+          "P-REPLAY-WINDOW",
+          "P-REPLAY-FORWARD-GAP-MAX"
+        ]
+      },
+      "expected_error_category": "FLAGS",
+      "case_ids": [
+        "wrong-flags"
+      ],
+      "artifact": {
+        "path": "tests/vectors/redundant-v0.1.json",
+        "sha256": "3e1c8cdee7d5857344cb8ea764e05e1dbfff9fa71dec54ab2457495e5b1510b0",
+        "provenance": {
+          "source_revision": "independent-synthetic-v1",
+          "producer": "independent-maintained-cryptography-construction"
+        }
+      }
+    },
+    {
+      "id": "redundant-wrong-slot",
+      "status": "real",
+      "kind": "negative-error",
+      "coverage": [
+        "redundant",
+        "negative-mutation"
+      ],
+      "normative_references": {
+        "sections": [
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "2"
+          },
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "3"
+          },
+          {
+            "document": "spec/0005-session-security-v0.1.md",
+            "section": "2.1"
+          }
+        ],
+        "parameter_ids": [
+          "P-PATH-SLOTS",
+          "P-DELIVERY-ID",
+          "P-REPLAY-WINDOW",
+          "P-REPLAY-FORWARD-GAP-MAX"
+        ]
+      },
+      "expected_error_category": "PATH_SLOT",
+      "case_ids": [
+        "wrong-slot"
+      ],
+      "artifact": {
+        "path": "tests/vectors/redundant-v0.1.json",
+        "sha256": "3e1c8cdee7d5857344cb8ea764e05e1dbfff9fa71dec54ab2457495e5b1510b0",
+        "provenance": {
+          "source_revision": "independent-synthetic-v1",
+          "producer": "independent-maintained-cryptography-construction"
+        }
+      }
+    },
+    {
+      "id": "redundant-wrong-key",
+      "status": "real",
+      "kind": "negative-error",
+      "coverage": [
+        "redundant",
+        "negative-mutation"
+      ],
+      "normative_references": {
+        "sections": [
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "2"
+          },
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "3"
+          },
+          {
+            "document": "spec/0005-session-security-v0.1.md",
+            "section": "2.1"
+          }
+        ],
+        "parameter_ids": [
+          "P-PATH-SLOTS",
+          "P-DELIVERY-ID",
+          "P-REPLAY-WINDOW",
+          "P-REPLAY-FORWARD-GAP-MAX"
+        ]
+      },
+      "expected_error_category": "AUTH_FAILED",
+      "case_ids": [
+        "wrong-key"
+      ],
+      "artifact": {
+        "path": "tests/vectors/redundant-v0.1.json",
+        "sha256": "3e1c8cdee7d5857344cb8ea764e05e1dbfff9fa71dec54ab2457495e5b1510b0",
+        "provenance": {
+          "source_revision": "independent-synthetic-v1",
+          "producer": "independent-maintained-cryptography-construction"
+        }
+      }
+    },
+    {
+      "id": "redundant-wrong-header",
+      "status": "real",
+      "kind": "negative-error",
+      "coverage": [
+        "redundant",
+        "negative-mutation"
+      ],
+      "normative_references": {
+        "sections": [
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "2"
+          },
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "3"
+          },
+          {
+            "document": "spec/0005-session-security-v0.1.md",
+            "section": "2.1"
+          }
+        ],
+        "parameter_ids": [
+          "P-PATH-SLOTS",
+          "P-DELIVERY-ID",
+          "P-REPLAY-WINDOW",
+          "P-REPLAY-FORWARD-GAP-MAX"
+        ]
+      },
+      "expected_error_category": "AUTH_FAILED",
+      "case_ids": [
+        "wrong-header"
+      ],
+      "artifact": {
+        "path": "tests/vectors/redundant-v0.1.json",
+        "sha256": "3e1c8cdee7d5857344cb8ea764e05e1dbfff9fa71dec54ab2457495e5b1510b0",
+        "provenance": {
+          "source_revision": "independent-synthetic-v1",
+          "producer": "independent-maintained-cryptography-construction"
+        }
+      }
+    },
+    {
+      "id": "redundant-hop-mutation-valid",
+      "status": "real",
+      "kind": "state-transition",
+      "coverage": [
+        "redundant",
+        "state-transition"
+      ],
+      "normative_references": {
+        "sections": [
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "2"
+          },
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "3"
+          },
+          {
+            "document": "spec/0005-session-security-v0.1.md",
+            "section": "2.1"
+          }
+        ],
+        "parameter_ids": [
+          "P-PATH-SLOTS",
+          "P-DELIVERY-ID",
+          "P-REPLAY-WINDOW",
+          "P-REPLAY-FORWARD-GAP-MAX"
+        ]
+      },
+      "expected_outcome": "accept",
+      "case_ids": [
+        "hop-mutation-valid"
+      ],
+      "artifact": {
+        "path": "tests/vectors/redundant-v0.1.json",
+        "sha256": "3e1c8cdee7d5857344cb8ea764e05e1dbfff9fa71dec54ab2457495e5b1510b0",
+        "provenance": {
+          "source_revision": "independent-synthetic-v1",
+          "producer": "independent-maintained-cryptography-construction"
+        }
+      }
+    },
+    {
+      "id": "redundant-counter-zero",
+      "status": "real",
+      "kind": "negative-error",
+      "coverage": [
+        "redundant",
+        "negative-mutation"
+      ],
+      "normative_references": {
+        "sections": [
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "2"
+          },
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "3"
+          },
+          {
+            "document": "spec/0005-session-security-v0.1.md",
+            "section": "2.1"
+          }
+        ],
+        "parameter_ids": [
+          "P-PATH-SLOTS",
+          "P-DELIVERY-ID",
+          "P-REPLAY-WINDOW",
+          "P-REPLAY-FORWARD-GAP-MAX"
+        ]
+      },
+      "expected_error_category": "E-REPLAY",
+      "case_ids": [
+        "counter-zero"
+      ],
+      "artifact": {
+        "path": "tests/vectors/redundant-v0.1.json",
+        "sha256": "3e1c8cdee7d5857344cb8ea764e05e1dbfff9fa71dec54ab2457495e5b1510b0",
+        "provenance": {
+          "source_revision": "independent-synthetic-v1",
+          "producer": "independent-maintained-cryptography-construction"
+        }
+      }
+    },
+    {
+      "id": "redundant-counter-max",
+      "status": "real",
+      "kind": "negative-error",
+      "coverage": [
+        "redundant",
+        "negative-mutation"
+      ],
+      "normative_references": {
+        "sections": [
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "2"
+          },
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "3"
+          },
+          {
+            "document": "spec/0005-session-security-v0.1.md",
+            "section": "2.1"
+          }
+        ],
+        "parameter_ids": [
+          "P-PATH-SLOTS",
+          "P-DELIVERY-ID",
+          "P-REPLAY-WINDOW",
+          "P-REPLAY-FORWARD-GAP-MAX"
+        ]
+      },
+      "expected_error_category": "E-REPLAY",
+      "case_ids": [
+        "counter-max"
+      ],
+      "artifact": {
+        "path": "tests/vectors/redundant-v0.1.json",
+        "sha256": "3e1c8cdee7d5857344cb8ea764e05e1dbfff9fa71dec54ab2457495e5b1510b0",
+        "provenance": {
+          "source_revision": "independent-synthetic-v1",
+          "producer": "independent-maintained-cryptography-construction"
+        }
+      }
+    },
+    {
+      "id": "redundant-replay-same-slot",
+      "status": "real",
+      "kind": "negative-error",
+      "coverage": [
+        "redundant",
+        "negative-mutation"
+      ],
+      "normative_references": {
+        "sections": [
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "2"
+          },
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "3"
+          },
+          {
+            "document": "spec/0005-session-security-v0.1.md",
+            "section": "2.1"
+          }
+        ],
+        "parameter_ids": [
+          "P-PATH-SLOTS",
+          "P-DELIVERY-ID",
+          "P-REPLAY-WINDOW",
+          "P-REPLAY-FORWARD-GAP-MAX"
+        ]
+      },
+      "expected_error_category": "E-REPLAY",
+      "case_ids": [
+        "replay-same-slot"
+      ],
+      "artifact": {
+        "path": "tests/vectors/redundant-v0.1.json",
+        "sha256": "3e1c8cdee7d5857344cb8ea764e05e1dbfff9fa71dec54ab2457495e5b1510b0",
+        "provenance": {
+          "source_revision": "independent-synthetic-v1",
+          "producer": "independent-maintained-cryptography-construction"
+        }
+      }
+    },
+    {
+      "id": "redundant-budget-over-one",
+      "status": "real",
+      "kind": "negative-error",
+      "coverage": [
+        "redundant",
+        "negative-mutation"
+      ],
+      "normative_references": {
+        "sections": [
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "2"
+          },
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "3"
+          },
+          {
+            "document": "spec/0005-session-security-v0.1.md",
+            "section": "2.1"
+          }
+        ],
+        "parameter_ids": [
+          "P-PATH-SLOTS",
+          "P-DELIVERY-ID",
+          "P-REPLAY-WINDOW",
+          "P-REPLAY-FORWARD-GAP-MAX"
+        ]
+      },
+      "expected_error_category": "E-BUDGET",
+      "case_ids": [
+        "budget-over-one"
+      ],
+      "artifact": {
+        "path": "tests/vectors/redundant-v0.1.json",
+        "sha256": "3e1c8cdee7d5857344cb8ea764e05e1dbfff9fa71dec54ab2457495e5b1510b0",
+        "provenance": {
+          "source_revision": "independent-synthetic-v1",
+          "producer": "independent-maintained-cryptography-construction"
+        }
+      }
+    },
+    {
+      "id": "redundant-binding-mismatch",
+      "status": "real",
+      "kind": "negative-error",
+      "coverage": [
+        "redundant",
+        "negative-mutation"
+      ],
+      "normative_references": {
+        "sections": [
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "2"
+          },
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "3"
+          },
+          {
+            "document": "spec/0005-session-security-v0.1.md",
+            "section": "2.1"
+          }
+        ],
+        "parameter_ids": [
+          "P-PATH-SLOTS",
+          "P-DELIVERY-ID",
+          "P-REPLAY-WINDOW",
+          "P-REPLAY-FORWARD-GAP-MAX"
+        ]
+      },
+      "expected_error_category": "E-PATH",
+      "case_ids": [
+        "binding-mismatch"
+      ],
+      "artifact": {
+        "path": "tests/vectors/redundant-v0.1.json",
+        "sha256": "3e1c8cdee7d5857344cb8ea764e05e1dbfff9fa71dec54ab2457495e5b1510b0",
+        "provenance": {
+          "source_revision": "independent-synthetic-v1",
+          "producer": "independent-maintained-cryptography-construction"
+        }
+      }
+    },
+    {
+      "id": "redundant-first-anchor",
+      "status": "real",
+      "kind": "state-transition",
+      "coverage": [
+        "redundant",
+        "state-transition"
+      ],
+      "normative_references": {
+        "sections": [
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "2"
+          },
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "3"
+          },
+          {
+            "document": "spec/0005-session-security-v0.1.md",
+            "section": "2.1"
+          }
+        ],
+        "parameter_ids": [
+          "P-PATH-SLOTS",
+          "P-DELIVERY-ID",
+          "P-REPLAY-WINDOW",
+          "P-REPLAY-FORWARD-GAP-MAX"
+        ]
+      },
+      "expected_outcome": "deliver",
+      "case_ids": [
+        "first-anchor"
+      ],
+      "artifact": {
+        "path": "tests/vectors/redundant-v0.1.json",
+        "sha256": "3e1c8cdee7d5857344cb8ea764e05e1dbfff9fa71dec54ab2457495e5b1510b0",
+        "provenance": {
+          "source_revision": "independent-synthetic-v1",
+          "producer": "independent-maintained-cryptography-construction"
+        }
+      }
+    },
+    {
+      "id": "redundant-lower-reorder",
+      "status": "real",
+      "kind": "state-transition",
+      "coverage": [
+        "redundant",
+        "state-transition"
+      ],
+      "normative_references": {
+        "sections": [
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "2"
+          },
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "3"
+          },
+          {
+            "document": "spec/0005-session-security-v0.1.md",
+            "section": "2.1"
+          }
+        ],
+        "parameter_ids": [
+          "P-PATH-SLOTS",
+          "P-DELIVERY-ID",
+          "P-REPLAY-WINDOW",
+          "P-REPLAY-FORWARD-GAP-MAX"
+        ]
+      },
+      "expected_outcome": "deliver",
+      "case_ids": [
+        "lower-reorder"
+      ],
+      "artifact": {
+        "path": "tests/vectors/redundant-v0.1.json",
+        "sha256": "3e1c8cdee7d5857344cb8ea764e05e1dbfff9fa71dec54ab2457495e5b1510b0",
+        "provenance": {
+          "source_revision": "independent-synthetic-v1",
+          "producer": "independent-maintained-cryptography-construction"
+        }
+      }
+    },
+    {
+      "id": "redundant-equal-suppression",
+      "status": "real",
+      "kind": "state-transition",
+      "coverage": [
+        "redundant",
+        "state-transition"
+      ],
+      "normative_references": {
+        "sections": [
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "2"
+          },
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "3"
+          },
+          {
+            "document": "spec/0005-session-security-v0.1.md",
+            "section": "2.1"
+          }
+        ],
+        "parameter_ids": [
+          "P-PATH-SLOTS",
+          "P-DELIVERY-ID",
+          "P-REPLAY-WINDOW",
+          "P-REPLAY-FORWARD-GAP-MAX"
+        ]
+      },
+      "expected_outcome": "suppress",
+      "case_ids": [
+        "equal-suppression"
+      ],
+      "artifact": {
+        "path": "tests/vectors/redundant-v0.1.json",
+        "sha256": "3e1c8cdee7d5857344cb8ea764e05e1dbfff9fa71dec54ab2457495e5b1510b0",
+        "provenance": {
+          "source_revision": "independent-synthetic-v1",
+          "producer": "independent-maintained-cryptography-construction"
+        }
+      }
+    },
+    {
+      "id": "redundant-divergence-close",
+      "status": "real",
+      "kind": "negative-error",
+      "coverage": [
+        "redundant",
+        "negative-mutation"
+      ],
+      "normative_references": {
+        "sections": [
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "2"
+          },
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "3"
+          },
+          {
+            "document": "spec/0005-session-security-v0.1.md",
+            "section": "2.1"
+          }
+        ],
+        "parameter_ids": [
+          "P-PATH-SLOTS",
+          "P-DELIVERY-ID",
+          "P-REPLAY-WINDOW",
+          "P-REPLAY-FORWARD-GAP-MAX"
+        ]
+      },
+      "expected_error_category": "E-PATH",
+      "case_ids": [
+        "divergence-close"
+      ],
+      "artifact": {
+        "path": "tests/vectors/redundant-v0.1.json",
+        "sha256": "3e1c8cdee7d5857344cb8ea764e05e1dbfff9fa71dec54ab2457495e5b1510b0",
+        "provenance": {
+          "source_revision": "independent-synthetic-v1",
+          "producer": "independent-maintained-cryptography-construction"
+        }
+      }
+    },
+    {
+      "id": "redundant-replay-window-4096",
+      "status": "real",
+      "kind": "state-transition",
+      "coverage": [
+        "redundant",
+        "state-transition"
+      ],
+      "normative_references": {
+        "sections": [
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "2"
+          },
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "3"
+          },
+          {
+            "document": "spec/0005-session-security-v0.1.md",
+            "section": "2.1"
+          }
+        ],
+        "parameter_ids": [
+          "P-PATH-SLOTS",
+          "P-DELIVERY-ID",
+          "P-REPLAY-WINDOW",
+          "P-REPLAY-FORWARD-GAP-MAX"
+        ]
+      },
+      "expected_outcome": "accept",
+      "case_ids": [
+        "replay-window-4096"
+      ],
+      "artifact": {
+        "path": "tests/vectors/redundant-v0.1.json",
+        "sha256": "3e1c8cdee7d5857344cb8ea764e05e1dbfff9fa71dec54ab2457495e5b1510b0",
+        "provenance": {
+          "source_revision": "independent-synthetic-v1",
+          "producer": "independent-maintained-cryptography-construction"
+        }
+      }
+    },
+    {
+      "id": "redundant-replay-window-4097",
+      "status": "real",
+      "kind": "negative-error",
+      "coverage": [
+        "redundant",
+        "negative-mutation"
+      ],
+      "normative_references": {
+        "sections": [
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "2"
+          },
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "3"
+          },
+          {
+            "document": "spec/0005-session-security-v0.1.md",
+            "section": "2.1"
+          }
+        ],
+        "parameter_ids": [
+          "P-PATH-SLOTS",
+          "P-DELIVERY-ID",
+          "P-REPLAY-WINDOW",
+          "P-REPLAY-FORWARD-GAP-MAX"
+        ]
+      },
+      "expected_error_category": "E-REPLAY",
+      "case_ids": [
+        "replay-window-4097"
+      ],
+      "artifact": {
+        "path": "tests/vectors/redundant-v0.1.json",
+        "sha256": "3e1c8cdee7d5857344cb8ea764e05e1dbfff9fa71dec54ab2457495e5b1510b0",
+        "provenance": {
+          "source_revision": "independent-synthetic-v1",
+          "producer": "independent-maintained-cryptography-construction"
+        }
+      }
+    },
+    {
+      "id": "redundant-dedup-capacity-4096",
+      "status": "real",
+      "kind": "state-transition",
+      "coverage": [
+        "redundant",
+        "state-transition",
+        "dedup-capacity"
+      ],
+      "normative_references": {
+        "sections": [
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "2"
+          },
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "3"
+          },
+          {
+            "document": "spec/0005-session-security-v0.1.md",
+            "section": "2.1"
+          }
+        ],
+        "parameter_ids": [
+          "P-PATH-SLOTS",
+          "P-DELIVERY-ID",
+          "P-DEDUP-CACHE-IDS",
+          "P-DEDUP-CACHE-EXPIRY"
+        ]
+      },
+      "expected_outcome": "accept",
+      "case_ids": [
+        "dedup-capacity-4096"
+      ],
+      "artifact": {
+        "path": "tests/vectors/redundant-v0.1.json",
+        "sha256": "3e1c8cdee7d5857344cb8ea764e05e1dbfff9fa71dec54ab2457495e5b1510b0",
+        "provenance": {
+          "source_revision": "independent-synthetic-v1",
+          "producer": "independent-maintained-cryptography-construction"
+        }
+      }
+    },
+    {
+      "id": "redundant-dedup-capacity-4097",
+      "status": "real",
+      "kind": "negative-error",
+      "coverage": [
+        "redundant",
+        "negative-mutation",
+        "dedup-capacity"
+      ],
+      "normative_references": {
+        "sections": [
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "2"
+          },
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "3"
+          },
+          {
+            "document": "spec/0005-session-security-v0.1.md",
+            "section": "2.1"
+          }
+        ],
+        "parameter_ids": [
+          "P-PATH-SLOTS",
+          "P-DELIVERY-ID",
+          "P-DEDUP-CACHE-IDS",
+          "P-DEDUP-CACHE-EXPIRY"
+        ]
+      },
+      "expected_error_category": "E-CAPACITY",
+      "case_ids": [
+        "dedup-capacity-4097"
+      ],
+      "artifact": {
+        "path": "tests/vectors/redundant-v0.1.json",
+        "sha256": "3e1c8cdee7d5857344cb8ea764e05e1dbfff9fa71dec54ab2457495e5b1510b0",
+        "provenance": {
+          "source_revision": "independent-synthetic-v1",
+          "producer": "independent-maintained-cryptography-construction"
+        }
+      }
+    },
+    {
+      "id": "redundant-gap-65536",
+      "status": "real",
+      "kind": "state-transition",
+      "coverage": [
+        "redundant",
+        "state-transition"
+      ],
+      "normative_references": {
+        "sections": [
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "2"
+          },
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "3"
+          },
+          {
+            "document": "spec/0005-session-security-v0.1.md",
+            "section": "2.1"
+          }
+        ],
+        "parameter_ids": [
+          "P-PATH-SLOTS",
+          "P-DELIVERY-ID",
+          "P-REPLAY-WINDOW",
+          "P-REPLAY-FORWARD-GAP-MAX"
+        ]
+      },
+      "expected_outcome": "deliver",
+      "case_ids": [
+        "gap-65536"
+      ],
+      "artifact": {
+        "path": "tests/vectors/redundant-v0.1.json",
+        "sha256": "3e1c8cdee7d5857344cb8ea764e05e1dbfff9fa71dec54ab2457495e5b1510b0",
+        "provenance": {
+          "source_revision": "independent-synthetic-v1",
+          "producer": "independent-maintained-cryptography-construction"
+        }
+      }
+    },
+    {
+      "id": "redundant-gap-65537",
+      "status": "real",
+      "kind": "negative-error",
+      "coverage": [
+        "redundant",
+        "negative-mutation"
+      ],
+      "normative_references": {
+        "sections": [
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "2"
+          },
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "3"
+          },
+          {
+            "document": "spec/0005-session-security-v0.1.md",
+            "section": "2.1"
+          }
+        ],
+        "parameter_ids": [
+          "P-PATH-SLOTS",
+          "P-DELIVERY-ID",
+          "P-REPLAY-WINDOW",
+          "P-REPLAY-FORWARD-GAP-MAX"
+        ]
+      },
+      "expected_error_category": "E-REPLAY",
+      "case_ids": [
+        "gap-65537"
+      ],
+      "artifact": {
+        "path": "tests/vectors/redundant-v0.1.json",
+        "sha256": "3e1c8cdee7d5857344cb8ea764e05e1dbfff9fa71dec54ab2457495e5b1510b0",
+        "provenance": {
+          "source_revision": "independent-synthetic-v1",
+          "producer": "independent-maintained-cryptography-construction"
+        }
+      }
+    },
+    {
+      "id": "redundant-queue-256",
+      "status": "real",
+      "kind": "state-transition",
+      "coverage": [
+        "redundant",
+        "state-transition"
+      ],
+      "normative_references": {
+        "sections": [
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "2"
+          },
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "3"
+          },
+          {
+            "document": "spec/0005-session-security-v0.1.md",
+            "section": "2.1"
+          }
+        ],
+        "parameter_ids": [
+          "P-PATH-SLOTS",
+          "P-DELIVERY-ID",
+          "P-REPLAY-WINDOW",
+          "P-REPLAY-FORWARD-GAP-MAX"
+        ]
+      },
+      "expected_outcome": "enqueue",
+      "case_ids": [
+        "queue-256"
+      ],
+      "artifact": {
+        "path": "tests/vectors/redundant-v0.1.json",
+        "sha256": "3e1c8cdee7d5857344cb8ea764e05e1dbfff9fa71dec54ab2457495e5b1510b0",
+        "provenance": {
+          "source_revision": "independent-synthetic-v1",
+          "producer": "independent-maintained-cryptography-construction"
+        }
+      }
+    },
+    {
+      "id": "redundant-queue-257",
+      "status": "real",
+      "kind": "negative-error",
+      "coverage": [
+        "redundant",
+        "negative-mutation"
+      ],
+      "normative_references": {
+        "sections": [
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "2"
+          },
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "3"
+          },
+          {
+            "document": "spec/0005-session-security-v0.1.md",
+            "section": "2.1"
+          }
+        ],
+        "parameter_ids": [
+          "P-PATH-SLOTS",
+          "P-DELIVERY-ID",
+          "P-REPLAY-WINDOW",
+          "P-REPLAY-FORWARD-GAP-MAX"
+        ]
+      },
+      "expected_error_category": "E-PATH",
+      "case_ids": [
+        "queue-257"
+      ],
+      "artifact": {
+        "path": "tests/vectors/redundant-v0.1.json",
+        "sha256": "3e1c8cdee7d5857344cb8ea764e05e1dbfff9fa71dec54ab2457495e5b1510b0",
+        "provenance": {
+          "source_revision": "independent-synthetic-v1",
+          "producer": "independent-maintained-cryptography-construction"
+        }
+      }
+    },
+    {
+      "id": "redundant-dedup-expiry",
+      "status": "real",
+      "kind": "state-transition",
+      "coverage": [
+        "redundant",
+        "state-transition"
+      ],
+      "normative_references": {
+        "sections": [
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "2"
+          },
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "3"
+          },
+          {
+            "document": "spec/0005-session-security-v0.1.md",
+            "section": "2.1"
+          }
+        ],
+        "parameter_ids": [
+          "P-PATH-SLOTS",
+          "P-DELIVERY-ID",
+          "P-REPLAY-WINDOW",
+          "P-REPLAY-FORWARD-GAP-MAX"
+        ]
+      },
+      "expected_outcome": "deliver",
+      "case_ids": [
+        "dedup-expiry"
+      ],
+      "artifact": {
+        "path": "tests/vectors/redundant-v0.1.json",
+        "sha256": "3e1c8cdee7d5857344cb8ea764e05e1dbfff9fa71dec54ab2457495e5b1510b0",
+        "provenance": {
+          "source_revision": "independent-synthetic-v1",
+          "producer": "independent-maintained-cryptography-construction"
+        }
+      }
+    },
+    {
+      "id": "redundant-slot-remove",
+      "status": "real",
+      "kind": "negative-error",
+      "coverage": [
+        "redundant",
+        "negative-mutation"
+      ],
+      "normative_references": {
+        "sections": [
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "2"
+          },
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "3"
+          },
+          {
+            "document": "spec/0005-session-security-v0.1.md",
+            "section": "2.1"
+          }
+        ],
+        "parameter_ids": [
+          "P-PATH-SLOTS",
+          "P-DELIVERY-ID",
+          "P-REPLAY-WINDOW",
+          "P-REPLAY-FORWARD-GAP-MAX"
+        ]
+      },
+      "expected_error_category": "E-PATH",
+      "case_ids": [
+        "slot-remove"
+      ],
+      "artifact": {
+        "path": "tests/vectors/redundant-v0.1.json",
+        "sha256": "3e1c8cdee7d5857344cb8ea764e05e1dbfff9fa71dec54ab2457495e5b1510b0",
+        "provenance": {
+          "source_revision": "independent-synthetic-v1",
+          "producer": "independent-maintained-cryptography-construction"
+        }
+      }
+    },
+    {
+      "id": "redundant-slot-nonreuse",
+      "status": "real",
+      "kind": "negative-error",
+      "coverage": [
+        "redundant",
+        "negative-mutation"
+      ],
+      "normative_references": {
+        "sections": [
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "2"
+          },
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "3"
+          },
+          {
+            "document": "spec/0005-session-security-v0.1.md",
+            "section": "2.1"
+          }
+        ],
+        "parameter_ids": [
+          "P-PATH-SLOTS",
+          "P-DELIVERY-ID",
+          "P-REPLAY-WINDOW",
+          "P-REPLAY-FORWARD-GAP-MAX"
+        ]
+      },
+      "expected_error_category": "E-PATH",
+      "case_ids": [
+        "slot-nonreuse"
+      ],
+      "artifact": {
+        "path": "tests/vectors/redundant-v0.1.json",
+        "sha256": "3e1c8cdee7d5857344cb8ea764e05e1dbfff9fa71dec54ab2457495e5b1510b0",
+        "provenance": {
+          "source_revision": "independent-synthetic-v1",
+          "producer": "independent-maintained-cryptography-construction"
+        }
+      }
+    },
+    {
+      "id": "redundant-restart-required",
+      "status": "real",
+      "kind": "negative-error",
+      "coverage": [
+        "redundant",
+        "negative-mutation"
+      ],
+      "normative_references": {
+        "sections": [
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "2"
+          },
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "3"
+          },
+          {
+            "document": "spec/0005-session-security-v0.1.md",
+            "section": "2.1"
+          }
+        ],
+        "parameter_ids": [
+          "P-PATH-SLOTS",
+          "P-DELIVERY-ID",
+          "P-REPLAY-WINDOW",
+          "P-REPLAY-FORWARD-GAP-MAX"
+        ]
+      },
+      "expected_error_category": "E-COUNTER",
+      "case_ids": [
+        "restart-required"
+      ],
+      "artifact": {
+        "path": "tests/vectors/redundant-v0.1.json",
+        "sha256": "3e1c8cdee7d5857344cb8ea764e05e1dbfff9fa71dec54ab2457495e5b1510b0",
+        "provenance": {
+          "source_revision": "independent-synthetic-v1",
+          "producer": "independent-maintained-cryptography-construction"
+        }
+      }
+    },
+    {
+      "id": "redundant-events-degraded-recovered",
+      "status": "real",
+      "kind": "state-transition",
+      "coverage": [
+        "redundant",
+        "state-transition"
+      ],
+      "normative_references": {
+        "sections": [
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "2"
+          },
+          {
+            "document": "spec/0008-redundant-v0.1.md",
+            "section": "3"
+          },
+          {
+            "document": "spec/0005-session-security-v0.1.md",
+            "section": "2.1"
+          }
+        ],
+        "parameter_ids": [
+          "P-PATH-SLOTS",
+          "P-DELIVERY-ID",
+          "P-REPLAY-WINDOW",
+          "P-REPLAY-FORWARD-GAP-MAX"
+        ]
+      },
+      "expected_outcome": "events",
+      "case_ids": [
+        "events-degraded-recovered"
+      ],
+      "artifact": {
+        "path": "tests/vectors/redundant-v0.1.json",
+        "sha256": "3e1c8cdee7d5857344cb8ea764e05e1dbfff9fa71dec54ab2457495e5b1510b0",
+        "provenance": {
+          "source_revision": "independent-synthetic-v1",
+          "producer": "independent-maintained-cryptography-construction"
+        }
       }
     },
     {
@@ -4450,7 +6084,7 @@
       ],
       "artifact": {
         "path": "tests/vectors/session-v0.1.json",
-        "sha256": "d437de48df316fa78938bb24bf615a2f237e49721b5f455ea0eef5d78c7918dc",
+        "sha256": "3dc2c622eab5dc4cb8477c7e75678980366ed4253e369e83db207220f34cf740",
         "provenance": {
           "source_revision": "aacadeee2a83b7639225cd11b9c020c69526fa1e",
           "producer": "cryptography-maintained-primitives-and-independent-canonical-construction"
@@ -4510,7 +6144,7 @@
       ],
       "artifact": {
         "path": "tests/vectors/session-v0.1.json",
-        "sha256": "d437de48df316fa78938bb24bf615a2f237e49721b5f455ea0eef5d78c7918dc",
+        "sha256": "3dc2c622eab5dc4cb8477c7e75678980366ed4253e369e83db207220f34cf740",
         "provenance": {
           "source_revision": "aacadeee2a83b7639225cd11b9c020c69526fa1e",
           "producer": "cryptography-maintained-primitives-and-independent-canonical-construction"
@@ -4570,7 +6204,7 @@
       ],
       "artifact": {
         "path": "tests/vectors/session-v0.1.json",
-        "sha256": "d437de48df316fa78938bb24bf615a2f237e49721b5f455ea0eef5d78c7918dc",
+        "sha256": "3dc2c622eab5dc4cb8477c7e75678980366ed4253e369e83db207220f34cf740",
         "provenance": {
           "source_revision": "aacadeee2a83b7639225cd11b9c020c69526fa1e",
           "producer": "cryptography-maintained-primitives-and-independent-canonical-construction"
@@ -4630,7 +6264,7 @@
       ],
       "artifact": {
         "path": "tests/vectors/session-v0.1.json",
-        "sha256": "d437de48df316fa78938bb24bf615a2f237e49721b5f455ea0eef5d78c7918dc",
+        "sha256": "3dc2c622eab5dc4cb8477c7e75678980366ed4253e369e83db207220f34cf740",
         "provenance": {
           "source_revision": "aacadeee2a83b7639225cd11b9c020c69526fa1e",
           "producer": "cryptography-maintained-primitives-and-independent-canonical-construction"
@@ -4684,13 +6318,13 @@
           "P-COUNTER-USABLE-RANGE"
         ]
       },
-      "expected_bytes": "8000004803400100010203040506070800112233445566778899aabbccddeeffffeeddccbbaa99887766554433221100050100000000000000000001c793f20eb184b03d1f2879d2ecfcfb0159f84c5fa01b44ad23770c586e9c568702dd1e5da957b89db474bb9858a5aeecaadd8b6b3ae1b1f0ad0c69dc",
+      "expected_bytes": "8000004803400100010203040506070800112233445566778899aabbccddeeffffeeddccbbaa99887766554433221100050100000000000000000001c793f20eb184b03d1f2879d2ecfcfb0159f84c5fa01b44ad23770c586e9c568702dd1e5da957b89db474bb98478793bee14a2a3c428de79968e2bc49",
       "case_ids": [
         "session-accept"
       ],
       "artifact": {
         "path": "tests/vectors/session-v0.1.json",
-        "sha256": "d437de48df316fa78938bb24bf615a2f237e49721b5f455ea0eef5d78c7918dc",
+        "sha256": "3dc2c622eab5dc4cb8477c7e75678980366ed4253e369e83db207220f34cf740",
         "provenance": {
           "source_revision": "aacadeee2a83b7639225cd11b9c020c69526fa1e",
           "producer": "cryptography-maintained-primitives-and-independent-canonical-construction"
@@ -4744,13 +6378,13 @@
           "P-COUNTER-USABLE-RANGE"
         ]
       },
-      "expected_bytes": "8000003203400100010203040506070800112233445566778899aabbccddeeffffeeddccbbaa99887766554433221100060100000000000000000002498be4d65bb64e44721e1cb75971da571aa9e949d0e86afb2974b27514fcb6fd8174bd26a02d",
+      "expected_bytes": "8000003203400100010203040506070800112233445566778899aabbccddeeffffeeddccbbaa99887766554433221100060100000000000000000002498be4d65bb64e44721e1cb75971da571aa9e949d0e8cdf12290297032fc49a2af38be032937",
       "case_ids": [
         "session-data"
       ],
       "artifact": {
         "path": "tests/vectors/session-v0.1.json",
-        "sha256": "d437de48df316fa78938bb24bf615a2f237e49721b5f455ea0eef5d78c7918dc",
+        "sha256": "3dc2c622eab5dc4cb8477c7e75678980366ed4253e369e83db207220f34cf740",
         "provenance": {
           "source_revision": "aacadeee2a83b7639225cd11b9c020c69526fa1e",
           "producer": "cryptography-maintained-primitives-and-independent-canonical-construction"
@@ -4810,7 +6444,7 @@
       ],
       "artifact": {
         "path": "tests/vectors/session-v0.1.json",
-        "sha256": "d437de48df316fa78938bb24bf615a2f237e49721b5f455ea0eef5d78c7918dc",
+        "sha256": "3dc2c622eab5dc4cb8477c7e75678980366ed4253e369e83db207220f34cf740",
         "provenance": {
           "source_revision": "aacadeee2a83b7639225cd11b9c020c69526fa1e",
           "producer": "cryptography-maintained-primitives-and-independent-canonical-construction"
@@ -4870,7 +6504,7 @@
       ],
       "artifact": {
         "path": "tests/vectors/session-v0.1.json",
-        "sha256": "d437de48df316fa78938bb24bf615a2f237e49721b5f455ea0eef5d78c7918dc",
+        "sha256": "3dc2c622eab5dc4cb8477c7e75678980366ed4253e369e83db207220f34cf740",
         "provenance": {
           "source_revision": "aacadeee2a83b7639225cd11b9c020c69526fa1e",
           "producer": "cryptography-maintained-primitives-and-independent-canonical-construction"
@@ -4930,7 +6564,7 @@
       ],
       "artifact": {
         "path": "tests/vectors/session-v0.1.json",
-        "sha256": "d437de48df316fa78938bb24bf615a2f237e49721b5f455ea0eef5d78c7918dc",
+        "sha256": "3dc2c622eab5dc4cb8477c7e75678980366ed4253e369e83db207220f34cf740",
         "provenance": {
           "source_revision": "aacadeee2a83b7639225cd11b9c020c69526fa1e",
           "producer": "cryptography-maintained-primitives-and-independent-canonical-construction"
@@ -4990,7 +6624,7 @@
       ],
       "artifact": {
         "path": "tests/vectors/session-v0.1.json",
-        "sha256": "d437de48df316fa78938bb24bf615a2f237e49721b5f455ea0eef5d78c7918dc",
+        "sha256": "3dc2c622eab5dc4cb8477c7e75678980366ed4253e369e83db207220f34cf740",
         "provenance": {
           "source_revision": "aacadeee2a83b7639225cd11b9c020c69526fa1e",
           "producer": "cryptography-maintained-primitives-and-independent-canonical-construction"
@@ -5050,7 +6684,7 @@
       ],
       "artifact": {
         "path": "tests/vectors/session-v0.1.json",
-        "sha256": "d437de48df316fa78938bb24bf615a2f237e49721b5f455ea0eef5d78c7918dc",
+        "sha256": "3dc2c622eab5dc4cb8477c7e75678980366ed4253e369e83db207220f34cf740",
         "provenance": {
           "source_revision": "aacadeee2a83b7639225cd11b9c020c69526fa1e",
           "producer": "cryptography-maintained-primitives-and-independent-canonical-construction"
@@ -5110,7 +6744,7 @@
       ],
       "artifact": {
         "path": "tests/vectors/session-v0.1.json",
-        "sha256": "d437de48df316fa78938bb24bf615a2f237e49721b5f455ea0eef5d78c7918dc",
+        "sha256": "3dc2c622eab5dc4cb8477c7e75678980366ed4253e369e83db207220f34cf740",
         "provenance": {
           "source_revision": "aacadeee2a83b7639225cd11b9c020c69526fa1e",
           "producer": "cryptography-maintained-primitives-and-independent-canonical-construction"
@@ -5170,7 +6804,7 @@
       ],
       "artifact": {
         "path": "tests/vectors/session-v0.1.json",
-        "sha256": "d437de48df316fa78938bb24bf615a2f237e49721b5f455ea0eef5d78c7918dc",
+        "sha256": "3dc2c622eab5dc4cb8477c7e75678980366ed4253e369e83db207220f34cf740",
         "provenance": {
           "source_revision": "aacadeee2a83b7639225cd11b9c020c69526fa1e",
           "producer": "cryptography-maintained-primitives-and-independent-canonical-construction"
@@ -5230,7 +6864,7 @@
       ],
       "artifact": {
         "path": "tests/vectors/session-v0.1.json",
-        "sha256": "d437de48df316fa78938bb24bf615a2f237e49721b5f455ea0eef5d78c7918dc",
+        "sha256": "3dc2c622eab5dc4cb8477c7e75678980366ed4253e369e83db207220f34cf740",
         "provenance": {
           "source_revision": "aacadeee2a83b7639225cd11b9c020c69526fa1e",
           "producer": "cryptography-maintained-primitives-and-independent-canonical-construction"
@@ -5290,7 +6924,7 @@
       ],
       "artifact": {
         "path": "tests/vectors/session-v0.1.json",
-        "sha256": "d437de48df316fa78938bb24bf615a2f237e49721b5f455ea0eef5d78c7918dc",
+        "sha256": "3dc2c622eab5dc4cb8477c7e75678980366ed4253e369e83db207220f34cf740",
         "provenance": {
           "source_revision": "aacadeee2a83b7639225cd11b9c020c69526fa1e",
           "producer": "cryptography-maintained-primitives-and-independent-canonical-construction"
@@ -5350,7 +6984,7 @@
       ],
       "artifact": {
         "path": "tests/vectors/session-v0.1.json",
-        "sha256": "d437de48df316fa78938bb24bf615a2f237e49721b5f455ea0eef5d78c7918dc",
+        "sha256": "3dc2c622eab5dc4cb8477c7e75678980366ed4253e369e83db207220f34cf740",
         "provenance": {
           "source_revision": "aacadeee2a83b7639225cd11b9c020c69526fa1e",
           "producer": "cryptography-maintained-primitives-and-independent-canonical-construction"
@@ -5410,7 +7044,7 @@
       ],
       "artifact": {
         "path": "tests/vectors/session-v0.1.json",
-        "sha256": "d437de48df316fa78938bb24bf615a2f237e49721b5f455ea0eef5d78c7918dc",
+        "sha256": "3dc2c622eab5dc4cb8477c7e75678980366ed4253e369e83db207220f34cf740",
         "provenance": {
           "source_revision": "aacadeee2a83b7639225cd11b9c020c69526fa1e",
           "producer": "cryptography-maintained-primitives-and-independent-canonical-construction"
@@ -5470,7 +7104,7 @@
       ],
       "artifact": {
         "path": "tests/vectors/session-v0.1.json",
-        "sha256": "d437de48df316fa78938bb24bf615a2f237e49721b5f455ea0eef5d78c7918dc",
+        "sha256": "3dc2c622eab5dc4cb8477c7e75678980366ed4253e369e83db207220f34cf740",
         "provenance": {
           "source_revision": "aacadeee2a83b7639225cd11b9c020c69526fa1e",
           "producer": "cryptography-maintained-primitives-and-independent-canonical-construction"
@@ -5530,7 +7164,7 @@
       ],
       "artifact": {
         "path": "tests/vectors/session-v0.1.json",
-        "sha256": "d437de48df316fa78938bb24bf615a2f237e49721b5f455ea0eef5d78c7918dc",
+        "sha256": "3dc2c622eab5dc4cb8477c7e75678980366ed4253e369e83db207220f34cf740",
         "provenance": {
           "source_revision": "aacadeee2a83b7639225cd11b9c020c69526fa1e",
           "producer": "cryptography-maintained-primitives-and-independent-canonical-construction"
@@ -5590,7 +7224,7 @@
       ],
       "artifact": {
         "path": "tests/vectors/session-v0.1.json",
-        "sha256": "d437de48df316fa78938bb24bf615a2f237e49721b5f455ea0eef5d78c7918dc",
+        "sha256": "3dc2c622eab5dc4cb8477c7e75678980366ed4253e369e83db207220f34cf740",
         "provenance": {
           "source_revision": "aacadeee2a83b7639225cd11b9c020c69526fa1e",
           "producer": "cryptography-maintained-primitives-and-independent-canonical-construction"
@@ -5650,7 +7284,7 @@
       ],
       "artifact": {
         "path": "tests/vectors/session-v0.1.json",
-        "sha256": "d437de48df316fa78938bb24bf615a2f237e49721b5f455ea0eef5d78c7918dc",
+        "sha256": "3dc2c622eab5dc4cb8477c7e75678980366ed4253e369e83db207220f34cf740",
         "provenance": {
           "source_revision": "aacadeee2a83b7639225cd11b9c020c69526fa1e",
           "producer": "cryptography-maintained-primitives-and-independent-canonical-construction"
@@ -5710,7 +7344,7 @@
       ],
       "artifact": {
         "path": "tests/vectors/session-v0.1.json",
-        "sha256": "d437de48df316fa78938bb24bf615a2f237e49721b5f455ea0eef5d78c7918dc",
+        "sha256": "3dc2c622eab5dc4cb8477c7e75678980366ed4253e369e83db207220f34cf740",
         "provenance": {
           "source_revision": "aacadeee2a83b7639225cd11b9c020c69526fa1e",
           "producer": "cryptography-maintained-primitives-and-independent-canonical-construction"
@@ -5770,7 +7404,7 @@
       ],
       "artifact": {
         "path": "tests/vectors/session-v0.1.json",
-        "sha256": "d437de48df316fa78938bb24bf615a2f237e49721b5f455ea0eef5d78c7918dc",
+        "sha256": "3dc2c622eab5dc4cb8477c7e75678980366ed4253e369e83db207220f34cf740",
         "provenance": {
           "source_revision": "aacadeee2a83b7639225cd11b9c020c69526fa1e",
           "producer": "cryptography-maintained-primitives-and-independent-canonical-construction"
@@ -5830,7 +7464,7 @@
       ],
       "artifact": {
         "path": "tests/vectors/session-v0.1.json",
-        "sha256": "d437de48df316fa78938bb24bf615a2f237e49721b5f455ea0eef5d78c7918dc",
+        "sha256": "3dc2c622eab5dc4cb8477c7e75678980366ed4253e369e83db207220f34cf740",
         "provenance": {
           "source_revision": "aacadeee2a83b7639225cd11b9c020c69526fa1e",
           "producer": "cryptography-maintained-primitives-and-independent-canonical-construction"
@@ -5890,7 +7524,7 @@
       ],
       "artifact": {
         "path": "tests/vectors/session-v0.1.json",
-        "sha256": "d437de48df316fa78938bb24bf615a2f237e49721b5f455ea0eef5d78c7918dc",
+        "sha256": "3dc2c622eab5dc4cb8477c7e75678980366ed4253e369e83db207220f34cf740",
         "provenance": {
           "source_revision": "aacadeee2a83b7639225cd11b9c020c69526fa1e",
           "producer": "cryptography-maintained-primitives-and-independent-canonical-construction"
@@ -5950,7 +7584,7 @@
       ],
       "artifact": {
         "path": "tests/vectors/session-v0.1.json",
-        "sha256": "d437de48df316fa78938bb24bf615a2f237e49721b5f455ea0eef5d78c7918dc",
+        "sha256": "3dc2c622eab5dc4cb8477c7e75678980366ed4253e369e83db207220f34cf740",
         "provenance": {
           "source_revision": "aacadeee2a83b7639225cd11b9c020c69526fa1e",
           "producer": "cryptography-maintained-primitives-and-independent-canonical-construction"
@@ -6010,7 +7644,7 @@
       ],
       "artifact": {
         "path": "tests/vectors/session-v0.1.json",
-        "sha256": "d437de48df316fa78938bb24bf615a2f237e49721b5f455ea0eef5d78c7918dc",
+        "sha256": "3dc2c622eab5dc4cb8477c7e75678980366ed4253e369e83db207220f34cf740",
         "provenance": {
           "source_revision": "aacadeee2a83b7639225cd11b9c020c69526fa1e",
           "producer": "cryptography-maintained-primitives-and-independent-canonical-construction"
@@ -6070,7 +7704,7 @@
       ],
       "artifact": {
         "path": "tests/vectors/session-v0.1.json",
-        "sha256": "d437de48df316fa78938bb24bf615a2f237e49721b5f455ea0eef5d78c7918dc",
+        "sha256": "3dc2c622eab5dc4cb8477c7e75678980366ed4253e369e83db207220f34cf740",
         "provenance": {
           "source_revision": "aacadeee2a83b7639225cd11b9c020c69526fa1e",
           "producer": "cryptography-maintained-primitives-and-independent-canonical-construction"
@@ -6130,7 +7764,7 @@
       ],
       "artifact": {
         "path": "tests/vectors/session-v0.1.json",
-        "sha256": "d437de48df316fa78938bb24bf615a2f237e49721b5f455ea0eef5d78c7918dc",
+        "sha256": "3dc2c622eab5dc4cb8477c7e75678980366ed4253e369e83db207220f34cf740",
         "provenance": {
           "source_revision": "aacadeee2a83b7639225cd11b9c020c69526fa1e",
           "producer": "cryptography-maintained-primitives-and-independent-canonical-construction"
@@ -6190,7 +7824,7 @@
       ],
       "artifact": {
         "path": "tests/vectors/session-v0.1.json",
-        "sha256": "d437de48df316fa78938bb24bf615a2f237e49721b5f455ea0eef5d78c7918dc",
+        "sha256": "3dc2c622eab5dc4cb8477c7e75678980366ed4253e369e83db207220f34cf740",
         "provenance": {
           "source_revision": "aacadeee2a83b7639225cd11b9c020c69526fa1e",
           "producer": "cryptography-maintained-primitives-and-independent-canonical-construction"
@@ -6250,7 +7884,7 @@
       ],
       "artifact": {
         "path": "tests/vectors/session-v0.1.json",
-        "sha256": "d437de48df316fa78938bb24bf615a2f237e49721b5f455ea0eef5d78c7918dc",
+        "sha256": "3dc2c622eab5dc4cb8477c7e75678980366ed4253e369e83db207220f34cf740",
         "provenance": {
           "source_revision": "aacadeee2a83b7639225cd11b9c020c69526fa1e",
           "producer": "cryptography-maintained-primitives-and-independent-canonical-construction"
@@ -6310,7 +7944,7 @@
       ],
       "artifact": {
         "path": "tests/vectors/session-v0.1.json",
-        "sha256": "d437de48df316fa78938bb24bf615a2f237e49721b5f455ea0eef5d78c7918dc",
+        "sha256": "3dc2c622eab5dc4cb8477c7e75678980366ed4253e369e83db207220f34cf740",
         "provenance": {
           "source_revision": "aacadeee2a83b7639225cd11b9c020c69526fa1e",
           "producer": "cryptography-maintained-primitives-and-independent-canonical-construction"
@@ -6370,7 +8004,7 @@
       ],
       "artifact": {
         "path": "tests/vectors/session-v0.1.json",
-        "sha256": "d437de48df316fa78938bb24bf615a2f237e49721b5f455ea0eef5d78c7918dc",
+        "sha256": "3dc2c622eab5dc4cb8477c7e75678980366ed4253e369e83db207220f34cf740",
         "provenance": {
           "source_revision": "aacadeee2a83b7639225cd11b9c020c69526fa1e",
           "producer": "cryptography-maintained-primitives-and-independent-canonical-construction"
@@ -6430,7 +8064,7 @@
       ],
       "artifact": {
         "path": "tests/vectors/session-v0.1.json",
-        "sha256": "d437de48df316fa78938bb24bf615a2f237e49721b5f455ea0eef5d78c7918dc",
+        "sha256": "3dc2c622eab5dc4cb8477c7e75678980366ed4253e369e83db207220f34cf740",
         "provenance": {
           "source_revision": "aacadeee2a83b7639225cd11b9c020c69526fa1e",
           "producer": "cryptography-maintained-primitives-and-independent-canonical-construction"
@@ -6490,7 +8124,7 @@
       ],
       "artifact": {
         "path": "tests/vectors/session-v0.1.json",
-        "sha256": "d437de48df316fa78938bb24bf615a2f237e49721b5f455ea0eef5d78c7918dc",
+        "sha256": "3dc2c622eab5dc4cb8477c7e75678980366ed4253e369e83db207220f34cf740",
         "provenance": {
           "source_revision": "aacadeee2a83b7639225cd11b9c020c69526fa1e",
           "producer": "cryptography-maintained-primitives-and-independent-canonical-construction"
@@ -6550,7 +8184,7 @@
       ],
       "artifact": {
         "path": "tests/vectors/session-v0.1.json",
-        "sha256": "d437de48df316fa78938bb24bf615a2f237e49721b5f455ea0eef5d78c7918dc",
+        "sha256": "3dc2c622eab5dc4cb8477c7e75678980366ed4253e369e83db207220f34cf740",
         "provenance": {
           "source_revision": "aacadeee2a83b7639225cd11b9c020c69526fa1e",
           "producer": "cryptography-maintained-primitives-and-independent-canonical-construction"
@@ -6610,7 +8244,7 @@
       ],
       "artifact": {
         "path": "tests/vectors/session-v0.1.json",
-        "sha256": "d437de48df316fa78938bb24bf615a2f237e49721b5f455ea0eef5d78c7918dc",
+        "sha256": "3dc2c622eab5dc4cb8477c7e75678980366ed4253e369e83db207220f34cf740",
         "provenance": {
           "source_revision": "aacadeee2a83b7639225cd11b9c020c69526fa1e",
           "producer": "cryptography-maintained-primitives-and-independent-canonical-construction"
@@ -6670,7 +8304,7 @@
       ],
       "artifact": {
         "path": "tests/vectors/session-v0.1.json",
-        "sha256": "d437de48df316fa78938bb24bf615a2f237e49721b5f455ea0eef5d78c7918dc",
+        "sha256": "3dc2c622eab5dc4cb8477c7e75678980366ed4253e369e83db207220f34cf740",
         "provenance": {
           "source_revision": "aacadeee2a83b7639225cd11b9c020c69526fa1e",
           "producer": "cryptography-maintained-primitives-and-independent-canonical-construction"
@@ -6730,7 +8364,7 @@
       ],
       "artifact": {
         "path": "tests/vectors/session-v0.1.json",
-        "sha256": "d437de48df316fa78938bb24bf615a2f237e49721b5f455ea0eef5d78c7918dc",
+        "sha256": "3dc2c622eab5dc4cb8477c7e75678980366ed4253e369e83db207220f34cf740",
         "provenance": {
           "source_revision": "aacadeee2a83b7639225cd11b9c020c69526fa1e",
           "producer": "cryptography-maintained-primitives-and-independent-canonical-construction"
@@ -6790,7 +8424,7 @@
       ],
       "artifact": {
         "path": "tests/vectors/session-v0.1.json",
-        "sha256": "d437de48df316fa78938bb24bf615a2f237e49721b5f455ea0eef5d78c7918dc",
+        "sha256": "3dc2c622eab5dc4cb8477c7e75678980366ed4253e369e83db207220f34cf740",
         "provenance": {
           "source_revision": "aacadeee2a83b7639225cd11b9c020c69526fa1e",
           "producer": "cryptography-maintained-primitives-and-independent-canonical-construction"
@@ -6850,7 +8484,7 @@
       ],
       "artifact": {
         "path": "tests/vectors/session-v0.1.json",
-        "sha256": "d437de48df316fa78938bb24bf615a2f237e49721b5f455ea0eef5d78c7918dc",
+        "sha256": "3dc2c622eab5dc4cb8477c7e75678980366ed4253e369e83db207220f34cf740",
         "provenance": {
           "source_revision": "aacadeee2a83b7639225cd11b9c020c69526fa1e",
           "producer": "cryptography-maintained-primitives-and-independent-canonical-construction"
