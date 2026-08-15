@@ -67,6 +67,7 @@ class NativeNetnsTests(unittest.TestCase):
     def test_startup_diagnostics_accept_only_fixed_redacted_stages(self):
         self.assertEqual(native.startup_error("noise\nr8-native startup=manifest\n"), "STARTUP_MANIFEST")
         self.assertEqual(native.startup_error("r8-native startup=unknown\n"), "READY")
+        self.assertEqual(native.startup_error("r8-native startup=isolation\nr8-native isolation=default-route\n"), "STARTUP_ISOLATION_DEFAULT_ROUTE")
 
 if __name__ == "__main__":
     unittest.main()

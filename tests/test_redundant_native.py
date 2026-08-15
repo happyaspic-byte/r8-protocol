@@ -48,6 +48,7 @@ class RedundantNativeTests(unittest.TestCase):
         run.assert_called_once_with(["ip", "netns", "exec", "test", "ip", "link", "set", "lo", "down"], True)
         self.assertEqual(native.startup_error("noise\nr8-native startup=descriptors\n"), "startup-descriptors")
         self.assertEqual(native.startup_error("r8-native startup=unknown\n"), "ready")
+        self.assertEqual(native.startup_error("r8-native startup=isolation\nr8-native isolation=address\n"), "startup-isolation-address")
         self.assertIn("net.ipv6.conf.default.disable_ipv6=1", Path(native.__file__).read_text())
     def test_packet_socket_ignores_outgoing(self):
         sock = MagicMock()

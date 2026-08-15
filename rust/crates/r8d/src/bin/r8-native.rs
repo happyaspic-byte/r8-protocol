@@ -185,7 +185,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("manifest allowlist rejected".into());
     }
     eprintln!("r8-native startup=isolation");
-    verify_isolated_namespace(&args.interfaces)?;
+    if let Err(error) = verify_isolated_namespace(&args.interfaces) {
+        let category = match error {
+            r8d::LinuxError::Namespace => "namespace",
+            r8d::LinuxError::Network => "network",
+            r8d::LinuxError::DefaultRoute => "default-route",
+            r8d::LinuxError::Address => "address",
+            r8d::LinuxError::Interface => "interface",
+            _ => "internal",
+        };
+        eprintln!("r8-native isolation={category}");
+        return Err(error.into());
+    }
     eprintln!("r8-native startup=descriptors");
     let mut records = Vec::new();
     let mut budgets = Vec::new();

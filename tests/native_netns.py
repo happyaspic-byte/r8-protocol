@@ -101,6 +101,8 @@ ERROR_CATEGORIES = {
 SETUP_STAGES = frozenset(("namespace-create", "ipv6-disable", "loopback-down", "veth-create", "veth-move", "interface-rename", "link-activate"))
 STARTUP_STAGES = frozenset(("arguments", "manifest", "isolation", "descriptors", "watch", "privilege", "runtime"))
 ERROR_CATEGORIES.update({f"STARTUP_{stage.upper()}": f"startup-{stage}" for stage in STARTUP_STAGES})
+ISOLATION_STAGES = frozenset(("namespace", "network", "default-route", "address", "interface", "internal"))
+ERROR_CATEGORIES.update({f"STARTUP_ISOLATION_{stage.upper().replace('-', '_')}": f"startup-isolation-{stage}" for stage in ISOLATION_STAGES})
 
 
 def error_category(error):
@@ -111,10 +113,14 @@ def setup_error_category(error, stage):
     category = error_category(error)
     return f"setup-{stage}" if category == "setup" and stage in SETUP_STAGES else category
 def startup_error(stderr):
-    stage = None
+    stage = isolation = None
     for line in stderr.splitlines():
         if line.startswith("r8-native startup=") and line.removeprefix("r8-native startup=") in STARTUP_STAGES:
             stage = line.removeprefix("r8-native startup=")
+        if line.startswith("r8-native isolation=") and line.removeprefix("r8-native isolation=") in ISOLATION_STAGES:
+            isolation = line.removeprefix("r8-native isolation=")
+    if isolation is not None:
+        return f"STARTUP_ISOLATION_{isolation.upper().replace('-', '_')}"
     return f"STARTUP_{stage.upper()}" if stage is not None else "READY"
 
 

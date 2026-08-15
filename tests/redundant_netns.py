@@ -56,11 +56,16 @@ def ip(*args, ns=None, check=True):
     prefix = ["ip", "netns", "exec", ns, "ip"] if ns is not None else ["ip"]
     return run(prefix + list(args), check)
 STARTUP_STAGES = frozenset(("arguments", "manifest", "isolation", "descriptors", "watch", "privilege", "runtime"))
+ISOLATION_STAGES = frozenset(("namespace", "network", "default-route", "address", "interface", "internal"))
 def startup_error(stderr):
-    stage = None
+    stage = isolation = None
     for line in stderr.splitlines():
         if line.startswith("r8-native startup=") and line.removeprefix("r8-native startup=") in STARTUP_STAGES:
             stage = line.removeprefix("r8-native startup=")
+        if line.startswith("r8-native isolation=") and line.removeprefix("r8-native isolation=") in ISOLATION_STAGES:
+            isolation = line.removeprefix("r8-native isolation=")
+    if isolation is not None:
+        return f"startup-isolation-{isolation}"
     return f"startup-{stage}" if stage is not None else "ready"
 def proc_status(pid):
     wanted = {"Uid", "Gid", "Groups", "CapEff", "NoNewPrivs"}; result = {}
@@ -431,7 +436,9 @@ def main(argv=None):
             raise RuntimeError("setup")
         lab.setup(); lab.launch(); lab.proof(); lab.revoke()
     except Exception as error:
-        allowed = {"setup", "ready", "privilege", "revocation", "rust-endpoint"} | {f"startup-{stage}" for stage in STARTUP_STAGES}
+        allowed = ({"setup", "ready", "privilege", "revocation", "rust-endpoint"}
+                   | {f"startup-{stage}" for stage in STARTUP_STAGES}
+                   | {f"startup-isolation-{stage}" for stage in ISOLATION_STAGES})
         lab.error_category = str(error) if str(error) in allowed else "proof"
     finally:
         try: lab.cleanup()

@@ -32,7 +32,9 @@ const REQUIRED_SEALS: libc::c_int =
 pub enum LinuxError {
     Namespace,
     Network,
+    DefaultRoute,
     Interface,
+    Address,
     Socket,
     Privilege,
     Manifest,
@@ -94,21 +96,24 @@ where
     {
         return Err(LinuxError::Interface);
     }
-    if namespace_matches_pid_one()? || has_default_route()? {
+    if namespace_matches_pid_one()? {
         return Err(LinuxError::Namespace);
+    }
+    if has_default_route()? {
+        return Err(LinuxError::DefaultRoute);
     }
     let addresses = interface_addresses()?;
     for name in &names {
         let entry = addresses
             .iter()
             .find(|entry| entry.name == *name)
-            .ok_or(LinuxError::Interface)?;
+            .ok_or(LinuxError::Address)?;
         if entry.loopback
             || entry.ipv4
             || entry.global_ipv6
             || has_master_or_virtual_attachment(name)
         {
-            return Err(LinuxError::Interface);
+            return Err(LinuxError::Address);
         }
     }
     Ok(())

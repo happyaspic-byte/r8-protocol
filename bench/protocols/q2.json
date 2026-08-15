@@ -383,8 +383,8 @@
       "reference/r8session.py": "f049418c818e301eee3880a1a5d68b9731b311cc0c9e2ed8b9e7952071ee8540",
       "reference/r8mobility.py": "c9da7638a77934d83fa0691a41e9890dc289e41078dd04c36f355c192df4db88",
       "reference/r8redundant.py": "b1ed2b0c190163ad29c7c5461c76eec7b27a348a33ec60ef52bee6a9db9af77c",
-      "tests/native_netns.py": "537af68b5d789e1f7984cfc05663bb87fb7d7672082499f5256f4302aafd430c",
-      "tests/redundant_netns.py": "280d903735158a9cbb5cdb74d75fc03d2fb39c560a1b7821956a2489bdeef3a6",
+      "tests/native_netns.py": "796f7c0b74002aa8be96a19b5650da9848d3bbaa58df052518f28f95ef979865",
+      "tests/redundant_netns.py": "51f8244109fcee81251820254d7ec23903ca92c2fecc8586d0b1cbf801c15bd0",
       "rust/Cargo.toml": "127425cc73795afaa6c0c8bd4d5c595f37af00546057a0b09e2d1df25808cfde",
       "rust/Cargo.lock": "cdcf21158d86fa60e6ff3c329cd3d99175832d34957956889a896c945820de56",
       "rust/crates/r8-proto/Cargo.toml": "082c90580af208919300ef47426283654f4f420f295ca6a3860e8183e756a61f",
@@ -399,12 +399,12 @@
       "rust/crates/r8d/Cargo.toml": "c305299760e0150e9199316676539727c53bc0764195eadb624878a58931cef4",
       "rust/crates/r8d/src/lib.rs": "0ec08e148950c95ca44026eeb2304687bed72afffb650c8f279833abddad240f",
       "rust/crates/r8d/src/forward.rs": "c7513a53375389a8dc10ff0c615c73f189319cbf4f1c1dce749ff38c2e945ac1",
-      "rust/crates/r8d/src/linux.rs": "bccd47650b718c4f16bef1688f9d645b1c215ebca4d5d6efdb5c4bd8e8c8dc2f",
+      "rust/crates/r8d/src/linux.rs": "c6b7afbcf93beb1611f6f6773d091727dd56da1ce8306f9a7193166d61dcc377",
       "rust/crates/r8d/src/manifest.rs": "f712d5e3fd00b2b87674f0468181ba1d67ccd30901f38252a7ff1a63423de442",
       "rust/crates/r8d/src/native.rs": "30d5126590446db852c3b1f9ad3cf58c461856fa1ae9e1f6e41a7d585b020232",
-      "rust/crates/r8d/src/bin/r8-native.rs": "15b9b127cd6196eca22cd7240748142e09f1d77e20225143f77d7ceffd1478b8"
+      "rust/crates/r8d/src/bin/r8-native.rs": "783dbba6197862482d052b4ab34b53ab645b1f9f0a8dda892a65b0356679620c"
     },
-    "source_map_sha256": "017a8feea82b84880912103a1569c682f369de49cb2323acbd77119972488be1"
+    "source_map_sha256": "ad54179fc12b400282f17d398a5b024bc8a724f7bf655c7912648a2ccd1320b5"
   },
   "result_fields_prohibited": [
     "observed_values",
