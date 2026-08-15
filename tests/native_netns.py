@@ -85,7 +85,7 @@ def manifest(ifaces, routes, local_locs=()):
 
 
 def _run(command, check=True):
-    return subprocess.run(command, check=check, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    return subprocess.run(command, check=check, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
 def ip(*args, ns=None, check=True):
     prefix = ["ip", "netns", "exec", ns, "ip"] if ns is not None else ["ip"]
     return _run(prefix + list(args), check)
@@ -97,7 +97,13 @@ ERROR_CATEGORIES = {
     "BUDGET": "budget",
     "REVOCATION": "revocation",
     "SETUP": "setup",
+    "TIMEOUT": "timeout",
 }
+LAB_STAGES = frozenset(("setup", "launch", "proof-ctl", "proof-dgram", "proof-ses", "proof-negative", "revoke", "cleanup"))
+def emit_stage(value):
+    if value not in LAB_STAGES:
+        raise RuntimeError("SETUP")
+    print(f"r8-native-lab stage={value}", file=sys.stderr, flush=True)
 SETUP_STAGES = frozenset(("namespace-create", "ipv6-disable", "loopback-down", "veth-create", "veth-move", "interface-rename", "link-activate"))
 STARTUP_STAGES = frozenset(("arguments", "manifest", "isolation", "descriptors", "watch", "privilege", "runtime"))
 ERROR_CATEGORIES.update({f"STARTUP_{stage.upper()}": f"startup-{stage}" for stage in STARTUP_STAGES})
@@ -253,6 +259,7 @@ class Lab:
     def proof(self):
         # Endpoint workers send and observe each packet over real Ethernet; no local parse is evidence.
         for kind, packet in (("ctl", ctl(0, self.hops + 1)), ("dgram", dgram(0, self.hops + 1, 1224)), ("ses", ses_packet()[0])):
+            emit_stage(f"proof-{kind}")
             watcher = subprocess.Popen(["ip", "netns", "exec", self.name(self.hops + 1), sys.executable, str(Path(__file__).resolve()), "worker", "watch", "--interface", f"e{self.hops}", "--kind", kind, "--hops", str(self.hops), "--reply" if kind == "ctl" else "--no-reply"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             self.workers.append(watcher)
             time.sleep(.05)
@@ -262,6 +269,7 @@ class Lab:
         # Every negative is sent and B's independent watcher must time out.
         negatives = [b"\0", eth(mac(1), b"\x02\0\0\0\0\xff", ctl(0, self.hops + 1)), ctl(0, self.hops + 1, 1), ctl(0, 0xffff)]
         for packet in negatives:
+            emit_stage("proof-negative")
             watcher = subprocess.Popen(["ip", "netns", "exec", self.name(self.hops + 1), sys.executable, str(Path(__file__).resolve()), "worker", "absent", "--interface", f"e{self.hops}"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             self.workers.append(watcher)
             time.sleep(.05)
@@ -348,11 +356,19 @@ def main(argv=None):
         except Exception:
             lab.counts["cleanup_failures"] += 1
         return emit_result(lab, a.binary, a.hops)
+    previous_alarm = signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(RuntimeError("TIMEOUT")))
+    signal.alarm(30)
     try:
-        lab.setup(); lab.launch(); lab.proof(); lab.revoke()
+        emit_stage("setup"); lab.setup()
+        emit_stage("launch"); lab.launch()
+        lab.proof()
+        emit_stage("revoke"); lab.revoke()
     except Exception as error:
         lab.error_category = setup_error_category(error, lab.setup_stage)
     finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous_alarm)
+        emit_stage("cleanup")
         try:
             lab.cleanup()
         except Exception:
