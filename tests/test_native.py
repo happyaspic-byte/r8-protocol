@@ -35,6 +35,10 @@ class NativeNetnsTests(unittest.TestCase):
         sock.bind.assert_called_once_with(("e0", native.ETHERTYPE))
         sock.setblocking.assert_called_once_with(False)
 
+    def test_namespace_ip_helper_executes_ip_inside_namespace(self):
+        with patch.object(native, "_run") as run:
+            native.ip("link", "set", "lo", "down", ns="test")
+        run.assert_called_once_with(["ip", "netns", "exec", "test", "ip", "link", "set", "lo", "down"], True)
     def test_nonroot_main_refuses(self):
         with patch.object(os, "geteuid", return_value=1000):
             self.assertEqual(native.main(["--binary", "/missing"]), 1)

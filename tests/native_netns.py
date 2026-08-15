@@ -87,7 +87,8 @@ def manifest(ifaces, routes, local_locs=()):
 def _run(command, check=True):
     return subprocess.run(command, check=check, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 def ip(*args, ns=None, check=True):
-    return _run(["ip"] + (["netns", "exec", ns] if ns else []) + list(args), check)
+    prefix = ["ip", "netns", "exec", ns, "ip"] if ns is not None else ["ip"]
+    return _run(prefix + list(args), check)
 ERROR_CATEGORIES = {
     "READY": "ready",
     "PRIVILEGE": "privilege",
