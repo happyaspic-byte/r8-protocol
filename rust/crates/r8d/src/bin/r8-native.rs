@@ -190,7 +190,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             r8d::LinuxError::Namespace => "namespace",
             r8d::LinuxError::Network => "network",
             r8d::LinuxError::DefaultRouteV4 => "default-route-v4",
-            r8d::LinuxError::DefaultRouteV6 => "default-route-v6",
             r8d::LinuxError::Address => "address",
             r8d::LinuxError::Interface => "interface",
             _ => "internal",

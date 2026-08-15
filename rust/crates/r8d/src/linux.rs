@@ -33,7 +33,6 @@ pub enum LinuxError {
     Namespace,
     Network,
     DefaultRouteV4,
-    DefaultRouteV6,
     Interface,
     Address,
     Socket,
@@ -100,6 +99,7 @@ where
     if namespace_matches_pid_one()? {
         return Err(LinuxError::Namespace);
     }
+    verify_ipv6_disabled(&names)?;
     verify_no_default_route()?;
     let addresses = interface_addresses()?;
     let loopback = addresses
@@ -381,7 +381,12 @@ pub fn r8_bpf_program() -> [libc::sock_filter; 7] {
 }
 
 fn valid_interface_name(name: &str) -> bool {
-    !name.is_empty() && name != "lo" && name.len() < libc::IFNAMSIZ && !name.as_bytes().contains(&0)
+    !name.is_empty()
+        && name != "lo"
+        && name.len() < libc::IFNAMSIZ
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-'))
 }
 
 fn namespace_matches_pid_one() -> Result<bool, LinuxError> {
@@ -391,14 +396,24 @@ fn namespace_matches_pid_one() -> Result<bool, LinuxError> {
     Ok(current.ino() == init.ino() && current.dev() == init.dev())
 }
 
+fn verify_ipv6_disabled(names: &BTreeSet<String>) -> Result<(), LinuxError> {
+    for scope in ["all", "default", "lo"]
+        .into_iter()
+        .chain(names.iter().map(String::as_str))
+    {
+        let path = format!("/proc/sys/net/ipv6/conf/{scope}/disable_ipv6");
+        let value = fs::read_to_string(path).map_err(|_| LinuxError::Network)?;
+        if value.trim() != "1" {
+            return Err(LinuxError::Network);
+        }
+    }
+    Ok(())
+}
+
 fn verify_no_default_route() -> Result<(), LinuxError> {
     let ipv4 = fs::read_to_string("/proc/net/route").map_err(|_| LinuxError::Network)?;
     if has_ipv4_default_route(&ipv4) {
         return Err(LinuxError::DefaultRouteV4);
-    }
-    let ipv6 = fs::read_to_string("/proc/net/ipv6_route").map_err(|_| LinuxError::Network)?;
-    if has_ipv6_default_route(&ipv6) {
-        return Err(LinuxError::DefaultRouteV6);
     }
     Ok(())
 }
@@ -431,52 +446,12 @@ pub fn has_ipv4_default_route(route_table: &str) -> bool {
     false
 }
 
-/// Parse `/proc/net/ipv6_route`; defaults and malformed records are unsafe.
-pub fn has_ipv6_default_route(route_table: &str) -> bool {
-    for line in route_table.lines().filter(|line| !line.trim().is_empty()) {
-        let fields: Vec<_> = line.split_whitespace().collect();
-        if fields.len() != 10
-            || !is_hex_field(fields[0], 32)
-            || !is_hex_field(fields[1], 8)
-            || !is_hex_field(fields[2], 32)
-            || !is_hex_field(fields[3], 8)
-            || !is_hex_field(fields[4], 32)
-            || !is_hex_field(fields[5], 8)
-            || !is_hex_field(fields[6], 8)
-            || !is_hex_field(fields[7], 8)
-            || !is_hex_field(fields[8], 8)
-            || fields[9].is_empty()
-        {
-            return true;
-        }
-        if fields[0] == "00000000000000000000000000000000"
-            && fields[1] == "00000000"
-            && !route_is_reject(fields[8])
-            && !is_ipv6_inert_loopback_route(&fields)
-        {
-            return true;
-        }
-    }
-    false
-}
-
 fn route_is_reject(flags: &str) -> bool {
     u32::from_str_radix(flags, 16)
         .map(|value| value & 0x0200 != 0)
         .unwrap_or(false)
 }
 
-fn is_ipv6_inert_loopback_route(fields: &[&str]) -> bool {
-    fields[0] == "00000000000000000000000000000000"
-        && fields[1] == "00000000"
-        && fields[2] == "00000000000000000000000000000000"
-        && fields[3] == "00000000"
-        && fields[4] == "00000000000000000000000000000000"
-        && u32::from_str_radix(fields[8], 16)
-            .map(|value| value & 0x0020_0000 != 0)
-            .unwrap_or(false)
-        && fields[9] == "lo"
-}
 fn is_hex_field(value: &str, length: usize) -> bool {
     value.len() == length && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
