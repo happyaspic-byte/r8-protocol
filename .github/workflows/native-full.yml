@@ -20,6 +20,14 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           clean: true
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+      - name: Install pinned native prerequisites
+        run: |
+          sudo apt-get update
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install --yes iproute2 ethtool procps
+          python3 -m pip install --requirement requirements-dev.txt
       - name: Require successful Gate 3 evidence at exact HEAD
         env:
           GH_TOKEN: ${{ github.token }}
@@ -47,11 +55,11 @@ jobs:
           grep -Eq 'cap_net_admin.*cap_net_raw|cap_net_raw.*cap_net_admin' "$RUNNER_TEMP/native-capability-preflight.txt"
           grep -Eq '^/' "$RUNNER_TEMP/native-capability-preflight.txt"
       - name: Native one-router proof
-        run: sudo python3 tests/native_netns.py --hops 1 --binary rust/target/release/r8-native > "$RUNNER_TEMP/native-one-hop.json"
+        run: sudo "$(command -v python3)" tests/native_netns.py --hops 1 --binary rust/target/release/r8-native > "$RUNNER_TEMP/native-one-hop.json"
       - name: Native two-router proof
-        run: sudo python3 tests/native_netns.py --hops 2 --binary rust/target/release/r8-native > "$RUNNER_TEMP/native-two-hop.json"
+        run: sudo "$(command -v python3)" tests/native_netns.py --hops 2 --binary rust/target/release/r8-native > "$RUNNER_TEMP/native-two-hop.json"
       - name: Redundant native proof
-        run: sudo python3 tests/redundant_netns.py --binary rust/target/release/r8-native --endpoint-binary rust/target/release/r8-redundant-native > "$RUNNER_TEMP/redundant-native.json"
+        run: sudo "$(command -v python3)" tests/redundant_netns.py --binary rust/target/release/r8-native --endpoint-binary rust/target/release/r8-redundant-native > "$RUNNER_TEMP/redundant-native.json"
       - name: Validate redacted diagnostics
         if: always()
         run: |
