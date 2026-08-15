@@ -383,7 +383,7 @@
       "reference/r8session.py": "f049418c818e301eee3880a1a5d68b9731b311cc0c9e2ed8b9e7952071ee8540",
       "reference/r8mobility.py": "c9da7638a77934d83fa0691a41e9890dc289e41078dd04c36f355c192df4db88",
       "reference/r8redundant.py": "b1ed2b0c190163ad29c7c5461c76eec7b27a348a33ec60ef52bee6a9db9af77c",
-      "tests/native_netns.py": "815d5cd950f0033c64691e821d38d41e5a9d7c208562254dbe8b6c40e8444ff2",
+      "tests/native_netns.py": "11c21eba8e2242537c439adf255aea6c442f516ec972b46ceb4e60fae3f09b1a",
       "tests/redundant_netns.py": "d3562103901cd07fa2771067c595fa1c33f27c732708365b253bd1ce598d5013",
       "rust/Cargo.toml": "127425cc73795afaa6c0c8bd4d5c595f37af00546057a0b09e2d1df25808cfde",
       "rust/Cargo.lock": "cdcf21158d86fa60e6ff3c329cd3d99175832d34957956889a896c945820de56",
@@ -404,7 +404,7 @@
       "rust/crates/r8d/src/native.rs": "30d5126590446db852c3b1f9ad3cf58c461856fa1ae9e1f6e41a7d585b020232",
       "rust/crates/r8d/src/bin/r8-native.rs": "242f0a122961469609fda8305df0252f81af0751f8c8ba1953c076c03a354be1"
     },
-    "source_map_sha256": "f9d74dae113ce1dd673ab9ca604d33c7bc1f4f71d52cd55446e71cc0a6e4ce77"
+    "source_map_sha256": "9c96e0b267d846972a63489c92b9912803da480581c495ca751317d2c7dcb5c5"
   },
   "result_fields_prohibited": [
     "observed_values",

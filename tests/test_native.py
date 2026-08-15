@@ -77,6 +77,7 @@ class NativeNetnsTests(unittest.TestCase):
         process = native.subprocess.Popen(
             [sys.executable, "-c", "import sys; print('r8-native-worker stage=socket',file=sys.stderr); print('r8-native-worker stage=receive',file=sys.stderr)"],
             stderr=native.subprocess.PIPE,
+            bufsize=0,
         )
         self.assertTrue(native.wait_worker_stage(process, "receive", timeout=1))
         process.wait(timeout=1)

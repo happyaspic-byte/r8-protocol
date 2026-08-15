@@ -321,7 +321,7 @@ class Lab:
         # Endpoint workers send and observe each packet over real Ethernet; no local parse is evidence.
         for kind, packet in (("ctl", ctl(0, self.hops + 1)), ("dgram", dgram(0, self.hops + 1, 1224)), ("ses", ses_packet()[0])):
             emit_stage(f"proof-{kind}")
-            watcher = subprocess.Popen(["ip", "netns", "exec", self.name(self.hops + 1), sys.executable, str(Path(__file__).resolve()), "worker", "watch", "--interface", f"e{self.hops}", "--kind", kind, "--hops", str(self.hops), "--reply" if kind == "ctl" else "--no-reply"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            watcher = subprocess.Popen(["ip", "netns", "exec", self.name(self.hops + 1), sys.executable, str(Path(__file__).resolve()), "worker", "watch", "--interface", f"e{self.hops}", "--kind", kind, "--hops", str(self.hops), "--reply" if kind == "ctl" else "--no-reply"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
             self.workers.append(watcher)
             if not wait_worker_stage(watcher, "receive"):
                 raise RuntimeError(worker_process_error(watcher))
@@ -338,7 +338,7 @@ class Lab:
         negatives = [b"\0", eth(mac(1), b"\x02\0\0\0\0\xff", ctl(0, self.hops + 1)), ctl(0, self.hops + 1, 1), ctl(0, 0xffff)]
         for packet in negatives:
             emit_stage("proof-negative")
-            watcher = subprocess.Popen(["ip", "netns", "exec", self.name(self.hops + 1), sys.executable, str(Path(__file__).resolve()), "worker", "absent", "--interface", f"e{self.hops}"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            watcher = subprocess.Popen(["ip", "netns", "exec", self.name(self.hops + 1), sys.executable, str(Path(__file__).resolve()), "worker", "absent", "--interface", f"e{self.hops}"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
             self.workers.append(watcher)
             if not wait_worker_stage(watcher, "receive"):
                 raise RuntimeError(worker_process_error(watcher))
