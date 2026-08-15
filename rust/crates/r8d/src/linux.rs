@@ -443,6 +443,7 @@ pub fn has_ipv6_default_route(route_table: &str) -> bool {
         if fields[0] == "00000000000000000000000000000000"
             && fields[1] == "00000000"
             && !route_is_reject(fields[8])
+            && !is_ipv6_kernel_null_route(&fields)
         {
             return true;
         }
@@ -454,6 +455,21 @@ fn route_is_reject(flags: &str) -> bool {
     u32::from_str_radix(flags, 16)
         .map(|value| value & 0x0200 != 0)
         .unwrap_or(false)
+}
+
+fn is_ipv6_kernel_null_route(fields: &[&str]) -> bool {
+    fields[0] == "00000000000000000000000000000000"
+        && fields[1] == "00000000"
+        && fields[2] == "00000000000000000000000000000000"
+        && fields[3] == "00000000"
+        && fields[4] == "00000000000000000000000000000000"
+        && fields[5].eq_ignore_ascii_case("ffffffff")
+        && fields[6] == "00000001"
+        && fields[7] == "00000000"
+        && u32::from_str_radix(fields[8], 16)
+            .map(|value| value & 0x0020_0000 != 0)
+            .unwrap_or(false)
+        && fields[9] == "lo"
 }
 fn is_hex_field(value: &str, length: usize) -> bool {
     value.len() == length && value.bytes().all(|byte| byte.is_ascii_hexdigit())

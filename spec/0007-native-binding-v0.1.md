@@ -29,7 +29,7 @@ Forwarding selects the matching route with greatest prefix length. Equal-length 
 ## 3. Receive and forwarding contract
 
 The daemon runs non-root after a narrow launcher opens only manifest-named EtherType-filtered descriptors. The launcher must verify the active isolated namespace/allowlist, no default route, no global address, no bridge or bond attachment, exact EtherType filter, named interfaces only, non-root long-lived UID, no broad `CAP_NET_ADMIN`, no-new-privileges, and immutable filter state where supported. Failure to apply a required check aborts startup. Physical or VLAN isolation is a separately recorded operator attestation naming switch/VLAN/interfaces and confirming no public or third-party attachment.
-A kernel-generated zero-prefix entry carrying the exact `RTF_REJECT` bit is an inert reject sentinel, not a usable default route; the launcher may ignore it only after strict field parsing. Any zero-prefix entry without `RTF_REJECT`, or any malformed route-table record, aborts startup.
+A kernel-generated zero-prefix entry is inert, rather than a usable default route, only when strict parsing proves either the `RTF_REJECT` bit or the exact IPv6 null-route tuple: zero destination/source/next hop, maximum metric, reference count one, use count zero, `RTF_NONEXTHOP`, and loopback device. Any other zero-prefix entry or malformed route-table record aborts startup.
 
 | State + event | Precondition | Action and mutation | Error | Timer / idempotency | Release |
 |---|---|---|---|---|---|
