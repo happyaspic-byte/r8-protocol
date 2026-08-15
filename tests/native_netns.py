@@ -98,12 +98,29 @@ ERROR_CATEGORIES = {
     "REVOCATION": "revocation",
     "SETUP": "setup",
     "TIMEOUT": "timeout",
+    "FORWARD_WORKER_SOCKET": "forward-worker-socket",
+    "FORWARD_WORKER_SEND": "forward-worker-send",
+    "FORWARD_WORKER_REPLY": "forward-worker-reply",
 }
 LAB_STAGES = frozenset(("setup", "launch", "proof-ctl", "proof-dgram", "proof-ses", "proof-negative", "revoke", "cleanup"))
 def emit_stage(value):
     if value not in LAB_STAGES:
         raise RuntimeError("SETUP")
     print(f"r8-native-lab stage={value}", file=sys.stderr, flush=True)
+WORKER_STAGES = frozenset(("socket", "send", "reply", "receive"))
+def emit_worker_stage(value):
+    if value not in WORKER_STAGES:
+        raise RuntimeError("SETUP")
+    print(f"r8-native-worker stage={value}", file=sys.stderr, flush=True)
+def worker_error(stderr):
+    if isinstance(stderr, bytes):
+        stderr = stderr.decode("utf-8", "replace")
+    stage = None
+    for line in (stderr or "").splitlines():
+        value = line.removeprefix("r8-native-worker stage=")
+        if value in WORKER_STAGES:
+            stage = value
+    return f"FORWARD_WORKER_{stage.upper()}" if stage in ("socket", "send", "reply") else "FORWARD"
 SETUP_STAGES = frozenset(("namespace-create", "ipv6-disable", "loopback-down", "veth-create", "veth-move", "interface-rename", "link-activate"))
 STARTUP_STAGES = frozenset(("arguments", "manifest", "isolation", "descriptors", "watch", "privilege", "runtime"))
 ERROR_CATEGORIES.update({f"STARTUP_{stage.upper()}": f"startup-{stage}" for stage in STARTUP_STAGES})
@@ -263,8 +280,14 @@ class Lab:
             watcher = subprocess.Popen(["ip", "netns", "exec", self.name(self.hops + 1), sys.executable, str(Path(__file__).resolve()), "worker", "watch", "--interface", f"e{self.hops}", "--kind", kind, "--hops", str(self.hops), "--reply" if kind == "ctl" else "--no-reply"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             self.workers.append(watcher)
             time.sleep(.05)
-            sender = _run(["ip", "netns", "exec", self.name(0), sys.executable, str(Path(__file__).resolve()), "worker", "send", "--interface", "e0", "--packet", packet.hex(), "--reply" if kind == "ctl" else "--no-reply", "--hops", str(self.hops)], check=False)
-            if sender.returncode or watcher.wait(timeout=4): raise RuntimeError("FORWARD")
+            try:
+                sender = _run(["ip", "netns", "exec", self.name(0), sys.executable, str(Path(__file__).resolve()), "worker", "send", "--interface", "e0", "--packet", packet.hex(), "--reply" if kind == "ctl" else "--no-reply", "--hops", str(self.hops)], check=False)
+            except subprocess.TimeoutExpired as error:
+                raise RuntimeError(worker_error(error.stderr)) from error
+            if sender.returncode:
+                raise RuntimeError(worker_error(sender.stderr))
+            if watcher.wait(timeout=4):
+                raise RuntimeError("FORWARD")
             self.counts["frames_sent"] += 1; self.counts["frames_received"] += 1
         # Every negative is sent and B's independent watcher must time out.
         negatives = [b"\0", eth(mac(1), b"\x02\0\0\0\0\xff", ctl(0, self.hops + 1)), ctl(0, self.hops + 1, 1), ctl(0, 0xffff)]
@@ -311,15 +334,19 @@ class Lab:
 
 
 def worker(args):
+    emit_worker_stage("socket")
     s = socket_for(args.interface)
     if args.mode == "send":
+        emit_worker_stage("send")
         wire = bytes.fromhex(args.frame) if args.frame else eth(mac(1), mac(0), bytes.fromhex(args.packet))
         s.send(wire)
         if not args.reply: return 0
+        emit_worker_stage("reply")
         data = receive(s, 2)
         if data is None or len(data) < 14: return 1
         h, payload = r8ref.Header.unpack(data[14:])
         return 0 if h.hop == 8 - args.hops and r8ref.parse_ctl(h, payload)[0] == r8ref.CTL_ECHO_REPLY else 1
+    emit_worker_stage("receive")
     data = receive(s, 1.5)
     if args.mode == "absent": return 0 if data is None else 1
     if data is None or len(data) < 14: return 1

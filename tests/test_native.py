@@ -71,6 +71,9 @@ class NativeNetnsTests(unittest.TestCase):
         self.assertEqual(native.startup_error("noise\nr8-native startup=manifest\n"), "STARTUP_MANIFEST")
         self.assertEqual(native.startup_error("r8-native startup=unknown\n"), "READY")
         self.assertEqual(native.startup_error("r8-native startup=isolation\nr8-native isolation=default-route-v4\n"), "STARTUP_ISOLATION_DEFAULT_ROUTE_V4")
+    def test_worker_diagnostics_accept_only_fixed_redacted_stages(self):
+        self.assertEqual(native.worker_error("noise\nr8-native-worker stage=reply\n"), "FORWARD_WORKER_REPLY")
+        self.assertEqual(native.worker_error("r8-native-worker stage=unknown\n"), "FORWARD")
 
 if __name__ == "__main__":
     unittest.main()
