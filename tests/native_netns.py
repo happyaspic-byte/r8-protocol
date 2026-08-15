@@ -85,7 +85,7 @@ def manifest(ifaces, routes, local_locs=()):
 
 
 def _run(command, check=True):
-    return subprocess.run(command, check=check, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
+    return subprocess.run(command, check=check, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
 def ip(*args, ns=None, check=True):
     prefix = ["ip", "netns", "exec", ns, "ip"] if ns is not None else ["ip"]
     return _run(prefix + list(args), check)
@@ -121,6 +121,30 @@ def worker_error(stderr):
         if value in WORKER_STAGES:
             stage = value
     return f"FORWARD_WORKER_{stage.upper()}" if stage in ("socket", "send", "reply") else "FORWARD"
+def wait_worker_stage(process, expected, timeout=10):
+    if expected not in WORKER_STAGES:
+        return False
+    deadline = time.monotonic() + timeout
+    selector = selectors.DefaultSelector()
+    selector.register(process.stderr, selectors.EVENT_READ)
+    try:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            events = selector.select(remaining if process.poll() is None else 0)
+            if not events:
+                return False
+            line = process.stderr.readline()
+            if isinstance(line, bytes):
+                line = line.decode("utf-8", "replace")
+            value = line.strip().removeprefix("r8-native-worker stage=")
+            if value == expected:
+                return True
+            if line.startswith("r8-native-worker stage=") and value not in WORKER_STAGES:
+                return False
+    finally:
+        selector.close()
 SETUP_STAGES = frozenset(("namespace-create", "ipv6-disable", "loopback-down", "veth-create", "veth-move", "interface-rename", "link-activate"))
 STARTUP_STAGES = frozenset(("arguments", "manifest", "isolation", "descriptors", "watch", "privilege", "runtime"))
 ERROR_CATEGORIES.update({f"STARTUP_{stage.upper()}": f"startup-{stage}" for stage in STARTUP_STAGES})
@@ -279,7 +303,8 @@ class Lab:
             emit_stage(f"proof-{kind}")
             watcher = subprocess.Popen(["ip", "netns", "exec", self.name(self.hops + 1), sys.executable, str(Path(__file__).resolve()), "worker", "watch", "--interface", f"e{self.hops}", "--kind", kind, "--hops", str(self.hops), "--reply" if kind == "ctl" else "--no-reply"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             self.workers.append(watcher)
-            time.sleep(.05)
+            if not wait_worker_stage(watcher, "receive"):
+                raise RuntimeError("FORWARD")
             try:
                 sender = _run(["ip", "netns", "exec", self.name(0), sys.executable, str(Path(__file__).resolve()), "worker", "send", "--interface", "e0", "--packet", packet.hex(), "--reply" if kind == "ctl" else "--no-reply", "--hops", str(self.hops)], check=False)
             except subprocess.TimeoutExpired as error:
@@ -295,7 +320,8 @@ class Lab:
             emit_stage("proof-negative")
             watcher = subprocess.Popen(["ip", "netns", "exec", self.name(self.hops + 1), sys.executable, str(Path(__file__).resolve()), "worker", "absent", "--interface", f"e{self.hops}"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             self.workers.append(watcher)
-            time.sleep(.05)
+            if not wait_worker_stage(watcher, "receive"):
+                raise RuntimeError("NEGATIVE")
             raw = packet if len(packet) >= 14 and packet[12:14] == ETHERTYPE.to_bytes(2, "big") else eth(mac(1), mac(0), packet)
             if _run(["ip", "netns", "exec", self.name(0), sys.executable, str(Path(__file__).resolve()), "worker", "send", "--interface", "e0", "--frame", raw.hex()], check=False).returncode or watcher.wait(timeout=3): raise RuntimeError("NEGATIVE")
             self.counts["negative_timeouts"] += 1

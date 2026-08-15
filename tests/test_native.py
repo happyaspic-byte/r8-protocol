@@ -74,6 +74,13 @@ class NativeNetnsTests(unittest.TestCase):
     def test_worker_diagnostics_accept_only_fixed_redacted_stages(self):
         self.assertEqual(native.worker_error("noise\nr8-native-worker stage=reply\n"), "FORWARD_WORKER_REPLY")
         self.assertEqual(native.worker_error("r8-native-worker stage=unknown\n"), "FORWARD")
+        process = native.subprocess.Popen(
+            [sys.executable, "-c", "import sys; print('r8-native-worker stage=socket',file=sys.stderr); print('r8-native-worker stage=receive',file=sys.stderr)"],
+            stderr=native.subprocess.PIPE,
+        )
+        self.assertTrue(native.wait_worker_stage(process, "receive", timeout=1))
+        process.wait(timeout=1)
+        process.stderr.close()
 
 if __name__ == "__main__":
     unittest.main()
