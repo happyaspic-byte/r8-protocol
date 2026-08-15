@@ -414,11 +414,11 @@ def worker(args):
 
 
 def main(argv=None):
-    p = argparse.ArgumentParser(); sub = p.add_subparsers(dest="mode")
+    p = argparse.ArgumentParser(); sub = p.add_subparsers(dest="command")
     w = sub.add_parser("worker"); w.add_argument("mode", choices=("send", "watch", "absent")); w.add_argument("--interface", required=True); w.add_argument("--packet"); w.add_argument("--frame"); w.add_argument("--kind", choices=("ctl", "dgram", "ses")); w.add_argument("--hops", type=int, default=0); w.add_argument("--reply", action="store_true"); w.add_argument("--no-reply", action="store_false", dest="reply")
     p.add_argument("--binary", default=os.environ.get("R8_NATIVE_BINARY", str(ROOT / "rust/target/release/r8-native"))); p.add_argument("--hops", type=int, choices=(1, 2), default=2); p.add_argument("--smoke", action="store_true")
     a = p.parse_args(argv)
-    if a.mode == "worker": return worker(a)
+    if a.command == "worker": return worker(a)
     if os.geteuid() != 0:
         return 1
     lab = Lab(a.hops, a.binary)

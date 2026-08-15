@@ -57,7 +57,7 @@
       "protocol_id": "Q2",
       "path": "bench/protocols/q2.json",
       "size_bytes": 20050,
-      "sha256": "c4b33456701ffd18f3e92d0ccca6b58066f5883dfe0b090134905fca1a9ec076",
+      "sha256": "346f2c3dc5be0e52f7fe4e0701c3b6b31860f7e24bfdb71e49a6a9c11e52a1ef",
       "contract_version": "r8-benchmark-preregistration-v5",
       "status": "frozen-preregistered-no-results-v5",
       "execution_plan_sha256": "477db21557cd9ff0349c8e9630261d35ea6dda42a53f1fcf50c7936ba7a70f75",

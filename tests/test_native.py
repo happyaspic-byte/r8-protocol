@@ -43,6 +43,10 @@ class NativeNetnsTests(unittest.TestCase):
         source = Path(native.__file__).read_text()
         self.assertIn("self.procs + self.workers", source)
         self.assertIn("process.wait(timeout=.5)", source)
+    def test_worker_subcommand_dispatches_before_root_check(self):
+        with patch.object(native, "worker", return_value=7) as worker:
+            self.assertEqual(native.main(["worker", "absent", "--interface", "e0"]), 7)
+        worker.assert_called_once()
     def test_nonroot_main_refuses(self):
         with patch.object(os, "geteuid", return_value=1000):
             self.assertEqual(native.main(["--binary", "/missing"]), 1)
