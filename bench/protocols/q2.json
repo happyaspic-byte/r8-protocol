@@ -367,7 +367,7 @@
   },
   "implementation_binding": {
     "source_map": {
-      ".github/workflows/ci.yml": "ce162161072069498c0b408c836764694f5a560860edd3309ea3d1da61688c55",
+      ".github/workflows/ci.yml": "fefb3522442d040126821913234ea365faaf0c0fe5232128c47f9c6e3457cee3",
       ".github/workflows/native-full.yml": "8a403726cf9571a5e865192867bebad3510820a647a288dab6aaf1bc7aa2de2b",
       ".github/workflows/q2-full.yml": "47365fdb40f0672d77919a8263036efb550c923f8446010e56be7d093fa1b598",
       "bench/q2.py": "3acbee3e01c82404877e843565d527e36ce7c6b40c18ca79733550004d3d5914",
@@ -404,7 +404,7 @@
       "rust/crates/r8d/src/native.rs": "30d5126590446db852c3b1f9ad3cf58c461856fa1ae9e1f6e41a7d585b020232",
       "rust/crates/r8d/src/bin/r8-native.rs": "242f0a122961469609fda8305df0252f81af0751f8c8ba1953c076c03a354be1"
     },
-    "source_map_sha256": "aa63e31eee321b80edefeb6d9b07a89f5e2a2380947a7413855d0a323979edda"
+    "source_map_sha256": "3982493206a4af2c60ac2212fa9e65813d55d30fff1a3669e87daf6d0ab144fd"
   },
   "result_fields_prohibited": [
     "observed_values",
