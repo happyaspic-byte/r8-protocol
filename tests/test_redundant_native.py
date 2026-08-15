@@ -1,9 +1,11 @@
 import json
 import hashlib
+import fcntl
 import os
 import inspect
 import re
 import sys
+import subprocess
 import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -46,7 +48,8 @@ class RedundantNativeTests(unittest.TestCase):
 
     def test_endpoint_credentials_arrive_only_on_exact_inherited_fd3(self):
         try:
-            before = os.fstat(3)
+            stat = os.fstat(3)
+            before = (stat.st_dev, stat.st_ino, fcntl.fcntl(3, fcntl.F_GETFD), os.get_inheritable(3))
         except OSError:
             before = None
         seed, peer = b"a" * 32, b"b" * 32
@@ -66,12 +69,52 @@ class RedundantNativeTests(unittest.TestCase):
             output.strip(),
             f"64 {hashlib.sha256(seed + peer).hexdigest()} 0")
         try:
-            after = os.fstat(3)
+            stat = os.fstat(3)
+            after = (stat.st_dev, stat.st_ino, fcntl.fcntl(3, fcntl.F_GETFD), os.get_inheritable(3))
         except OSError:
             after = None
-        self.assertEqual(
-            None if before is None else (before.st_dev, before.st_ino),
-            None if after is None else (after.st_dev, after.st_ino))
+        self.assertEqual(before, after)
+    def test_endpoint_spawn_preserves_closed_and_noninheritable_fd3(self):
+        tests = str(Path(__file__).resolve().parent)
+        program = f"""
+import fcntl,json,os,sys
+sys.path.insert(0,{tests!r})
+import redundant_netns as native
+def descriptor():
+    try:
+        stat=os.fstat(3)
+        return [stat.st_dev,stat.st_ino,fcntl.fcntl(3,fcntl.F_GETFD),os.get_inheritable(3)]
+    except OSError:
+        return None
+try:
+    os.close(3)
+except OSError:
+    pass
+if sys.argv[1]=='open':
+    fd=os.open(os.devnull,os.O_RDONLY)
+    if fd!=3:
+        os.dup2(fd,3,inheritable=False)
+        os.close(fd)
+    else:
+        os.set_inheritable(3,False)
+before=descriptor()
+command=[sys.executable,'-c',"import os;d=b''\\nwhile len(d)<64:d+=os.read(3,64-len(d))\\nprint(len(d),len(os.read(3,1)))"]
+process=object.__new__(native.Lab).endpoint_process(command,b'a'*32,b'b'*32)
+output,error=process.communicate(timeout=2)
+print(json.dumps({{'before':before,'after':descriptor(),'output':output.strip(),'error':error,'returncode':process.returncode}},sort_keys=True))
+"""
+        for state in ("closed", "open"):
+            with self.subTest(state=state):
+                completed = subprocess.run(
+                    [sys.executable, "-c", program, state],
+                    text=True, capture_output=True, check=True, timeout=5)
+                result = json.loads(completed.stdout)
+                self.assertEqual(result["before"], result["after"])
+                self.assertEqual(result["output"], "64 0")
+                self.assertEqual(result["error"], "")
+                self.assertEqual(result["returncode"], 0)
+                if state == "open":
+                    self.assertFalse(result["before"][3])
     def test_endpoint_frame_counts_include_both_physical_directions(self):
         before = {key: (10, 20) for key in ((0, 0), (0, 2), (3, 1), (3, 3))}
         after = {
@@ -132,9 +175,12 @@ class RedundantNativeTests(unittest.TestCase):
         python_source = inspect.getsource(native.Lab.endpoint_process) + inspect.getsource(native.Lab.rust_endpoint_proof)
         rust_source = (Path(__file__).resolve().parents[1]
                        / "rust/crates/r8-redundant/src/bin/r8-redundant-native.rs").read_text()
-        self.assertIn("pass_fds=(3,)", python_source)
-        self.assertIn("os.dup2(read_fd, 3, inheritable=True)", python_source)
+        self.assertIn("os.posix_spawnp(", python_source)
+        self.assertIn("(os.POSIX_SPAWN_DUP2, credential_fd, 3)", python_source)
+        self.assertIn("(os.POSIX_SPAWN_CLOSE, fd)", python_source)
+        self.assertIn('os.listdir("/proc/self/fd")', python_source)
         self.assertNotIn("preexec_fn=", python_source)
+        self.assertNotIn("os.dup2(", python_source)
         self.assertIn("os.urandom(32)", python_source)
         self.assertIn("endpoint_counters", python_source)
         self.assertNotIn('frames_sent"] += 7', python_source)

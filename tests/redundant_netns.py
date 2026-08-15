@@ -41,6 +41,59 @@ def endpoint_frame_counts(before, after):
     path0 = sum(after[key][0] - before[key][0] for key in ((0, 0), (3, 1)))
     path1 = sum(after[key][0] - before[key][0] for key in ((0, 2), (3, 3)))
     return sent, received, path0, path1
+class SpawnedEndpoint:
+    def __init__(self, pid, command, stdout_fd, stderr_fd):
+        self.pid = pid
+        self.command = command
+        self.stdout = self.stderr = None
+        try:
+            self.stdout = os.fdopen(stdout_fd, "r", encoding="utf-8")
+            self.stderr = os.fdopen(stderr_fd, "r", encoding="utf-8")
+        except Exception:
+            if self.stdout is None:
+                os.close(stdout_fd)
+            else:
+                self.stdout.close()
+            os.close(stderr_fd)
+            os.kill(pid, signal.SIGKILL)
+            os.waitpid(pid, 0)
+            raise
+        self.returncode = None
+    def _record(self, status):
+        if os.WIFEXITED(status):
+            self.returncode = os.WEXITSTATUS(status)
+        elif os.WIFSIGNALED(status):
+            self.returncode = -os.WTERMSIG(status)
+        else:
+            raise RuntimeError("rust-endpoint")
+        return self.returncode
+    def poll(self):
+        if self.returncode is not None:
+            return self.returncode
+        pid, status = os.waitpid(self.pid, os.WNOHANG)
+        return None if pid == 0 else self._record(status)
+    def wait(self, timeout=None):
+        if self.returncode is not None:
+            return self.returncode
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while True:
+            result = self.poll()
+            if result is not None:
+                return result
+            if deadline is not None and time.monotonic() >= deadline:
+                raise subprocess.TimeoutExpired(self.command, timeout)
+            time.sleep(.005)
+    def communicate(self, timeout=None):
+        self.wait(timeout)
+        output, error = self.stdout.read(), self.stderr.read()
+        self.stdout.close(); self.stderr.close()
+        return output, error
+    def kill(self):
+        if self.poll() is None:
+            os.kill(self.pid, signal.SIGKILL)
+    def terminate(self):
+        if self.poll() is None:
+            os.kill(self.pid, signal.SIGTERM)
 def mac(n): return bytes((2, 0x52, 0x38, 0, n >> 8, n & 255))
 def eth(dst, src, packet): return dst + src + ETHERTYPE.to_bytes(2, "big") + packet
 
@@ -274,21 +327,54 @@ class Lab:
         return counters
 
     def endpoint_process(self, command, seed, peer_public):
-        read_fd, write_fd = os.pipe()
+        owned = set()
+        def pipe():
+            pair = os.pipe()
+            owned.update(pair)
+            return pair
         try:
-            os.write(write_fd, seed + peer_public)
-        finally:
-            os.close(write_fd)
-        saved_fd = os.dup(3)
-        try:
-            os.dup2(read_fd, 3, inheritable=True)
-            return subprocess.Popen(
-                command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True, pass_fds=(3,))
-        finally:
-            os.dup2(saved_fd, 3)
-            os.close(saved_fd)
-            os.close(read_fd)
+            credential_fd, credential_writer = pipe()
+            stdout_fd, stdout_writer = pipe()
+            stderr_fd, stderr_writer = pipe()
+            if (type(seed) is not bytes or len(seed) != 32
+                    or type(peer_public) is not bytes or len(peer_public) != 32):
+                raise RuntimeError("rust-endpoint")
+            material = seed + peer_public
+            if os.write(credential_writer, material) != len(material):
+                raise RuntimeError("rust-endpoint")
+            os.close(credential_writer); owned.remove(credential_writer)
+            inherited = []
+            for entry in os.listdir("/proc/self/fd"):
+                fd = int(entry)
+                if fd < 4:
+                    continue
+                try:
+                    os.fstat(fd)
+                except OSError:
+                    continue
+                inherited.append(fd)
+            actions = (
+                (os.POSIX_SPAWN_DUP2, stdout_writer, 1),
+                (os.POSIX_SPAWN_DUP2, stderr_writer, 2),
+                (os.POSIX_SPAWN_DUP2, credential_fd, 3),
+                *((os.POSIX_SPAWN_CLOSE, fd) for fd in sorted(inherited)),
+            )
+            pid = os.posix_spawnp(
+                command[0], command,
+                {"PATH": os.environ.get("PATH", os.defpath)},
+                file_actions=actions)
+            for fd in (credential_fd, stdout_writer, stderr_writer):
+                os.close(fd); owned.remove(fd)
+            process = SpawnedEndpoint(pid, command, stdout_fd, stderr_fd)
+            owned.remove(stdout_fd); owned.remove(stderr_fd)
+            return process
+        except Exception:
+            for fd in owned:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            raise
 
     def rust_endpoint_proof(self):
         sender_seed, receiver_seed = os.urandom(32), os.urandom(32)
