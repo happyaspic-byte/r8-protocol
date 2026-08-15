@@ -63,6 +63,9 @@ class NativeNetnsTests(unittest.TestCase):
         self.assertEqual(native.setup_error_category(OSError(), "ipv6-disable"), "setup-ipv6-disable")
         self.assertEqual(native.setup_error_category(OSError(), "unknown"), "setup")
         self.assertEqual(native.setup_error_category(RuntimeError("READY"), "ipv6-disable"), "ready")
+    def test_startup_diagnostics_accept_only_fixed_redacted_stages(self):
+        self.assertEqual(native.startup_error("noise\nr8-native startup=manifest\n"), "STARTUP_MANIFEST")
+        self.assertEqual(native.startup_error("r8-native startup=unknown\n"), "READY")
 
 if __name__ == "__main__":
     unittest.main()

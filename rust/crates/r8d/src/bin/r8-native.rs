@@ -167,7 +167,9 @@ impl Clock for MonotonicClock {
     }
 }
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    eprintln!("r8-native startup=arguments");
     let args = arguments().map_err(|_| "r8-native arguments rejected")?;
+    eprintln!("r8-native startup=manifest");
     let raw = std::fs::read(&args.manifest).map_err(|_| "manifest rejected")?;
     let sealed = create_immutable_manifest(&raw)?;
     let manifest = validate_manifest_json(&read_immutable_manifest(&sealed)?, &args.interfaces)?;
@@ -182,7 +184,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if declared != supplied {
         return Err("manifest allowlist rejected".into());
     }
+    eprintln!("r8-native startup=isolation");
     verify_isolated_namespace(&args.interfaces)?;
+    eprintln!("r8-native startup=descriptors");
     let mut records = Vec::new();
     let mut budgets = Vec::new();
     let mut fds = Vec::new();
@@ -194,10 +198,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         fds.push((interface.descriptor_id(), descriptor.into_fd()));
     }
     let budgets = DescriptorBudgets::new(&manifest, budgets)?;
+    eprintln!("r8-native startup=watch");
     let mut watch = route_watch(args.interfaces.clone())?;
+    eprintln!("r8-native startup=privilege");
     drop_privileges(args.uid, args.gid)?;
     set_nondumpable()?;
     let descriptor_count = records.len();
+    eprintln!("r8-native startup=runtime");
     let mut runtime = NativeRuntime::new(manifest, budgets, records)?;
     let mut io = LinuxIo { fds };
     let mut sessions = DropSessions::default();

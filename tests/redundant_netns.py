@@ -52,7 +52,16 @@ def receive(sock, timeout=2):
     return sock.recv(2048) if events else None
 
 def run(command, check=True): return subprocess.run(command, check=check, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-def ip(*args, ns=None, check=True): return run(["ip"] + (["netns", "exec", ns] if ns else []) + list(args), check)
+def ip(*args, ns=None, check=True):
+    prefix = ["ip", "netns", "exec", ns, "ip"] if ns is not None else ["ip"]
+    return run(prefix + list(args), check)
+STARTUP_STAGES = frozenset(("arguments", "manifest", "isolation", "descriptors", "watch", "privilege", "runtime"))
+def startup_error(stderr):
+    stage = None
+    for line in stderr.splitlines():
+        if line.startswith("r8-native startup=") and line.removeprefix("r8-native startup=") in STARTUP_STAGES:
+            stage = line.removeprefix("r8-native startup=")
+    return f"startup-{stage}" if stage is not None else "ready"
 def proc_status(pid):
     wanted = {"Uid", "Gid", "Groups", "CapEff", "NoNewPrivs"}; result = {}
     for line in Path(f"/proc/{pid}/status").read_text().splitlines():
@@ -118,8 +127,14 @@ class Lab:
             command = ["ip", "netns", "exec", self.ns(hop), self.binary, "--manifest", str(path), "--interface", local[0], "--interface", local[1], "--uid", str(UID), "--gid", str(GID)]
             process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True); self.procs.append(process)
             select = selectors.DefaultSelector(); select.register(process.stdout, selectors.EVENT_READ)
-            if not select.select(5) or not process.stdout.readline().startswith(READY): raise RuntimeError("ready")
-            select.close(); status = proc_status(process.pid)
+            ready = bool(select.select(5)) and process.stdout.readline().startswith(READY)
+            select.close()
+            if not ready:
+                if process.poll() is None:
+                    try: process.wait(timeout=.2)
+                    except subprocess.TimeoutExpired: pass
+                raise RuntimeError(startup_error(process.stderr.read()) if process.poll() is not None else "ready")
+            status = proc_status(process.pid)
             if status.get("Uid", ["0"])[0] != str(UID) or status.get("Gid", ["0"])[0] != str(GID) or status.get("Groups") != [] or status.get("CapEff") != ["0000000000000000"] or status.get("NoNewPrivs") != ["1"]: raise RuntimeError("privilege")
         self.privilege_dropped = True
     def endpoints(self):
@@ -416,7 +431,8 @@ def main(argv=None):
             raise RuntimeError("setup")
         lab.setup(); lab.launch(); lab.proof(); lab.revoke()
     except Exception as error:
-        lab.error_category = str(error) if str(error) in {"setup", "ready", "privilege", "revocation", "rust-endpoint"} else "proof"
+        allowed = {"setup", "ready", "privilege", "revocation", "rust-endpoint"} | {f"startup-{stage}" for stage in STARTUP_STAGES}
+        lab.error_category = str(error) if str(error) in allowed else "proof"
     finally:
         try: lab.cleanup()
         except Exception: lab.counts["cleanup_failures"] += 1

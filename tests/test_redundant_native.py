@@ -42,6 +42,12 @@ class RedundantNativeTests(unittest.TestCase):
         self.assertIn("((1, (2, 3), (0, 1), (0, 3)), (2, (4, 5), (2, 3), (0, 3)))",
                       launch_source)
 
+    def test_namespace_ip_and_startup_diagnostics_are_finite(self):
+        with patch.object(native, "run") as run:
+            native.ip("link", "set", "lo", "down", ns="test")
+        run.assert_called_once_with(["ip", "netns", "exec", "test", "ip", "link", "set", "lo", "down"], True)
+        self.assertEqual(native.startup_error("noise\nr8-native startup=descriptors\n"), "startup-descriptors")
+        self.assertEqual(native.startup_error("r8-native startup=unknown\n"), "ready")
     def test_packet_socket_ignores_outgoing(self):
         sock = MagicMock()
         with patch.object(native.socket, "socket", return_value=sock):

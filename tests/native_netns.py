@@ -99,6 +99,8 @@ ERROR_CATEGORIES = {
     "SETUP": "setup",
 }
 SETUP_STAGES = frozenset(("namespace-create", "ipv6-disable", "loopback-down", "veth-create", "veth-move", "interface-rename", "link-activate"))
+STARTUP_STAGES = frozenset(("arguments", "manifest", "isolation", "descriptors", "watch", "privilege", "runtime"))
+ERROR_CATEGORIES.update({f"STARTUP_{stage.upper()}": f"startup-{stage}" for stage in STARTUP_STAGES})
 
 
 def error_category(error):
@@ -108,6 +110,12 @@ def error_category(error):
 def setup_error_category(error, stage):
     category = error_category(error)
     return f"setup-{stage}" if category == "setup" and stage in SETUP_STAGES else category
+def startup_error(stderr):
+    stage = None
+    for line in stderr.splitlines():
+        if line.startswith("r8-native startup=") and line.removeprefix("r8-native startup=") in STARTUP_STAGES:
+            stage = line.removeprefix("r8-native startup=")
+    return f"STARTUP_{stage.upper()}" if stage is not None else "READY"
 
 
 def descriptor_ids(hops):
@@ -223,8 +231,15 @@ class Lab:
                        "--interface", f"e{n - 1}", "--interface", f"e{n}", "--uid", str(UID), "--gid", str(GID)]
             p = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True); self.procs.append(p)
             sel = selectors.DefaultSelector(); sel.register(p.stdout, selectors.EVENT_READ)
-            if not sel.select(5) or not p.stdout.readline().startswith(READY): raise RuntimeError("READY")
-            sel.close(); snap = status(p.pid)
+            ready = bool(sel.select(5)) and p.stdout.readline().startswith(READY)
+            sel.close()
+            if not ready:
+                if p.poll() is None:
+                    try: p.wait(timeout=.2)
+                    except subprocess.TimeoutExpired: pass
+                category = startup_error(p.stderr.read()) if p.poll() is not None else "READY"
+                raise RuntimeError(category)
+            snap = status(p.pid)
             if snap.get("Uid", ["0"])[0] != str(UID) or snap.get("Gid", ["0"])[0] != str(GID) or snap.get("Groups") != [] or snap.get("CapEff") != ["0000000000000000"] or snap.get("NoNewPrivs") != ["1"]: raise RuntimeError("PRIVILEGE")
 
 
