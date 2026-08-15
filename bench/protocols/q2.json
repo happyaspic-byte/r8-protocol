@@ -376,7 +376,7 @@
       "spec/0004-wire-format-v0.2.md": "845dc82ba63da281a458c0566a916c54b0636ba52d1300bf6bb251e971804279",
       "spec/0005-session-security-v0.1.md": "3bf91be91847bd9a1a37da89161abd88c4491901a30576cd6c210977da19e8d9",
       "spec/0006-mobility-v0.1.md": "71b493ac7d1609fe6d3317993e815455ac528371025b5b1697929bb23bf1b165",
-      "spec/0007-native-binding-v0.1.md": "294a007d864b70573d6b541b058aae57bec23791878597cc543c27ca074e7a08",
+      "spec/0007-native-binding-v0.1.md": "282a8999550fc01493c36a8cd0690150bb13a83b5946fffb4611c911ae773257",
       "spec/0008-redundant-v0.1.md": "997387cbdde94d95ac58c2880eaf049ddcc38567b90113bae6f9e374d0fcb337",
       "spec/parameters-v0.1.md": "0edc4b0fd693acbbc2e20bcdc23ea6a87b6e4afeab05fafc523a59fb8d9e060a",
       "reference/r8ref.py": "add7bf864b5841ce6c10c07524942e93c538430b4904b0b2471efe3fa2658134",
@@ -399,12 +399,12 @@
       "rust/crates/r8d/Cargo.toml": "c305299760e0150e9199316676539727c53bc0764195eadb624878a58931cef4",
       "rust/crates/r8d/src/lib.rs": "e8bae0d1749423f04a23b51438c44f349007971303f3a54617a9c19d3ba4cb6c",
       "rust/crates/r8d/src/forward.rs": "c7513a53375389a8dc10ff0c615c73f189319cbf4f1c1dce749ff38c2e945ac1",
-      "rust/crates/r8d/src/linux.rs": "fea62dbcd80c60dbfcba2d7252f6d24cefc811cb7f5dca2f3173f7ee2b933fbb",
+      "rust/crates/r8d/src/linux.rs": "351ed19fdce934cdef0339a448236269642e512feb66984a1b84436d92a5ce5e",
       "rust/crates/r8d/src/manifest.rs": "f712d5e3fd00b2b87674f0468181ba1d67ccd30901f38252a7ff1a63423de442",
       "rust/crates/r8d/src/native.rs": "30d5126590446db852c3b1f9ad3cf58c461856fa1ae9e1f6e41a7d585b020232",
       "rust/crates/r8d/src/bin/r8-native.rs": "242f0a122961469609fda8305df0252f81af0751f8c8ba1953c076c03a354be1"
     },
-    "source_map_sha256": "3982493206a4af2c60ac2212fa9e65813d55d30fff1a3669e87daf6d0ab144fd"
+    "source_map_sha256": "1bb44b8d0638d3fb2f9932d0ac3bd078fa33a88c4fce874a2258a195b2ba6bf8"
   },
   "result_fields_prohibited": [
     "observed_values",

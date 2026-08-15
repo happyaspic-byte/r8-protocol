@@ -29,6 +29,7 @@ Forwarding selects the matching route with greatest prefix length. Equal-length 
 ## 3. Receive and forwarding contract
 
 The daemon runs non-root after a narrow launcher opens only manifest-named EtherType-filtered descriptors. The launcher must verify the active isolated namespace/allowlist, no default route, no global address, no bridge or bond attachment, exact EtherType filter, named interfaces only, non-root long-lived UID, no broad `CAP_NET_ADMIN`, no-new-privileges, and immutable filter state where supported. Failure to apply a required check aborts startup. Physical or VLAN isolation is a separately recorded operator attestation naming switch/VLAN/interfaces and confirming no public or third-party attachment.
+Every manifest-named interface must be up at startup. Each subscribed link/address/route change revalidates the same isolation predicate, so a named interface going down is irreversible runtime revocation rather than a recoverable state.
 The launcher requires `disable_ipv6=1` for `all`, `default`, loopback, and every manifest-named interface, and separately requires loopback down. Residual kernel IPv6 route-table entries therefore have no active stack and are not routing authority. The IPv4 route table is still parsed strictly; any usable zero-prefix entry or malformed record aborts startup.
 
 | State + event | Precondition | Action and mutation | Error | Timer / idempotency | Release |

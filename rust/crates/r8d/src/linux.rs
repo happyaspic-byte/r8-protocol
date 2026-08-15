@@ -115,6 +115,7 @@ where
             .find(|entry| entry.name == *name)
             .ok_or(LinuxError::Address)?;
         if entry.loopback
+            || !entry.up
             || entry.ipv4
             || entry.global_ipv6
             || has_master_or_virtual_attachment(name)
