@@ -203,6 +203,7 @@ class Lab:
             name = self.name(n); ip("netns", "add", name); self.names.append(name)
             self.setup_stage = "ipv6-disable"
             _run(["ip", "netns", "exec", name, "sysctl", "-qw", "net.ipv6.conf.all.disable_ipv6=1"])
+            _run(["ip", "netns", "exec", name, "sysctl", "-qw", "net.ipv6.conf.default.disable_ipv6=1"])
             self.setup_stage = "loopback-down"
             ip("link", "set", "lo", "down", ns=name)
         self.setup_stage = "veth-create"

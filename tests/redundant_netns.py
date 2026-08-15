@@ -107,7 +107,7 @@ class Lab:
     def setup(self):
         for n in range(4):
             name = self.ns(n); ip("netns", "add", name); self.names.append(name)
-            run(["ip", "netns", "exec", name, "sysctl", "-qw", "net.ipv6.conf.all.disable_ipv6=1"]); ip("link", "set", "lo", "down", ns=name)
+            run(["ip", "netns", "exec", name, "sysctl", "-qw", "net.ipv6.conf.all.disable_ipv6=1"]); run(["ip", "netns", "exec", name, "sysctl", "-qw", "net.ipv6.conf.default.disable_ipv6=1"]); ip("link", "set", "lo", "down", ns=name)
         for link, (left, right) in enumerate(self.links):
             a, b = f"v{link}a", f"v{link}b"; ip("link", "add", a, "type", "veth", "peer", "name", b)
             ip("link", "set", a, "netns", self.ns(left)); ip("link", "set", b, "netns", self.ns(right))
