@@ -97,12 +97,16 @@ ERROR_CATEGORIES = {
     "REVOCATION": "revocation",
     "SETUP": "setup",
 }
+SETUP_STAGES = frozenset(("namespace-create", "ipv6-disable", "loopback-down", "veth-create", "veth-move", "interface-rename", "link-activate"))
 
 
 def error_category(error):
     if isinstance(error, RuntimeError):
         return ERROR_CATEGORIES.get(str(error), "setup")
     return "setup"
+def setup_error_category(error, stage):
+    category = error_category(error)
+    return f"setup-{stage}" if category == "setup" and stage in SETUP_STAGES else category
 
 
 def descriptor_ids(hops):
@@ -179,24 +183,31 @@ class Lab:
         self.names = []; self.procs = []; self.docs = []; self.temp = Path(tempfile.mkdtemp(prefix="r8-native-"))
         self.counts = {"frames_sent": 0, "frames_received": 0, "negative_timeouts": 0,
                        "local_budget_rejects": 0, "daemon_exits": 0, "cleanup_failures": 0}
-        self.error_category = None
+        self.error_category = self.setup_stage = None
 
     def name(self, n): return f"r8n{self.token}{n}"
     def iface(self, n, side): return f"e{n - 1}" if side == "left" else f"e{n}"
 
     def setup(self):
         for n in range(self.hops + 2):
+            self.setup_stage = "namespace-create"
             name = self.name(n); ip("netns", "add", name); self.names.append(name)
+            self.setup_stage = "ipv6-disable"
             _run(["ip", "netns", "exec", name, "sysctl", "-qw", "net.ipv6.conf.all.disable_ipv6=1"])
+            self.setup_stage = "loopback-down"
             ip("link", "set", "lo", "down", ns=name)
+        self.setup_stage = "veth-create"
         for n in range(self.hops + 1):
             a, b = f"x{n}a", f"x{n}b"; ip("link", "add", a, "type", "veth", "peer", "name", b)
+            self.setup_stage = "veth-move"
             ip("link", "set", a, "netns", self.name(n)); ip("link", "set", b, "netns", self.name(n + 1))
+            self.setup_stage = "interface-rename"
             ip("link", "set", a, "name", f"e{n}", ns=self.name(n)); ip("link", "set", b, "name", f"e{n}", ns=self.name(n + 1))
+        self.setup_stage = "link-activate"
         for n, namespace in enumerate(self.names):
             for e in (["e0"] if n == 0 else [f"e{self.hops}"] if n == self.hops + 1 else [f"e{n - 1}", f"e{n}"]):
                 ip("link", "set", e, "address", mac(n).hex(":"), ns=namespace); ip("link", "set", e, "up", ns=namespace)
-
+        self.setup_stage = None
     def launch(self):
         for n in range(1, self.hops + 1):
             left, right = n * 2, n * 2 + 1
@@ -306,7 +317,7 @@ def main(argv=None):
     try:
         lab.setup(); lab.launch(); lab.proof(); lab.revoke()
     except Exception as error:
-        lab.error_category = error_category(error)
+        lab.error_category = setup_error_category(error, lab.setup_stage)
     finally:
         try:
             lab.cleanup()

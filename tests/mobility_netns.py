@@ -110,17 +110,21 @@ def _read_exact(fd,n):
   if not part: raise StageError("endpoint_ready")
   value+=part
  return value
-def _read_endpoint_ready(fd, processes, count=1, timeout=5):
- selector=selectors.DefaultSelector(); previous=os.get_blocking(fd); deadline=time.monotonic()+timeout; received=0
+def _read_endpoint_ready(fd, processes, count=1, timeout=5, record_size=1):
+ selector=selectors.DefaultSelector(); previous=os.get_blocking(fd); deadline=time.monotonic()+timeout; received=b""; total=count*record_size
+ if record_size not in (1,8) or count<1: raise StageError("endpoint_ready")
  try:
   os.set_blocking(fd,False); selector.register(fd,selectors.EVENT_READ)
   while time.monotonic()<deadline:
    if any(process.poll() is not None for process in processes): raise StageError("endpoint_ready")
    if not selector.select(min(.1,max(0,deadline-time.monotonic()))): continue
-   part=os.read(fd,count-received)
-   if not part or part != b"R"*len(part): raise StageError("endpoint_ready")
-   received+=len(part)
-   if received==count: return
+   part=os.read(fd,total-len(received))
+   if not part: raise StageError("endpoint_ready")
+   received+=part
+   if len(received)==total:
+    if record_size==1 and received!=b"R"*count: raise StageError("endpoint_ready")
+    if record_size==8 and any(value==0 for value in struct.unpack("!"+("Q"*count),received)): raise StageError("endpoint_ready")
+    return
   raise StageError("endpoint_ready")
  finally:
   selector.close(); os.set_blocking(fd,previous)
@@ -351,7 +355,7 @@ def worker(mechanism,arm,commands=None,control_path=None,evidence_dir=None,suffi
     server=_stage("endpoint_setup",lambda:c.spawn(t["client"],*_r8("serve",stable,Identity.from_seed(moving).public,"::2","::1","::3","10.88.0.2:53104",shared+["--schedule-fd",str(server_schedule_r),"--gate-fd",str(server_gate_r),"--cpu-fd",str(cpu_w),"--max-sessions","1","--expected-post-move","1"]),pass_fds=(ready_w,server_schedule_r,server_gate_r,cpu_w))); children.append(server)
     client_args=shared+["--schedule-fd",str(client_schedule_r),"--gate-fd",str(client_gate_r),"--cutover-gate-fd",str(cutover_r),"--events-fd",str(records["received"]),"--attempt-fd",str(records["attempted"]),"--sent-fd",str(records["sent"]),"--cpu-fd",str(cpu_w),"--peer","10.88.0.2:53104","--candidate-bind","10.88.1.3:0","--mode","abrupt" if arm=="abrupt-break" else "mbb"]
     client=_stage("endpoint_setup",lambda:c.spawn(t["server"],*_r8("connect",moving,Identity.from_seed(stable).public,"::1","::2","::3","10.88.1.2:0",client_args),pass_fds=(ready_w,client_schedule_r,client_gate_r,cutover_r,records["received"],records["attempted"],records["sent"],cpu_w))); children.append(client)
-    _read_endpoint_ready(ready_r,(server,client),count=2)
+    _read_endpoint_ready(ready_r,(server,client),count=2,record_size=8)
    else:
     stop=str(directory/"stop")
     server=_stage("endpoint_setup",lambda:c.spawn(t["server"],sys.executable,str(Path(__file__).resolve()),"endpoint-server","--mechanism",mechanism,"--ready-fd",str(ready_w),"--schedule-fd",str(server_schedule_r),"--gate-fd",str(server_gate_r),"--stop",stop,"--old-dev",t["names"]["si0"],"--new-dev",t["names"]["si1"],"--cpu-fd",str(cpu_w),pass_fds=(ready_w,server_schedule_r,server_gate_r,cpu_w))); children.append(server)
@@ -401,7 +405,7 @@ def worker(mechanism,arm,commands=None,control_path=None,evidence_dir=None,suffi
   if reports_valid and parent_cpu_pre_ns<=start and parent_cpu_post_ns>=end:
    result["process_user_cpu_ns"]=int((snapshot.ru_utime-pre_cpu.ru_utime)*1e9+child_cpu[4]-child_cpu[1]); result["process_system_cpu_ns"]=int((snapshot.ru_stime-pre_cpu.ru_stime)*1e9+child_cpu[5]-child_cpu[2]); result["process_cpu_timestamp_ns_by_ordinal"]={"endpoint_0":{"pre":child_reports[0][0],"post":child_reports[0][3]},"endpoint_1":{"pre":child_reports[1][0],"post":child_reports[1][3]},"parent":{"pre":parent_cpu_pre_ns,"post":parent_cpu_post_ns}}; result["cpu_complete"]=True
   else: result["process_user_cpu_ns"]=result["process_system_cpu_ns"]=None; result["process_cpu_timestamp_ns_by_ordinal"]={}; result["cpu_complete"]=False
-  result["evidence_complete"]=bool(records) and all((lambda fd: (os.lseek(fd,0,os.SEEK_END) % 16) == 0)(fd) for fd in records.values()); result["cleanup_complete"]=not bool(cleanup); result["environment_complete"]=environment_complete; result["topology_complete"]=topology_complete; result.update(topology_observation); result["command_sha256"]=hashlib.sha256(json.dumps(c.transcript,separators=(",",":")).encode()).hexdigest(); [os.close(fd) for fd in fds if fd is not None]; signal.signal(signal.SIGTERM,old_term)
+  result["evidence_complete"]=runtime and bool(records) and all((lambda fd: (os.lseek(fd,0,os.SEEK_END) % 16) == 0)(fd) for fd in records.values()); result["cleanup_complete"]=not bool(cleanup); result["environment_complete"]=environment_complete; result["topology_complete"]=topology_complete; result.update(topology_observation); result["command_sha256"]=hashlib.sha256(json.dumps(c.transcript,separators=(",",":")).encode()).hexdigest(); [os.close(fd) for fd in fds if fd is not None]; signal.signal(signal.SIGTERM,old_term)
  return result
 def main(argv=None):
  p=argparse.ArgumentParser(); p.add_argument("command"); p.add_argument("--mechanism",choices=PORTS); p.add_argument("--arm",choices=("abrupt-break","make-before-break")); p.add_argument("--control-path"); p.add_argument("--evidence-dir"); p.add_argument("--suffix"); p.add_argument("--ready-fd",type=int); p.add_argument("--stop"); p.add_argument("--schedule-fd",type=int); p.add_argument("--gate-fd",type=int); p.add_argument("--attempt-fd",type=int); p.add_argument("--sent-fd",type=int); p.add_argument("--received-fd",type=int); p.add_argument("--cpu-fd",type=int); p.add_argument("--old-dev"); p.add_argument("--new-dev"); a=p.parse_args(argv)

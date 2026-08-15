@@ -55,6 +55,10 @@ class NativeNetnsTests(unittest.TestCase):
         self.assertNotIn("namespace", encoded)
         self.assertNotIn("argv", encoded)
 
+    def test_setup_failures_use_only_finite_redacted_stages(self):
+        self.assertEqual(native.setup_error_category(OSError(), "ipv6-disable"), "setup-ipv6-disable")
+        self.assertEqual(native.setup_error_category(OSError(), "unknown"), "setup")
+        self.assertEqual(native.setup_error_category(RuntimeError("READY"), "ipv6-disable"), "ready")
 
 if __name__ == "__main__":
     unittest.main()

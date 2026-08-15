@@ -40,11 +40,33 @@ class Q1V4Tests(unittest.TestCase):
   self.assertIn('endpoint-server","--mechanism",mechanism,"--ready-fd",str(ready_w),"--schedule-fd"',source)
  def test_parent_bounds_readiness_and_closes_writer(self):
   source=(ROOT/"tests/mobility_netns.py").read_text()
-  self.assertIn("_read_endpoint_ready(ready_r,(server,client),count=2)",source)
+  self.assertIn("_read_endpoint_ready(ready_r,(server,client),count=2,record_size=8)",source)
   self.assertIn("_read_endpoint_ready(ready_r,(server,))",source)
   self.assertLess(source.rindex("_read_endpoint_ready("),source.index("os.close(ready_w)"))
   self.assertIn("process.poll() is not None",source)
   self.assertIn("fds[fds.index(ready_w)]=None",source)
+ def test_r8_readiness_uses_two_nonzero_timestamp_records(self):
+  class Process:
+   @staticmethod
+   def poll(): return None
+  read_fd,write_fd=os.pipe()
+  try:
+   os.write(write_fd,struct.pack("!QQ",1,2)); os.close(write_fd); write_fd=None
+   net._read_endpoint_ready(read_fd,(Process(),Process()),count=2,record_size=8,timeout=.1)
+  finally:
+   os.close(read_fd)
+   if write_fd is not None: os.close(write_fd)
+  read_fd,write_fd=os.pipe()
+  try:
+   os.write(write_fd,struct.pack("!QQ",0,2)); os.close(write_fd); write_fd=None
+   with self.assertRaisesRegex(net.StageError,"endpoint_ready"):
+    net._read_endpoint_ready(read_fd,(Process(),Process()),count=2,record_size=8,timeout=.1)
+  finally:
+   os.close(read_fd)
+   if write_fd is not None: os.close(write_fd)
+ def test_pre_runtime_failure_never_claims_complete_evidence(self):
+  source=(ROOT/"tests/mobility_netns.py").read_text()
+  self.assertIn('result["evidence_complete"]=runtime and bool(records)',source)
  def test_baseline_server_waits_for_gate_and_reports_cpu(self):
   source=(ROOT/'tests/mobility_netns.py').read_text()
   self.assertIn('_,_,end=_schedule(schedule_fd,gate_fd); before_ns=time.monotonic_ns(); before=resource.getrusage',source)

@@ -232,7 +232,7 @@ def preflight(binary, endpoint_binary, gate4_one=None, gate4_two=None, gate5=Non
         fail("clock")
     if not capabilities():
         fail("privilege")
-    for name in ("ip", "tc", "ethtool"):
+    for name in ("ip", "tc", "ethtool", "sysctl"):
         if shutil.which(name) is None:
             fail("environment")
     for value in (binary, endpoint_binary):

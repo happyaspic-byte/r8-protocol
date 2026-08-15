@@ -15,6 +15,8 @@ class Q2RunTests(unittest.TestCase):
     def test_type7(self):
         self.assertEqual(q2_run.type7([0, 10], .5), 5)
         self.assertEqual(q2_run.type7([], .95), None)
+    def test_preflight_requires_namespace_sysctl_dependency(self):
+        self.assertIn('"sysctl"', inspect.getsource(q2_run.preflight))
 
     def test_atomic_refuses_existing_output(self):
         with tempfile.TemporaryDirectory() as directory:
