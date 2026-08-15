@@ -1,4 +1,5 @@
 import json
+import hashlib
 import os
 import inspect
 import re
@@ -41,7 +42,50 @@ class RedundantNativeTests(unittest.TestCase):
         launch_source = inspect.getsource(native.Lab.launch)
         self.assertIn("((1, (2, 3), (0, 1), (0, 3)), (2, (4, 5), (2, 3), (0, 3)))",
                       launch_source)
+        self.assertIn('IPv6Address("8::3")', launch_source)
 
+    def test_endpoint_credentials_arrive_only_on_exact_inherited_fd3(self):
+        try:
+            before = os.fstat(3)
+        except OSError:
+            before = None
+        seed, peer = b"a" * 32, b"b" * 32
+        script = (
+            "import hashlib,os;"
+            "data=b'';"
+            "\nwhile len(data)<64:\n data+=os.read(3,64-len(data))"
+            "\nextra=os.read(3,1)"
+            "\nprint(len(data),hashlib.sha256(data).hexdigest(),len(extra))"
+        )
+        process = object.__new__(native.Lab).endpoint_process(
+            [sys.executable, "-c", script], seed, peer)
+        output, error = process.communicate(timeout=2)
+        self.assertEqual(process.returncode, 0)
+        self.assertEqual(error, "")
+        self.assertEqual(
+            output.strip(),
+            f"64 {hashlib.sha256(seed + peer).hexdigest()} 0")
+        try:
+            after = os.fstat(3)
+        except OSError:
+            after = None
+        self.assertEqual(
+            None if before is None else (before.st_dev, before.st_ino),
+            None if after is None else (after.st_dev, after.st_ino))
+    def test_endpoint_frame_counts_include_both_physical_directions(self):
+        before = {key: (10, 20) for key in ((0, 0), (0, 2), (3, 1), (3, 3))}
+        after = {
+            (0, 0): (15, 22),
+            (0, 2): (13, 22),
+            (3, 1): (12, 25),
+            (3, 3): (12, 23),
+        }
+        self.assertEqual(
+            native.endpoint_frame_counts(before, after),
+            (12, 12, 7, 5))
+        with self.assertRaisesRegex(RuntimeError, "rust-frame-count"):
+            native.endpoint_frame_counts(
+                {(0, 0): (0, 0)}, {(0, 0): (0, 0)})
     def test_namespace_ip_and_startup_diagnostics_are_finite(self):
         with patch.object(native, "run") as run:
             native.ip("link", "set", "lo", "down", ns="test")
@@ -73,6 +117,9 @@ class RedundantNativeTests(unittest.TestCase):
         self.assertEqual(result["interface_ordinals"], [2, 3, 4, 5])
         self.assertTrue(result["revocation_verified"])
         self.assertFalse(result["privilege_dropped"])
+        lab.router_privilege_dropped = lab.endpoint_privilege_dropped = True
+        self.assertTrue(native.result_json(
+            lab, "/missing", "/missing-endpoint")["privilege_dropped"])
         self.assertEqual(len(result["endpoint_binary_hash"]), 64)
         self.assertIn("rust/crates/r8-redundant/src/bin/r8-redundant-native.rs",
                       [record[0] for record in native.source_records()])
@@ -85,7 +132,9 @@ class RedundantNativeTests(unittest.TestCase):
         python_source = inspect.getsource(native.Lab.endpoint_process) + inspect.getsource(native.Lab.rust_endpoint_proof)
         rust_source = (Path(__file__).resolve().parents[1]
                        / "rust/crates/r8-redundant/src/bin/r8-redundant-native.rs").read_text()
-        self.assertIn("pass_fds=(read_fd,)", python_source)
+        self.assertIn("pass_fds=(3,)", python_source)
+        self.assertIn("os.dup2(read_fd, 3, inheritable=True)", python_source)
+        self.assertNotIn("preexec_fn=", python_source)
         self.assertIn("os.urandom(32)", python_source)
         self.assertIn("endpoint_counters", python_source)
         self.assertNotIn('frames_sent"] += 7', python_source)
@@ -105,12 +154,21 @@ class RedundantNativeTests(unittest.TestCase):
         self.assertLess(source.find("let mut results = receiver.take_results()"),
                         source.find("receiver.take_profile3_admissions()"))
         self.assertIn("handshake=5 candidate=5 application=2 total=12", source)
+        socket_position = source.index("socket(&args.interfaces[1])")
+        privilege_position = source.index("drop_privileges(ENDPOINT_UID, ENDPOINT_GID)")
+        mode_position = source.index("match args.mode")
+        self.assertLess(socket_position, privilege_position)
+        self.assertLess(privilege_position, mode_position)
 
     def test_harness_measures_native_frames(self):
         rust_harness = inspect.getsource(native.Lab.rust_endpoint_proof)
         self.assertIn("before = self.endpoint_counters()", rust_harness)
         self.assertIn("after = self.endpoint_counters()", rust_harness)
         self.assertIn("(sent, received, path0, path1) != (12, 12, 7, 5)", rust_harness)
+        self.assertIn("endpoint_frame_counts(before, after)", rust_harness)
+        frame_counter = inspect.getsource(native.endpoint_frame_counts)
+        for key in ("(0, 0)", "(0, 2)", "(3, 1)", "(3, 3)"):
+            self.assertIn(key, frame_counter)
         self.assertNotIn('frames_received"] += 7', rust_harness)
         self.assertEqual(12 + 5 + 10, 27)
     def test_rust_endpoint_rejects_appended_frames_after_the_exact_bound(self):
@@ -190,8 +248,9 @@ class RedundantNativeTests(unittest.TestCase):
         self.assertIn('value.get("endpoint_binary_hash") != sha(endpoint.read_bytes())', workflow)
         self.assertIn('aggregate("r8-native-filter-v1"', workflow)
         self.assertIn('native-capability-preflight.txt', workflow)
-        self.assertIn('if: ${{ success() }}', workflow)
+        self.assertIn('if: ${{ always() }}', workflow)
         self.assertIn('"frames_sent": 27, "frames_received": 27', workflow)
+        self.assertIn("00080000000000000000000000000003", workflow)
         self.assertIn('set(value) != expected_fields', workflow)
         self.assertIn('object_pairs_hook=reject_duplicates', workflow)
         self.assertIn('00112233445566778899aabbccddeeff', workflow)

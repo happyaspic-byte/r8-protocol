@@ -392,6 +392,7 @@ dependencies = [
  "r8-mobility",
  "r8-proto",
  "r8-session",
+ "r8d",
  "sha2",
  "zeroize",
 ]

@@ -15,6 +15,7 @@ use r8_session::{
     ClientMachine, ClientMaterial, HandshakeConfig, Identity, ObservedBinding, ServerMachine,
     ServerMaterial,
 };
+use r8d::drop_privileges;
 use zeroize::Zeroize;
 
 const ETHERTYPE: u16 = 0x88b5;
@@ -33,6 +34,8 @@ const SERVER_LOC: [u8; 16] = [
 ];
 const KEY_FD: i32 = 3;
 const KEY_MATERIAL_LEN: usize = 64;
+const ENDPOINT_UID: libc::uid_t = 65534;
+const ENDPOINT_GID: libc::gid_t = 65534;
 
 struct Args {
     mode: Mode,
@@ -623,6 +626,7 @@ fn run(args: Args) -> Result<(), ()> {
     let started = Instant::now();
     let (fd0, index0) = socket(&args.interfaces[0]).map_err(|_| ())?;
     let (fd1, index1) = socket(&args.interfaces[1]).map_err(|_| ())?;
+    drop_privileges(ENDPOINT_UID, ENDPOINT_GID).map_err(|_| ())?;
     match args.mode {
         Mode::Send => {
             let (mut state, scid) =

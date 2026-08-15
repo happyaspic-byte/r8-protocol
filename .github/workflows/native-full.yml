@@ -157,7 +157,7 @@ jobs:
               locations = [list(bytes.fromhex("00112233445566778899aabbccddeeff")),
                            list(bytes.fromhex("ffeeddccbbaa99887766554433221100"))]
               docs = []
-              for descriptors, links, peers in (((2, 3), (0, 1), (0, 3)), ((4, 5), (2, 3), (0, 3))):
+              for hop, (descriptors, links, peers) in enumerate((((2, 3), (0, 1), (0, 3)), ((4, 5), (2, 3), (0, 3))), 1):
                   interfaces = [
                       {"descriptor_id": descriptor, "interface_name": f"p{link}", "allowed_source_macs": [mac(link * 4 + peer)], "local_delivery": False, "transit": True}
                       for descriptor, link, peer in zip(descriptors, links, peers)
@@ -166,6 +166,15 @@ jobs:
                       {"destination_prefix": {"network": location, "prefix_length": 128}, "egress_descriptor_id": descriptor, "next_hop_mac": mac(link * 4 + peer)}
                       for location, descriptor, link, peer in zip(locations, descriptors, links, peers)
                   ]
+                  if hop == 2:
+                      routes.append({
+                          "destination_prefix": {
+                              "network": list(bytes.fromhex("00080000000000000000000000000003")),
+                              "prefix_length": 128,
+                          },
+                          "egress_descriptor_id": descriptors[0],
+                          "next_hop_mac": mac(links[0] * 4 + peers[0]),
+                      })
                   docs.append(json.dumps({"local_locs": [], "interfaces": interfaces, "routes": routes}, sort_keys=True, separators=(",", ":")).encode())
               return docs
 
@@ -253,7 +262,7 @@ jobs:
           done
       - name: Upload native diagnostics
         id: upload
-        if: ${{ success() }}
+        if: ${{ always() }}
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
         with:
           name: native-full-diagnostics
@@ -263,6 +272,7 @@ jobs:
             ${{ runner.temp }}/redundant-native.json
           if-no-files-found: error
       - name: Bind native artifact digest
+        if: ${{ always() }}
         env:
           ARTIFACT_DIGEST: ${{ steps.upload.outputs.artifact-digest }}
         run: |

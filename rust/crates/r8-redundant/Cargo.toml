@@ -10,6 +10,7 @@ publish.workspace = true
 r8-proto = { path = "../r8-proto" }
 r8-session = { path = "../r8-session" }
 r8-mobility = { path = "../r8-mobility" }
+r8d = { path = "../r8d" }
 ed25519-dalek = "2"
 libc = "0.2"
 sha2 = "0.10"

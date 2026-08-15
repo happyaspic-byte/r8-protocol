@@ -32,6 +32,15 @@ def canonical_frame(domain, records):
 
 
 def aggregate_hash(domain, records): return sha(canonical_frame(domain, records))
+def endpoint_frame_counts(before, after):
+    expected = {(0, 0), (0, 2), (3, 1), (3, 3)}
+    if set(before) != expected or set(after) != expected:
+        raise RuntimeError("rust-frame-count")
+    sent = sum(after[key][0] - before[key][0] for key in expected)
+    received = sum(after[key][1] - before[key][1] for key in expected)
+    path0 = sum(after[key][0] - before[key][0] for key in ((0, 0), (3, 1)))
+    path1 = sum(after[key][0] - before[key][0] for key in ((0, 2), (3, 3)))
+    return sent, received, path0, path1
 def mac(n): return bytes((2, 0x52, 0x38, 0, n >> 8, n & 255))
 def eth(dst, src, packet): return dst + src + ETHERTYPE.to_bytes(2, "big") + packet
 
@@ -102,7 +111,7 @@ class Lab:
     def __init__(self, binary, endpoint_binary):
         self.binary, self.endpoint_binary = binary, endpoint_binary
         self.token = os.urandom(5).hex(); self.names = []; self.procs = []; self.docs = []
-        self.temp = Path(tempfile.mkdtemp(prefix="r8-redundant-")); self.error_category = None; self.privilege_dropped = False
+        self.temp = Path(tempfile.mkdtemp(prefix="r8-redundant-")); self.error_category = None; self.router_privilege_dropped = self.endpoint_privilege_dropped = False
         self.counts = {"frames_sent": 0, "frames_received": 0, "application_deliveries": 0,
                        "suppressions": 0, "rust_endpoint_authentications": 0, "cached_retries": 0,
                        "degraded_events": 0, "path_removals": 0, "negative_drops": 0,
@@ -127,7 +136,12 @@ class Lab:
             peer_macs = [mac(link * 4 + peer) for link, peer in zip(links, peers)]
             # Routes cover both endpoint locations; opaque Profile-3 packets are routed by destination LOC.
             locs = (session.ipaddress.IPv6Address("11:2233:4455:6677:8899:aabb:ccdd:eeff"), session.ipaddress.IPv6Address("ffee:ddcc:bbaa:9988:7766:5544:3322:1100"))
-            doc = manifest(list(zip(descriptors, local, [link * 4 + peer for link, peer in zip(links, peers)])), [(locs[0], descriptors[0], peer_macs[0]), (locs[1], descriptors[1], peer_macs[1])])
+            routes = [(locs[0], descriptors[0], peer_macs[0]), (locs[1], descriptors[1], peer_macs[1])]
+            if hop == 2:
+                routes.append((
+                    session.ipaddress.IPv6Address("8::3"),
+                    descriptors[0], peer_macs[0]))
+            doc = manifest(list(zip(descriptors, local, [link * 4 + peer for link, peer in zip(links, peers)])), routes)
             text = json.dumps(doc, sort_keys=True, separators=(",", ":")); self.docs.append(text); path = self.temp / f"hop{hop}.json"; path.write_text(text)
             command = ["ip", "netns", "exec", self.ns(hop), self.binary, "--manifest", str(path), "--interface", local[0], "--interface", local[1], "--uid", str(UID), "--gid", str(GID)]
             process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True); self.procs.append(process)
@@ -141,7 +155,7 @@ class Lab:
                 raise RuntimeError(startup_error(process.stderr.read()) if process.poll() is not None else "ready")
             status = proc_status(process.pid)
             if status.get("Uid", ["0"])[0] != str(UID) or status.get("Gid", ["0"])[0] != str(GID) or status.get("Groups") != [] or status.get("CapEff") != ["0000000000000000"] or status.get("NoNewPrivs") != ["1"]: raise RuntimeError("privilege")
-        self.privilege_dropped = True
+        self.router_privilege_dropped = True
     def endpoints(self):
         vectors = json.loads((ROOT / "tests/vectors/session-v0.1.json").read_text()); ids, context = vectors["identities"], vectors["context"]; now = [100]
         ci, si = session.Identity.from_seed(bytes.fromhex(ids["client_ed25519_seed_hex"])), session.Identity.from_seed(bytes.fromhex(ids["server_ed25519_seed_hex"]))
@@ -197,14 +211,32 @@ class Lab:
         return source, destination, source_bindings, destination_bindings
 
     def transit(self, sender_node, receiver_node, slot, packet, admission=False):
+        header, _ = session.parse_packet(packet)
+        expected_destination = (
+            bytes.fromhex("00080000000000000000000000000003")
+            if receiver_node == 0 and header.pslot == 1 else
+            bytes.fromhex("00112233445566778899aabbccddeeff")
+            if receiver_node == 0 else
+            bytes.fromhex("ffeeddccbbaa99887766554433221100"))
+        if packet[32:48] != expected_destination:
+            raise RuntimeError("forward-destination")
         first_link, last_link = ((0, 1), (2, 3))[slot] if sender_node == 0 else ((1, 0), (3, 2))[slot]
         watcher = subprocess.Popen(["ip", "netns", "exec", self.ns(receiver_node), sys.executable, str(Path(__file__).resolve()), "--worker", "watch", "--interface", self.iface(receiver_node, last_link)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         time.sleep(.05)
         hop_node = 1 if slot == 0 else 2
         frame = eth(mac(first_link * 4 + hop_node), mac(first_link * 4 + sender_node), packet)
         sender = run(["ip", "netns", "exec", self.ns(sender_node), sys.executable, str(Path(__file__).resolve()), "--worker", "send", "--interface", self.iface(sender_node, first_link), "--frame", frame.hex()], check=False)
-        if sender.returncode or watcher.wait(timeout=4):
-            raise RuntimeError("forward")
+        if sender.returncode:
+            raise RuntimeError("forward-send")
+        try:
+            watched = watcher.wait(timeout=4)
+        except subprocess.TimeoutExpired as error:
+            daemon = self.procs[0 if hop_node == 1 else 1]
+            raise RuntimeError(
+                "forward-daemon" if daemon.poll() is not None
+                else "forward-timeout") from error
+        if watched:
+            raise RuntimeError("forward-watch")
         received = bytes.fromhex(watcher.stdout.read().strip())
         expected_src = mac(last_link * 4 + (1 if last_link < 2 else 2))
         expected_dst = mac(last_link * 4 + receiver_node)
@@ -212,7 +244,7 @@ class Lab:
                 or received[6:12] != expected_src or received[12:14] != ETHERTYPE.to_bytes(2, "big")
                 or received[14:19] != packet[:5] or received[19] != packet[5] - 1
                 or received[20:] != packet[6:]):
-            raise RuntimeError("forward")
+            raise RuntimeError("forward-frame")
         self.counts["frames_sent"] += 1; self.counts["frames_received"] += 1
         payload = received[14:]
         if admission:
@@ -237,7 +269,7 @@ class Lab:
         for node, links in ((0, (0, 2)), (3, (1, 3))):
             for link in links:
                 details = json.loads(ip("-j", "-s", "link", "show", "dev", self.iface(node, link), ns=self.ns(node)).stdout)[0]
-                stats = details.get("stats64", details["stats"])
+                stats = details["stats64"] if "stats64" in details else details["stats"]
                 counters[(node, link)] = (stats["tx"]["packets"], stats["rx"]["packets"])
         return counters
 
@@ -247,14 +279,15 @@ class Lab:
             os.write(write_fd, seed + peer_public)
         finally:
             os.close(write_fd)
-        def install_key_fd():
-            os.dup2(read_fd, 3)
-            if read_fd != 3:
-                os.close(read_fd)
+        saved_fd = os.dup(3)
         try:
-            return subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                                    pass_fds=(read_fd,), preexec_fn=install_key_fd)
+            os.dup2(read_fd, 3, inheritable=True)
+            return subprocess.Popen(
+                command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, pass_fds=(3,))
         finally:
+            os.dup2(saved_fd, 3)
+            os.close(saved_fd)
             os.close(read_fd)
 
     def rust_endpoint_proof(self):
@@ -273,6 +306,14 @@ class Lab:
                     or receiver.stdout.readline().strip() != "R8-ENDPOINT-LISTENING"):
                 raise RuntimeError("rust-endpoint")
             listening.close()
+            status = proc_status(receiver.pid)
+            if (status.get("Uid", ["0"])[0] != str(UID)
+                    or status.get("Gid", ["0"])[0] != str(GID)
+                    or status.get("Groups") != []
+                    or status.get("CapEff") != ["0000000000000000"]
+                    or status.get("NoNewPrivs") != ["1"]):
+                raise RuntimeError("rust-endpoint")
+            self.endpoint_privilege_dropped = True
             before = self.endpoint_counters()
             sender_command = [
                 "ip", "netns", "exec", self.ns(0), self.endpoint_binary, "send",
@@ -290,10 +331,7 @@ class Lab:
                     or output.splitlines() != ["R8-ENDPOINT-READY handshake=5 candidate=5 application=2 total=12",
                                                "R8-ENDPOINT-PASS delivered=1 suppressed=1 handshake=5 candidate=5 application=2 total=12"]):
                 raise RuntimeError("rust-endpoint")
-            sent = sum(after[(0, link)][0] - before[(0, link)][0] for link in (0, 2))
-            received = sum(after[(3, link)][1] - before[(3, link)][1] for link in (1, 3))
-            path0 = after[(0, 0)][0] - before[(0, 0)][0]
-            path1 = after[(0, 2)][0] - before[(0, 2)][0]
+            sent, received, path0, path1 = endpoint_frame_counts(before, after)
             if (sent, received, path0, path1) != (12, 12, 7, 5):
                 raise RuntimeError("rust-frame-count")
         except Exception:
@@ -309,17 +347,37 @@ class Lab:
     def proof(self):
         self.rust_endpoint_proof()
         source, destination, source_bindings, destination_bindings = self.endpoints()
-        for sender, receiver, sender_node, receiver_node, bindings in (
+        for direction, (sender, receiver, sender_node, receiver_node, bindings) in enumerate((
             (source, destination, 0, 3, destination_bindings),
             (destination, source, 3, 0, source_bindings),
-        ):
-            outbound = sender.send(b"redundant proof")
+        )):
+            try:
+                outbound = sender.send(b"redundant proof")
+            except Exception as error:
+                raise RuntimeError(f"application-{direction}-send") from error
             for slot in (1, 0):
-                packet = self.transit(sender_node, receiver_node, slot, outbound.packets[slot])
-                result = receiver.receive(slot, bindings[slot], packet)
+                try:
+                    packet = self.transit(
+                        sender_node, receiver_node, slot, outbound.packets[slot])
+                except Exception as error:
+                    suffix = str(error) if str(error) in {
+                        "forward-destination", "forward-send", "forward-daemon",
+                        "forward-timeout", "forward-watch", "forward-frame",
+                    } else "internal"
+                    raise RuntimeError(
+                        f"application-{direction}-{slot}-transit-{suffix}") from error
+                try:
+                    result = receiver.receive(slot, bindings[slot], packet)
+                except Exception as error:
+                    raise RuntimeError(
+                        f"application-{direction}-{slot}-receive") from error
                 if result.delivered: self.counts["application_deliveries"] += 1
                 else: self.counts["suppressions"] += 1
-                sender.confirm(slot, outbound.packets[slot])
+                try:
+                    sender.confirm(slot, outbound.packets[slot])
+                except Exception as error:
+                    raise RuntimeError(
+                        f"application-{direction}-{slot}-confirm") from error
         retry_outbound = source.send(b"retry")
         retry = retry_outbound.packets[0]
         delivered = destination.receive(0, destination_bindings[0], self.transit(0, 3, 0, retry))
@@ -417,7 +475,7 @@ def result_json(lab, binary, endpoint_binary):
             "binary_hash": sha(binary_data), "endpoint_binary_hash": sha(endpoint_data),
             "manifest_hash": aggregate_hash("r8-redundant-manifest-v1", [("manifest", n, value.encode()) for n, value in enumerate(lab.docs)]),
             "filter_hash": aggregate_hash("r8-native-filter-v1", [("rust/crates/r8d/src/linux.rs", 0, (ROOT / "rust/crates/r8d/src/linux.rs").read_bytes())]),
-            "interface_ordinals": [2, 3, 4, 5], "privilege_dropped": getattr(lab, "privilege_dropped", False),
+            "interface_ordinals": [2, 3, 4, 5], "privilege_dropped": (getattr(lab, "router_privilege_dropped", False) and getattr(lab, "endpoint_privilege_dropped", False)),
             "revocation_verified": lab.counts["daemon_exits"] == 2,
             "cleanup_verified": lab.counts["cleanup_failures"] == 0}
 
@@ -438,7 +496,16 @@ def main(argv=None):
     except Exception as error:
         allowed = ({"setup", "ready", "privilege", "revocation", "rust-endpoint"}
                    | {f"startup-{stage}" for stage in STARTUP_STAGES}
-                   | {f"startup-isolation-{stage}" for stage in ISOLATION_STAGES})
+                   | {f"startup-isolation-{stage}" for stage in ISOLATION_STAGES}
+                   | {f"application-{direction}-{slot}-transit-{reason}"
+                      for direction in range(2) for slot in range(2)
+                      for reason in ("forward-destination", "forward-send",
+                                     "forward-daemon", "forward-timeout",
+                                     "forward-watch", "forward-frame", "internal")}
+                   | {f"application-{direction}-{slot}-{operation}"
+                      for direction in range(2) for slot in range(2)
+                      for operation in ("receive", "confirm")}
+                   | {f"application-{direction}-send" for direction in range(2)})
         lab.error_category = str(error) if str(error) in allowed else "proof"
     finally:
         try: lab.cleanup()
