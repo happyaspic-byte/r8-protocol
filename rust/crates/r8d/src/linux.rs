@@ -85,6 +85,31 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
+    verify_isolated_topology(interface_names, true)
+}
+
+/// Revalidate topology after verified irreversible privilege removal.
+///
+/// The pre-drop verifier already proved that this is not PID 1's network namespace.
+/// With no capabilities remaining, the process cannot change network namespaces; this
+/// pass therefore avoids the potentially unreadable `/proc/1/ns/net` while rechecking
+/// every mutable topology property.
+pub fn verify_isolated_namespace_after_drop<I, S>(interface_names: I) -> Result<(), LinuxError>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    verify_isolated_topology(interface_names, false)
+}
+
+fn verify_isolated_topology<I, S>(
+    interface_names: I,
+    compare_pid_one: bool,
+) -> Result<(), LinuxError>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
     let requested: Vec<String> = interface_names
         .into_iter()
         .map(|name| name.as_ref().to_owned())
@@ -96,7 +121,7 @@ where
     {
         return Err(LinuxError::Interface);
     }
-    if namespace_matches_pid_one()? {
+    if compare_pid_one && namespace_matches_pid_one()? {
         return Err(LinuxError::Namespace);
     }
     verify_ipv6_disabled(&names)?;

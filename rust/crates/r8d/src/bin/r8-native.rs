@@ -1,8 +1,9 @@
 //! Linux-only strict native launcher. It has no UDP, IP, subprocess, or recovery path.
 use r8d::{
     create_immutable_manifest, drop_privileges, open_filtered_descriptor, read_immutable_manifest,
-    set_nondumpable, validate_manifest_json, verify_isolated_namespace, Clock, DescriptorBudgets,
-    DropSessions, EventSource, NativeError, NativeIo, NativeRuntime,
+    set_nondumpable, validate_manifest_json, verify_isolated_namespace,
+    verify_isolated_namespace_after_drop, Clock, DescriptorBudgets, DropSessions, EventSource,
+    NativeError, NativeIo, NativeRuntime,
 };
 use std::collections::BTreeSet;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
@@ -236,11 +237,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     set_nondumpable()?;
     let descriptor_count = records.len();
     eprintln!("r8-native startup=runtime");
-    let mut runtime = NativeRuntime::new(manifest, budgets, records)?;
+    let mut runtime = match NativeRuntime::new(manifest, budgets, records) {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            eprintln!("r8-native runtime=constructor");
+            return Err(error.into());
+        }
+    };
     let mut io = LinuxIo { fds };
     let mut sessions = DropSessions::default();
     let mut clock = MonotonicClock;
-    if watch.reject_pending().is_err() || verify_isolated_namespace(&args.interfaces).is_err() {
+    if watch.reject_pending().is_err() {
+        eprintln!("r8-native runtime=watch");
+        return Err("readiness isolation revoked".into());
+    }
+    if verify_isolated_namespace_after_drop(&args.interfaces).is_err() {
+        eprintln!("r8-native runtime=isolation");
         return Err("readiness isolation revoked".into());
     }
     println!("r8-native ready descriptors={descriptor_count}");

@@ -200,6 +200,11 @@ STARTUP_STAGES = frozenset(("arguments", "manifest", "isolation", "descriptors",
 ERROR_CATEGORIES.update({f"STARTUP_{stage.upper()}": f"startup-{stage}" for stage in STARTUP_STAGES})
 ISOLATION_STAGES = frozenset(("namespace", "network", "default-route-v4", "address", "interface", "internal"))
 ERROR_CATEGORIES.update({f"STARTUP_ISOLATION_{stage.upper().replace('-', '_')}": f"startup-isolation-{stage}" for stage in ISOLATION_STAGES})
+RUNTIME_STAGES = frozenset(("constructor", "watch", "isolation"))
+ERROR_CATEGORIES.update({
+    f"STARTUP_RUNTIME_{stage.upper()}": f"startup-runtime-{stage}"
+    for stage in RUNTIME_STAGES
+})
 
 
 def error_category(error):
@@ -210,14 +215,18 @@ def setup_error_category(error, stage):
     category = error_category(error)
     return f"setup-{stage}" if category == "setup" and stage in SETUP_STAGES else category
 def startup_error(stderr):
-    stage = isolation = None
+    stage = isolation = runtime = None
     for line in stderr.splitlines():
         if line.startswith("r8-native startup=") and line.removeprefix("r8-native startup=") in STARTUP_STAGES:
             stage = line.removeprefix("r8-native startup=")
         if line.startswith("r8-native isolation=") and line.removeprefix("r8-native isolation=") in ISOLATION_STAGES:
             isolation = line.removeprefix("r8-native isolation=")
+        if line.startswith("r8-native runtime=") and line.removeprefix("r8-native runtime=") in RUNTIME_STAGES:
+            runtime = line.removeprefix("r8-native runtime=")
     if isolation is not None:
         return f"STARTUP_ISOLATION_{isolation.upper().replace('-', '_')}"
+    if runtime is not None:
+        return f"STARTUP_RUNTIME_{runtime.upper()}"
     return f"STARTUP_{stage.upper()}" if stage is not None else "READY"
 
 

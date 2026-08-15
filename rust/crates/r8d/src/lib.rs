@@ -11,8 +11,8 @@ pub use forward::{
 pub use linux::{
     create_immutable_manifest, drop_privileges, has_ipv4_default_route, open_filtered_descriptor,
     r8_bpf_program, read_immutable_manifest, set_nondumpable, validate_privilege_snapshot,
-    verify_immutable_manifest, verify_isolated_namespace, FilteredDescriptor, LinuxError,
-    PrivilegeSnapshot,
+    verify_immutable_manifest, verify_isolated_namespace, verify_isolated_namespace_after_drop,
+    FilteredDescriptor, LinuxError, PrivilegeSnapshot,
 };
 pub use manifest::{validate_manifest_json, Interface, ManifestError, NativeManifest, Route};
 pub use native::{
