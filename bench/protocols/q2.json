@@ -371,7 +371,7 @@
       ".github/workflows/native-full.yml": "4114f0e2a5333938e288078b1eb5eda4d6f39e94f724f2e7f7aaead49cdf8a54",
       ".github/workflows/q2-full.yml": "c3215b26e6fcbf5318a126db234134d36a0d1d719e0ea9d0a97c8f976104ecb4",
       "bench/q2.py": "030ef7b8e05beba2c4816390e4465659ac51884eca22889b9e8b902fec034aee",
-      "bench/q2_run.py": "3483410b8aadccb3423b6b41e7edae5d8821a315c5defa5ca3bbf5717851a95b",
+      "bench/q2_run.py": "ad2393d7f37a316f3ce774f17bcbe684da537e9a8d51fba5ea9f2e69d3179584",
       "requirements-dev.txt": "7615cdb4d14c77a941e81dff308882ca529e021441a7a3a25554878ccffe9b6f",
       "spec/0004-wire-format-v0.2.md": "845dc82ba63da281a458c0566a916c54b0636ba52d1300bf6bb251e971804279",
       "spec/0005-session-security-v0.1.md": "7b3d9e7f90f256f3b5087e1afe55ee2a3d24b547e64150c5ec13bb5233c859d4",
@@ -384,7 +384,7 @@
       "reference/r8mobility.py": "294b0f3532410591d682b2786187b6dab5d799e7ef699ca20934e11c372eaff1",
       "reference/r8redundant.py": "715521dfce1eb657bb8b4d2e5e8dfee38a4553bf15f7418d2cce22314ebae2e7",
       "tests/native_netns.py": "8b395b1e0b0cf118358294717957155e6138895257f6936d2ecb6bdbc214df15",
-      "tests/redundant_netns.py": "dd61e8c016902f483e92df5b4b641bf91dc53bb0b7b87a4fd7873c781bd67b90",
+      "tests/redundant_netns.py": "1c2a2c7d6ed6d9bf0f061b09f2cdc2c5f208c7b5a18c24add38558c7bc341b55",
       "rust/Cargo.toml": "127425cc73795afaa6c0c8bd4d5c595f37af00546057a0b09e2d1df25808cfde",
       "rust/Cargo.lock": "cc1afb244e6a3b4aa06786da73bfc047bdca2e4f321c1165d039f787124588f2",
       "rust/crates/r8-proto/Cargo.toml": "082c90580af208919300ef47426283654f4f420f295ca6a3860e8183e756a61f",
@@ -404,7 +404,7 @@
       "rust/crates/r8d/src/native.rs": "9308d567a5bb938ed43820665f9629eaa3e4c99ab15524567d988f197e67f67c",
       "rust/crates/r8d/src/bin/r8-native.rs": "19d3b66e84bb4399953ba61efe9d3ceeb52480a669fdf47cd36db811d80d7ca7"
     },
-    "source_map_sha256": "b2ed6fb8ace93c652bc3b9f4c82002b5a82033cd9447d196c827d2d539dde97b"
+    "source_map_sha256": "e5b027bc576147823443c461364c8dcd78c6594562949d5979b69617584ccee7"
   },
   "result_fields_prohibited": [
     "observed_values",

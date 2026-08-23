@@ -70,8 +70,11 @@ class Q2RunTests(unittest.TestCase):
                          "e61d83820cb1e2b3da44d03dd75975e2f26ffad83e202048b4367d8f48eab375")
         self.assertEqual(q2_run._expected_gate4_manifest_hash(2),
                          "9b7331a01c0fd5d047188d2c612a94a39279384548def887af9cff29fd932374")
+        # Observed from hosted native-full run 32656014108 artifact
+        # redundant-native.json (ok=true); supersedes the pre-d62cd80 golden
+        # 77f608... captured before the redundant topology rework.
         self.assertEqual(q2_run._expected_gate5_manifest_hash(),
-                         "77f608ffc3c7deec66680f21553e85d19819f8378e78880a48d8495f996710f8")
+                         "4e3223aac7e405db0a3e9ac76d9edd08d7eed3a568b5312c1d78c07c3da3e73e")
         workflow = (ROOT / ".github/workflows/q2-full.yml").read_text()
         self.assertIn("gate5_run:", workflow)
         self.assertIn('test "$(jq -r .name <<<"$RUN")" = "Native full"', workflow)
