@@ -30,6 +30,7 @@ Across all 1,200 measured rows there were zero failures, zero duplicate payloads
 - Every file hash in `manifest.json` matches the retained bytes.
 - All 12 implementation-source hashes match blob contents at commit `d62cd8054cf859ab85d21ddda22b02404f8d81fb`.
 - Recomputing nearest-rank p50/p95 per cell from `raw.json` reproduces every `summary.json` point estimate exactly.
+- `python3 bench/q1.py regenerate --output <package copy>` exits 0 against this package at HEAD `4a4d176` and rewrites `summary.json` byte-identically, which revalidates preregistration hash binding, all file hashes, row/host-epoch bindings, publication eligibility flags, environment/source bindings, and the 10,000-resample block-bootstrap CIs end to end.
 - Hosted artifact digest at retention time: `sha256:35c6e98151b28f2f4cd08f81d59da48704155aea72622429c69f304c48496349`; artifact expires 2026-09-15.
 
 This is closed-lab-only evidence from an isolated privileged hosted run. It makes no Internet or standardization claim.
