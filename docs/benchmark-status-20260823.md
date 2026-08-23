@@ -83,5 +83,6 @@ Because every Actions run this session was rejected by the account billing block
 - `python3 -m unittest discover -s tests -p 'test_*.py'`: **OK, 284 tests** (1 skip: `test_dissector` requires `tshark`, not installed locally; hosted CI covers it).
 - Bounded fuzz smokes `fuzz_reference.py`, `fuzz_session.py`, `fuzz_mobility.py`, `fuzz_redundant.py`, `fuzz_redundant_state.py`: all exit 0.
 - `cargo fmt --all --check`: pass. `cargo clippy --workspace --all-targets --locked -- -D warnings`: pass. `cargo test --workspace --all-targets --locked`: all test binaries `ok`, 0 failures.
+- Loopback interoperability at HEAD: `tests/interop.py --build`, `tests/session_interop.py --build`, and `tests/mobility_interop.py` all exit 0, completing every non-tshark non-sudo step of `ci.yml` locally. Remaining unreplicated CI steps require hosted privileges or `tshark` (absent locally).
 - `python3 bench/q1.py regenerate` on a copy of the retained Q1 v5 package: exit 0, `summary.json` rewritten byte-identically.
 - Billing block reconfirmed by dispatch attempts at 16:19Z (`32651320815`) and 16:33Z (`32652042261`), identical annotations.
