@@ -148,14 +148,21 @@ def _expected_gate5_manifest_hash():
     locations = (ipaddress.IPv6Address("11:2233:4455:6677:8899:aabb:ccdd:eeff"),
                  ipaddress.IPv6Address("ffee:ddcc:bbaa:9988:7766:5544:3322:1100"))
     documents = []
-    for descriptors, links, peers in (((2, 3), (0, 1), (0, 3)),
-                                      ((4, 5), (2, 3), (0, 3))):
+    for hop, descriptors, links, peers in ((1, (2, 3), (0, 1), (0, 3)),
+                                           (2, (4, 5), (2, 3), (0, 3))):
         interfaces = list(zip(
             descriptors, [f"p{link}" for link in links],
             [link * 4 + peer for link, peer in zip(links, peers)]))
         routes = [(location, descriptor, gate5_native.mac(link * 4 + peer))
                   for location, descriptor, link, peer
                   in zip(locations, descriptors, links, peers)]
+        if hop == 2:
+            # The deployed hop-2 manifest also routes the session destination
+            # 8::3 back over path one (tests/redundant_netns.py launch());
+            # mirror it exactly or valid gate evidence is rejected.
+            routes.append((ipaddress.IPv6Address("8::3"),
+                           descriptors[0],
+                           gate5_native.mac(links[0] * 4 + peers[0])))
         documents.append(canonical(gate5_native.manifest(interfaces, routes)).encode())
     return gate5_native.aggregate_hash(
         "r8-redundant-manifest-v1",
