@@ -114,6 +114,30 @@ def receive(sock, timeout=2):
     return sock.recv(2048) if events else None
 
 def run(command, check=True): return subprocess.run(command, check=check, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+def await_watcher(watcher, timeout=10):
+    # The watch worker must bind its AF_PACKET socket before any frame is sent;
+    # a fixed sleep raced process startup under load (measured python startup
+    # exceeds the previous 50 ms wait). Wait for the worker's readiness stage.
+    deadline = time.monotonic() + timeout
+    selector = selectors.DefaultSelector()
+    selector.register(watcher.stderr, selectors.EVENT_READ)
+    try:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            events = selector.select(remaining if watcher.poll() is None else 0)
+            if not events:
+                break
+            line = watcher.stderr.readline()
+            if not line:
+                break
+            if "stage=ready" in line:
+                return
+    finally:
+        selector.close()
+    watcher.kill()
+    raise RuntimeError("watcher-startup")
 def ip(*args, ns=None, check=True):
     prefix = ["ip", "netns", "exec", ns, "ip"] if ns is not None else ["ip"]
     return run(prefix + list(args), check)
@@ -275,7 +299,7 @@ class Lab:
             raise RuntimeError("forward-destination")
         first_link, last_link = ((0, 1), (2, 3))[slot] if sender_node == 0 else ((1, 0), (3, 2))[slot]
         watcher = subprocess.Popen(["ip", "netns", "exec", self.ns(receiver_node), sys.executable, str(Path(__file__).resolve()), "--worker", "watch", "--interface", self.iface(receiver_node, last_link)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        time.sleep(.05)
+        await_watcher(watcher)
         hop_node = 1 if slot == 0 else 2
         frame = eth(mac(first_link * 4 + hop_node), mac(first_link * 4 + sender_node), packet)
         sender = run(["ip", "netns", "exec", self.ns(sender_node), sys.executable, str(Path(__file__).resolve()), "--worker", "send", "--interface", self.iface(sender_node, first_link), "--frame", frame.hex()], check=False)
@@ -307,7 +331,7 @@ class Lab:
     def expect_drop(self, sender_node, receiver_node, slot, packet, source_mac=None):
         first_link, last_link = ((0, 1), (2, 3))[slot] if sender_node == 0 else ((1, 0), (3, 2))[slot]
         watcher = subprocess.Popen(["ip", "netns", "exec", self.ns(receiver_node), sys.executable, str(Path(__file__).resolve()), "--worker", "watch", "--interface", self.iface(receiver_node, last_link)], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        time.sleep(.05)
+        await_watcher(watcher)
         hop_node = 1 if slot == 0 else 2
         frame = eth(mac(first_link * 4 + hop_node),
                     mac(first_link * 4 + sender_node) if source_mac is None else source_mac, packet)
@@ -449,6 +473,7 @@ class Lab:
                     suffix = str(error) if str(error) in {
                         "forward-destination", "forward-send", "forward-daemon",
                         "forward-timeout", "forward-watch", "forward-frame",
+                        "watcher-startup",
                     } else "internal"
                     raise RuntimeError(
                         f"application-{direction}-{slot}-transit-{suffix}") from error
@@ -543,6 +568,7 @@ def worker(argv):
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", choices=("send", "watch")); parser.add_argument("--interface", required=True); parser.add_argument("--frame")
     args = parser.parse_args(argv); sock = socket_for(args.interface)
+    print("r8-redundant-worker stage=ready", file=sys.stderr, flush=True)
     if args.mode == "send":
         sock.send(bytes.fromhex(args.frame)); return 0
     frame = receive(sock)
@@ -580,14 +606,16 @@ def main(argv=None):
             raise RuntimeError("setup")
         lab.setup(); lab.launch(); lab.proof(); lab.revoke()
     except Exception as error:
-        allowed = ({"setup", "ready", "privilege", "revocation", "rust-endpoint"}
+        allowed = ({"setup", "ready", "privilege", "revocation", "rust-endpoint",
+                    "watcher-startup"}
                    | {f"startup-{stage}" for stage in STARTUP_STAGES}
                    | {f"startup-isolation-{stage}" for stage in ISOLATION_STAGES}
                    | {f"application-{direction}-{slot}-transit-{reason}"
                       for direction in range(2) for slot in range(2)
                       for reason in ("forward-destination", "forward-send",
                                      "forward-daemon", "forward-timeout",
-                                     "forward-watch", "forward-frame", "internal")}
+                                     "forward-watch", "forward-frame", "internal",
+                                     "watcher-startup")}
                    | {f"application-{direction}-{slot}-{operation}"
                       for direction in range(2) for slot in range(2)
                       for operation in ("receive", "confirm")}
