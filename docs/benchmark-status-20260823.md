@@ -86,3 +86,14 @@ Because every Actions run this session was rejected by the account billing block
 - Loopback interoperability at HEAD: `tests/interop.py --build`, `tests/session_interop.py --build`, and `tests/mobility_interop.py` all exit 0, completing every non-tshark non-sudo step of `ci.yml` locally. Remaining unreplicated CI steps require hosted privileges or `tshark` (absent locally).
 - `python3 bench/q1.py regenerate` on a copy of the retained Q1 v5 package: exit 0, `summary.json` rewritten byte-identically.
 - Billing block reconfirmed by dispatch attempts at 16:19Z (`32651320815`) and 16:33Z (`32652042261`), identical annotations.
+
+## 7. Local privileged closed-lab verification after sudo grant (17:11Z+)
+
+The operator granted passwordless sudo on this VM, enabling the same isolated-netns proofs the hosted workflows run, without any public/third-party network contact (dedicated namespaces, veth/loopback only):
+
+- `tests/native_netns.py --hops 1` and `--hops 2` (release binaries, locked build): **ok=true**, counters exactly match the values enforced by `.github/workflows/native-full.yml`.
+- `tests/redundant_netns.py`: initially failed intermittently — **2 of 6 runs** failed with `error_category` `…transit-forward-watch` (watch worker saw no frame within its 2 s window).
+- **Root cause (measured)**: the parent slept a fixed 50 ms after spawning the watch worker, but worker python startup plus imports takes 61–180 ms locally before its AF_PACKET bind; frames sent into the void fail the proof. The same harness pattern had produced repeated red→green hosted CI flips on 2026-08-15.
+- **Fix (`fa1f0ec`)**: watch workers emit a `stage=ready` marker after bind and parents await it (10 s budget) instead of sleeping, mirroring the existing `native_netns.py` stage handshake; `watcher-startup` added to the finite error taxonomy. Post-fix: **8 of 8 passes**.
+- Note: this fix does not change any preregistered field or wire contract; `native-full.yml` recomputes source hashes from the checked-out tree at runtime, so workflow checks stay self-consistent.
+- A fresh current-contract Q3 replay under `unshare --net --mount-proc` (dedicated root namespace, loopback-only) was started from commit `fa1f0ec`; its outcome is recorded once validated. Hosted Native full remains required for the Q2 gate regardless, because `q2-full.yml` verifies a successful `workflow_dispatch` run of `native-full.yml` via the GitHub API.
