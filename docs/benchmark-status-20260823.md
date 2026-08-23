@@ -75,3 +75,13 @@ graph LR
 - Frozen contracts untouched: `bench/protocols/*.json` bytes unchanged (hashes re-verified against manifest).
 - Telemetry redaction preserved in all committed evidence (environment CPU identifiers remain redacted).
 - No force-push; conventional commits; only new files added so far.
+
+## 6. Local verification of session commits (hosted CI unavailable)
+
+Because every Actions run this session was rejected by the account billing block, commits `332ee77..b91d90f` have no hosted CI yet. Local verification at HEAD `b91d90f`, all observed 2026-08-23:
+
+- `python3 -m unittest discover -s tests -p 'test_*.py'`: **OK, 284 tests** (1 skip: `test_dissector` requires `tshark`, not installed locally; hosted CI covers it).
+- Bounded fuzz smokes `fuzz_reference.py`, `fuzz_session.py`, `fuzz_mobility.py`, `fuzz_redundant.py`, `fuzz_redundant_state.py`: all exit 0.
+- `cargo fmt --all --check`: pass. `cargo clippy --workspace --all-targets --locked -- -D warnings`: pass. `cargo test --workspace --all-targets --locked`: all test binaries `ok`, 0 failures.
+- `python3 bench/q1.py regenerate` on a copy of the retained Q1 v5 package: exit 0, `summary.json` rewritten byte-identically.
+- Billing block reconfirmed by dispatch attempts at 16:19Z (`32651320815`) and 16:33Z (`32652042261`), identical annotations.
