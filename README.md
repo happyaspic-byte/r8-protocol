@@ -91,8 +91,8 @@ Q3 runs require a dedicated root network namespace and must not be invoked again
 | Gate 0 | provenance / wire-change / budget / machine-contract baseline | ✅ durably checkpointed |
 | Gate 1 / M0–M1 | strict v0.2 Python/Rust wire implementation and UDP interop | ✅ durably complete locally; latest retained hosted prior-snapshot CI is `31834671629`; final candidate verification pending |
 | Gate 2 / G003 | pinned cookie-first sessions and Q3 evidence | locally complete; joined VB002 closure awaits fresh Q1 v5 evidence; canonical isolated-netns Q3 v8 evidence retained |
-| Gate 3 / M3 / Q1 | signed proof-gated mobility and equal-notice Q1 | implementation/source/contract CLEAR; Q1 v4 run `31835854041` retained invalid and unpublished; fresh privileged v5 run pending |
-| Gates 4–5 / M4–M5 | native forwarding and authenticated REDUNDANT | implemented and locally verified; privileged Gate 4/5 evidence pending |
+| Gate 3 / M3 / Q1 | signed proof-gated mobility and equal-notice Q1 | implementation/source/contract CLEAR; first publication-eligible Q1 v5 evidence retained from privileged run `31913402239` at `d62cd80` (`bench/results/q1-closed-lab-v5-run-31913402239`) |
+| Gates 4–5 / M4–M5 | native forwarding and authenticated REDUNDANT | implemented and locally verified; privileged Gate 4/5 evidence pending (hosted runs currently blocked by account Actions billing) |
 | Gate 6 / Q2 | paired native two-path measurement | v5 frozen with zero observations; forbidden until Gate 4/5 evidence clears |
 
 ### Q3 closed-lab result
@@ -101,9 +101,13 @@ The canonical Q3 full evidence package is immutable at `bench/results/q3-closed-
 
 Q3 v3 is historical and non-retained; v4, v6, and v7 are invalid/rejected and non-retained; no v5 exists. Gate 2/G003 remains deferred in joined VB002 until G004 closes. Q1 v2 is retained setup-only non-result evidence, Q1 v3 was cancelled without an artifact, and Q1 v4 run `31835854041` is retained as invalid diagnostic-only evidence with 63 pre-runtime readiness timeouts, `publication_eligible=false`, and an empty summary. The bounded child-liveness-aware fix is frozen as Q1 v5; no fresh full v5 result is claimed.
 
+### Q1 closed-lab result (v5)
+
+The first publication-eligible Q1 evidence package is immutable at `bench/results/q1-closed-lab-v5-run-31913402239`, from hosted workflow `31913402239` (workflow_dispatch, 2026-08-15, 3h13m42s) at commit `d62cd8054cf859ab85d21ddda22b02404f8d81fb`, epoch `closed-lab-epoch-260815225528`. All six cells (R8/TCP-reconnect/GARP-VIP × abrupt/make-before-break) ran 200 measured trials with zero failures under frozen preregistration v5 (`sha256:905f2eb8abd6a2927c4d3e8416574a4da9c4a9fe14eea4624a98a604b75b5b48`). Outage p50 was R8 110.038803 ms abrupt / 100.052691 ms make-before-break, TCP-reconnect 129.999624/120.000143 ms, GARP-VIP 100.002123/100.000793 ms; nearest-rank quantiles reproduce exactly from raw data. This is closed-lab-only evidence, not an Internet or IPv8-standard claim.
+
 ### Q1 retained invalid evidence
 
-Q1 v2 remains setup-only non-result evidence. Q1 v4 is retained at `bench/results/q1-closed-lab-v4-invalid-run-31835854041/` solely as negative diagnostic evidence: all 1,320 rows are preserved, but none of its 1,257 complete runtime rows may enter an estimand. Fresh Q1 v5 evidence must come from the exact clean source-bound commit.
+Q1 v2 remains setup-only non-result evidence. Q1 v4 is retained at `bench/results/q1-closed-lab-v4-invalid-run-31835854041/` solely as negative diagnostic evidence: all 1,320 rows are preserved, but none of its 1,257 complete runtime rows may enter an estimand.
 
 ## 설계 한계 (스스로 밝히는 것)
 
