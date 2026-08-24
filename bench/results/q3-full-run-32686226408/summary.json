@@ -1,0 +1,109 @@
+{
+  "contract_version": "r8-benchmark-preregistration-v1",
+  "series": {
+    "cold-process-primary": {
+      "R8-cookie-pinned-full-handshake": {
+        "failure_rate": 0.0,
+        "latency_ns": {
+          "confidence_intervals_95": {
+            "p50": [
+              2998862,
+              3013602
+            ],
+            "p90": [
+              3081011,
+              3109924
+            ]
+          },
+          "estimator": "kaplan-meier-right-censored",
+          "p50": 3005832,
+          "p90": 3095002
+        },
+        "mean_cpu_ns": 3096063.601,
+        "mean_network": {
+          "rx_bytes": 1326.0,
+          "rx_packets": 7.0,
+          "tx_bytes": 1326.0,
+          "tx_packets": 7.0
+        }
+      },
+      "TLS-1.3-full-handshake": {
+        "failure_rate": 0.0,
+        "latency_ns": {
+          "confidence_intervals_95": {
+            "p50": [
+              43754751,
+              43832973
+            ],
+            "p90": [
+              44158542,
+              44211468
+            ]
+          },
+          "estimator": "kaplan-meier-right-censored",
+          "p50": 43791223,
+          "p90": 44182618
+        },
+        "mean_cpu_ns": 3666899.595,
+        "mean_network": {
+          "rx_bytes": 3979.0,
+          "rx_packets": 12.0,
+          "tx_bytes": 3979.0,
+          "tx_packets": 12.0
+        }
+      }
+    },
+    "warm-process": {
+      "R8-cookie-pinned-full-handshake": {
+        "failure_rate": 0.0,
+        "latency_ns": {
+          "confidence_intervals_95": {
+            "p50": [
+              1834232,
+              1848553
+            ],
+            "p90": [
+              1947217,
+              1958855
+            ]
+          },
+          "estimator": "kaplan-meier-right-censored",
+          "p50": 1840551,
+          "p90": 1953587
+        },
+        "mean_cpu_ns": 1878867.97,
+        "mean_network": {
+          "rx_bytes": 1326.0,
+          "rx_packets": 7.0,
+          "tx_bytes": 1326.0,
+          "tx_packets": 7.0
+        }
+      },
+      "TLS-1.3-full-handshake": {
+        "failure_rate": 0.0,
+        "latency_ns": {
+          "confidence_intervals_95": {
+            "p50": [
+              42205530,
+              42285177
+            ],
+            "p90": [
+              42551382,
+              42570010
+            ]
+          },
+          "estimator": "kaplan-meier-right-censored",
+          "p50": 42237867,
+          "p90": 42559855
+        },
+        "mean_cpu_ns": 1896246.335,
+        "mean_network": {
+          "rx_bytes": 3979.0,
+          "rx_packets": 12.0,
+          "tx_bytes": 3979.0,
+          "tx_packets": 12.0
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,79 @@
+{
+  "command_template": "python3 bench/q3.py run --output OUTPUT_DIR --source-identity SOURCE_ID --host-epoch HOST_EPOCH",
+  "failures": 0,
+  "git_commit": "a5bf3b98368ba1216976b301b7cf493261f6640f",
+  "group_counts": [
+    {
+      "failures": 0,
+      "measured": 1000,
+      "mechanism": "R8-cookie-pinned-full-handshake",
+      "rows": 1050,
+      "series": "cold-process-primary",
+      "warmups": 50
+    },
+    {
+      "failures": 0,
+      "measured": 1000,
+      "mechanism": "TLS-1.3-full-handshake",
+      "rows": 1050,
+      "series": "cold-process-primary",
+      "warmups": 50
+    },
+    {
+      "failures": 0,
+      "measured": 1000,
+      "mechanism": "R8-cookie-pinned-full-handshake",
+      "rows": 1050,
+      "series": "warm-process",
+      "warmups": 50
+    },
+    {
+      "failures": 0,
+      "measured": 1000,
+      "mechanism": "TLS-1.3-full-handshake",
+      "rows": 1050,
+      "series": "warm-process",
+      "warmups": 50
+    }
+  ],
+  "host_epoch": "closed-lab-epoch-20260824032231",
+  "implementation_source_identity": "sha256:eb3f5fa20ddbe69df73c273f5c27bfc5833565d165ad6d8477d66836b5cd5e6b",
+  "implementation_sources": {
+    ".github/workflows/q3-full.yml": "45c94a49bff54e1db165ec9bea756f2b614ad5e9cde2cc41c3bda5903ada13aa",
+    "bench/fixtures/q3-cert.pem": "5d3be5eaa4d12b54621a8ab27f9efdc83ceeb1ca7af51c14c12151b5d0b76409",
+    "bench/fixtures/q3-key.pem": "f1bca785065dc3adc357ef9b53635e0297bd33e7f2c4f5e74b2be8dbfa0cc05f",
+    "bench/protocols/manifest.json": "e5f9ab4996cf32f5cf94e08daefcb3e8f9a4f920404bbf1ebe102daca6f01109",
+    "bench/protocols/q3.json": "e5a7f57a2f9ec152edad127c84ad6a9a80b8f5b3c9e4b7299e44fd815a677e1b",
+    "bench/q3.py": "12259c1da8e4ff1621f49bc1e80555b93c0f89ceedbf8420205dd6ed5d112641",
+    "reference/r8ref.py": "add7bf864b5841ce6c10c07524942e93c538430b4904b0b2471efe3fa2658134",
+    "reference/r8session.py": "78b5012119c5505a5944488d2a0022438d29641ccab6d7bcb1bcc83af726ac9b",
+    "requirements-dev.txt": "7615cdb4d14c77a941e81dff308882ca529e021441a7a3a25554878ccffe9b6f",
+    "spec/0004-wire-format-v0.2.md": "845dc82ba63da281a458c0566a916c54b0636ba52d1300bf6bb251e971804279",
+    "spec/0005-session-security-v0.1.md": "7b3d9e7f90f256f3b5087e1afe55ee2a3d24b547e64150c5ec13bb5233c859d4",
+    "spec/parameters-v0.1.md": "0edc4b0fd693acbbc2e20bcdc23ea6a87b6e4afeab05fafc523a59fb8d9e060a"
+  },
+  "isolated_netns_proof": true,
+  "limitations": [
+    "Closed-lab loopback measurements require a dedicated loopback-only network namespace.",
+    "Smoke output is explicitly non-result and does not satisfy preregistered trial counts."
+  ],
+  "post_hoc_exclusions": 0,
+  "publication_eligible": true,
+  "row_count": 4200,
+  "runtime_outcome": "success",
+  "schema": "q3-run-manifest-v1",
+  "sha256": {
+    "environment.json": "8970fd2512da49db020c62d7fed844c697a87e0c631fd74ea9c84271454dd11b",
+    "raw.jsonl": "6af8cc9b598bdb0526185e2cfc530300b0813655667dfcb64573a96b1be50cb2",
+    "summary.json": "6e078be15274b5d0b6d1cf937dfbbef3716fc46afdc4b7d58cc4a59ff0f050f1"
+  },
+  "source_identity": "sha256:eb3f5fa20ddbe69df73c273f5c27bfc5833565d165ad6d8477d66836b5cd5e6b",
+  "status": "completed-evidence",
+  "toolchain_provenance": {
+    "cryptography": "46.0.5",
+    "machine": "x86_64",
+    "platform": "Linux-7.0.0-1011-azure-x86_64-with-glibc2.43",
+    "python": "3.12.14",
+    "requirements_dev_sha256": "7615cdb4d14c77a941e81dff308882ca529e021441a7a3a25554878ccffe9b6f"
+  }
+}
