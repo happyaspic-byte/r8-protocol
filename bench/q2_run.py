@@ -621,10 +621,13 @@ class Lab:
         entries = ((0, 0, "p0"), (3, 3, "p1")) if condition == "flap-A" else ((4, 0, "p2"), (7, 3, "p3"))
         observations = [{"ordinal": ordinal, "start_actual_relative_ns": None, "end_actual_relative_ns": None}
                         for ordinal, _, _ in entries]
-        while raw_ns() < origin:
+        while True:
+            remaining = (origin - raw_ns()) / 1_000_000_000
+            if remaining <= 0:
+                break
             if raw_ns() >= deadline:
                 return observations, False
-            time.sleep(min((origin - raw_ns()) / 1_000_000_000, .001))
+            time.sleep(min(remaining, .001))
         try:
             for item, (_, node, interface) in zip(observations, entries):
                 command(("tc", "qdisc", "replace", "dev", interface, "root", "netem", "loss", "100%"),
@@ -635,10 +638,13 @@ class Lab:
                     fail("fault-not-applied")
                 item["start_actual_relative_ns"] = raw_ns() - origin
             target = origin + 1_000_000_000
-            while raw_ns() < target:
+            while True:
+                remaining = (target - raw_ns()) / 1_000_000_000
+                if remaining <= 0:
+                    break
                 if raw_ns() >= deadline:
                     return observations, False
-                time.sleep(min((target - raw_ns()) / 1_000_000_000, .001))
+                time.sleep(min(remaining, .001))
             for item, (_, node, interface) in zip(observations, entries):
                 command(("tc", "qdisc", "del", "dev", interface, "root"),
                         namespace=self.ns(node), timeout=self._deadline_timeout(deadline))
@@ -742,8 +748,11 @@ def _send_worker(plan, state, mapping, sockets, origin, send_times, error_code,
     try:
         for index in range(400):
             due = origin - 1_000_000_000 + index * 10_000_000
-            while raw_ns() < due:
-                time.sleep(min((due - raw_ns()) / 1_000_000_000, .001))
+            while True:
+                remaining = (due - raw_ns()) / 1_000_000_000
+                if remaining <= 0:
+                    break
+                time.sleep(min(remaining, .001))
             try:
                 outbound = state.send(_payload(plan["seed"], index))
             finally:

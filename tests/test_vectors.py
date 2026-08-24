@@ -19,9 +19,9 @@ WIRE_ERRORS = {
 }
 PREREGISTRATION_HASHES = {
     "Q1": "905f2eb8abd6a2927c4d3e8416574a4da9c4a9fe14eea4624a98a604b75b5b48",
-    # Rebound in the same commit as the q2_run.py hop-2 validator fix and the
-    # redundant_netns.py watcher readiness fix (see bench/protocols/q2.json).
-    "Q2": "f5edb310864f616ff4de67c4b2faa5ccf9514d340d9701be9dbd1e801a010bba",
+    # Rebound in the same commit as the q2_run.py negative-sleep pacing fix
+    # (see bench/protocols/q2.json).
+    "Q2": "ed9dfa1f2e331e8f131dcc7ba681205fa076786bea67bd3811c99c9daf8145b5",
     "Q3": "e5a7f57a2f9ec152edad127c84ad6a9a80b8f5b3c9e4b7299e44fd815a677e1b",
 }
 SESSION_CORPUS_SHA256 = "3dc2c622eab5dc4cb8477c7e75678980366ed4253e369e83db207220f34cf740"

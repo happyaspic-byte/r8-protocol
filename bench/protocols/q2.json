@@ -371,7 +371,7 @@
       ".github/workflows/native-full.yml": "4114f0e2a5333938e288078b1eb5eda4d6f39e94f724f2e7f7aaead49cdf8a54",
       ".github/workflows/q2-full.yml": "c3215b26e6fcbf5318a126db234134d36a0d1d719e0ea9d0a97c8f976104ecb4",
       "bench/q2.py": "030ef7b8e05beba2c4816390e4465659ac51884eca22889b9e8b902fec034aee",
-      "bench/q2_run.py": "ad2393d7f37a316f3ce774f17bcbe684da537e9a8d51fba5ea9f2e69d3179584",
+      "bench/q2_run.py": "d5eca0f33f89a836d13e9570728bebc11c808d13cb9a55829119233d7a49cfa0",
       "requirements-dev.txt": "7615cdb4d14c77a941e81dff308882ca529e021441a7a3a25554878ccffe9b6f",
       "spec/0004-wire-format-v0.2.md": "845dc82ba63da281a458c0566a916c54b0636ba52d1300bf6bb251e971804279",
       "spec/0005-session-security-v0.1.md": "7b3d9e7f90f256f3b5087e1afe55ee2a3d24b547e64150c5ec13bb5233c859d4",
@@ -404,7 +404,7 @@
       "rust/crates/r8d/src/native.rs": "9308d567a5bb938ed43820665f9629eaa3e4c99ab15524567d988f197e67f67c",
       "rust/crates/r8d/src/bin/r8-native.rs": "19d3b66e84bb4399953ba61efe9d3ceeb52480a669fdf47cd36db811d80d7ca7"
     },
-    "source_map_sha256": "e5b027bc576147823443c461364c8dcd78c6594562949d5979b69617584ccee7"
+    "source_map_sha256": "8a9be15f84dae711fe6f9f189d12281e8295b375dcfab39bdc0322bceabf1dd8"
   },
   "result_fields_prohibited": [
     "observed_values",
