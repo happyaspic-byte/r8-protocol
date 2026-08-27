@@ -62,6 +62,16 @@ sudo dpkg -i dist/r8-protocol_0.1.0_amd64.deb
 r8ping --address 8:1::2 --peer 8:1::1=127.0.0.1:52808 --count 1 8:1::1
 ```
 
+### Python developer SDK
+
+`reference/r8sdk.py` exposes `DgramCodec` and a loopback-safe `UdpClient`. Three executable examples cover encoding, decoding, and a full loopback send:
+
+```bash
+python3 examples/encode_dgram.py
+python3 examples/decode_dgram.py
+python3 examples/loopback_client.py
+```
+
 ### Legacy UDP compatibility gateway
 
 `r8gateway` bridges an unchanged loopback UDP application into bounded R8 DGRAM packets. Public underlays are rejected; private/link-local underlays require `--allow-isolated-underlay`.

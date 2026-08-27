@@ -30,7 +30,7 @@ package-deb:
 	cp packaging/debian/DEBIAN/control .tmp-deb/DEBIAN/control
 	cp rust/target/release/r8d rust/target/release/r8ping .tmp-deb/usr/bin/
 	cp packaging/debian/r8gateway .tmp-deb/usr/bin/r8gateway
-	cp reference/r8ref.py reference/r8gateway.py .tmp-deb/usr/lib/r8-protocol/
+	cp reference/r8ref.py reference/r8gateway.py reference/r8sdk.py .tmp-deb/usr/lib/r8-protocol/
 	cp LICENSE .tmp-deb/usr/share/doc/r8-protocol/copyright
 	chmod 755 .tmp-deb/usr/bin/r8d .tmp-deb/usr/bin/r8ping .tmp-deb/usr/bin/r8gateway
 	dpkg-deb --root-owner-group --build .tmp-deb dist/r8-protocol_0.1.0_amd64.deb
