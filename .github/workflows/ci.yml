@@ -151,6 +151,8 @@ jobs:
           dpkg-deb --info dist/r8-protocol_0.1.0_amd64.deb
           dpkg-deb --contents dist/r8-protocol_0.1.0_amd64.deb | grep -F './usr/bin/r8gateway'
           dpkg-deb --contents dist/r8-protocol_0.1.0_amd64.deb | grep -F './usr/lib/r8-protocol/r8sdk.py'
+          dpkg-deb --contents dist/r8-protocol_0.1.0_amd64.deb | grep -F './usr/lib/systemd/system/r8d.service'
+          systemd-analyze security --offline=yes packaging/debian/lib/systemd/system/r8d.service | grep -F 'Overall exposure level'
       - name: Run SDK examples
         run: |
           python3 examples/encode_dgram.py

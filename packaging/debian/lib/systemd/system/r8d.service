@@ -1,0 +1,33 @@
+[Unit]
+Description=R8 closed-lab loopback echo daemon
+Documentation=https://github.com/happyaspic-byte/r8-protocol
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/r8d --address 8:1::1 --bind 127.0.0.1:52808
+DynamicUser=true
+NoNewPrivileges=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateDevices=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictSUIDSGID=true
+ProtectClock=true
+ProtectHostname=true
+UMask=0077
+SystemCallArchitectures=native
+Restart=on-failure
+RestartSec=2s
+
+[Install]
+WantedBy=multi-user.target

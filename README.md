@@ -59,6 +59,7 @@ make demo
 ```bash
 make package-deb
 sudo dpkg -i dist/r8-protocol_0.1.0_amd64.deb
+sudo systemctl enable --now r8d.service
 r8ping --address 8:1::2 --peer 8:1::1=127.0.0.1:52808 --count 1 8:1::1
 ```
 

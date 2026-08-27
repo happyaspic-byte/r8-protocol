@@ -41,6 +41,14 @@ class Q2RunTests(unittest.TestCase):
         self.assertIn('license = "Apache-2.0"', workspace)
         self.assertNotIn('license = "UNLICENSED"', workspace)
 
+    def test_systemd_unit_is_loopback_only_and_hardened(self):
+        unit = (ROOT / "packaging/debian/lib/systemd/system/r8d.service").read_text()
+        self.assertIn("--bind 127.0.0.1:52808", unit)
+        self.assertIn("NoNewPrivileges=true", unit)
+        self.assertIn("CapabilityBoundingSet=", unit)
+        self.assertIn("ProtectSystem=strict", unit)
+        self.assertIn("PrivateDevices=true", unit)
+
     def test_debian_package_target_and_metadata(self):
         makefile = (ROOT / "Makefile").read_text()
         self.assertIn("package-deb:", makefile)
