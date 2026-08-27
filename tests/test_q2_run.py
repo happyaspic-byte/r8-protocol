@@ -12,6 +12,16 @@ spec.loader.exec_module(q2_run)
 
 
 class Q2RunTests(unittest.TestCase):
+    def test_retained_packages_prohibit_sensitive_keys_and_pins(self):
+        forbidden_substrings = ("client_x25519_secret", "server_x25519_secret", "cookie_key", "client_ed25519_seed", "server_ed25519_seed")
+        for results_dir in (ROOT / "bench/results").iterdir():
+            if not results_dir.is_dir():
+                continue
+            for file in results_dir.glob("*.json*"):
+                content = file.read_text()
+                for forbidden in forbidden_substrings:
+                    self.assertNotIn(forbidden, content, f"Sensitive key {forbidden} leaked in {file}")
+
     def test_repository_uses_apache_2_license(self):
         license_text = (ROOT / "LICENSE").read_text()
         self.assertIn("Apache License", license_text)
