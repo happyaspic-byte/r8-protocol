@@ -65,6 +65,16 @@ class Q2RunTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "gate-evidence"):
                     q2_run.gate(path, "b" * 64, "gate5", "e" * 64)
 
+    def test_q2_workflow_restores_package_ownership_after_failed_run(self):
+        workflow = (ROOT / ".github/workflows/q2-full.yml").read_text()
+        restore = workflow.index("Restore Q2 package ownership")
+        upload = workflow.index("Upload Q2 package")
+        self.assertLess(restore, upload)
+        ownership_step = workflow[restore:upload]
+        self.assertIn("if: always()", ownership_step)
+        self.assertIn("sudo chown -R", ownership_step)
+        self.assertIn("sudo chmod -R u+rwX", ownership_step)
+
     def test_gate_manifest_hash_goldens_match_hosted_workflow(self):
         self.assertEqual(q2_run._expected_gate4_manifest_hash(1),
                          "e61d83820cb1e2b3da44d03dd75975e2f26ffad83e202048b4367d8f48eab375")
