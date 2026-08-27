@@ -92,8 +92,8 @@ Q3 runs require a dedicated root network namespace and must not be invoked again
 | Gate 1 / M0–M1 | strict v0.2 Python/Rust wire implementation and UDP interop | ✅ durably complete locally; latest retained hosted prior-snapshot CI is `31834671629`; final candidate verification pending |
 | Gate 2 / G003 | pinned cookie-first sessions and Q3 evidence | locally complete; joined VB002 closure awaits fresh Q1 v5 evidence; canonical isolated-netns Q3 v8 evidence retained |
 | Gate 3 / M3 / Q1 | signed proof-gated mobility and equal-notice Q1 | implementation/source/contract CLEAR; first publication-eligible Q1 v5 evidence retained from privileged run `31913402239` at `d62cd80` (`bench/results/q1-closed-lab-v5-run-31913402239`) |
-| Gates 4–5 / M4–M5 | native forwarding and authenticated REDUNDANT | implemented and locally verified; privileged Gate 4/5 evidence pending (hosted runs currently blocked by account Actions billing) |
-| Gate 6 / Q2 | paired native two-path measurement | v5 frozen with zero observations; forbidden until Gate 4/5 evidence clears |
+| Gates 4–5 / M4–M5 | native forwarding and authenticated REDUNDANT | ✅ implemented and hosted-verified: Gate 4/5 evidence retained from privileged Native full run `32681972079` (`bench/results/native-full-run-32681972079`), verified at HEAD on run `32708159800` |
+| Gate 6 / Q2 | paired native two-path measurement | v5 frozen; hosted execution unblocked after Gate 4/5; initial runs `32682123225` and `32708371312` executed measurement, pacing sleep and failure-artifact ownership fixes committed, full publication-eligible package pending |
 
 ### Q3 closed-lab result
 
