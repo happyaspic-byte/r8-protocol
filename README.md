@@ -62,6 +62,16 @@ sudo dpkg -i dist/r8-protocol_0.1.0_amd64.deb
 r8ping --address 8:1::2 --peer 8:1::1=127.0.0.1:52808 --count 1 8:1::1
 ```
 
+### Legacy UDP compatibility gateway
+
+`r8gateway` bridges an unchanged loopback UDP application into bounded R8 DGRAM packets. Public underlays are rejected; private/link-local underlays require `--allow-isolated-underlay`.
+
+```bash
+r8gateway --legacy-bind 127.0.0.1:9000 --legacy-peer 127.0.0.1:9001 \
+  --r8-bind 127.0.0.1:52809 --r8-peer 127.0.0.1:52808 \
+  --local-loc 8:1::10 --peer-loc 8:2::20 --sport 12000 --dport 13000
+```
+
 ### Containerized loopback
 
 A multi-stage rootless Docker container is provided for isolated evaluation:
