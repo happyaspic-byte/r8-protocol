@@ -30,6 +30,14 @@ class Q2RunTests(unittest.TestCase):
         self.assertIn('license = "Apache-2.0"', workspace)
         self.assertNotIn('license = "UNLICENSED"', workspace)
 
+    def test_debian_package_target_and_metadata(self):
+        makefile = (ROOT / "Makefile").read_text()
+        self.assertIn("package-deb:", makefile)
+        control = (ROOT / "packaging/debian/DEBIAN/control").read_text()
+        self.assertIn("Package: r8-protocol", control)
+        self.assertIn("Architecture: amd64", control)
+        self.assertIn("License: Apache-2.0", control)
+
     def test_dockerfile_and_compose_present(self):
         dockerfile = (ROOT / "Dockerfile").read_text()
         self.assertIn("FROM rust:", dockerfile)

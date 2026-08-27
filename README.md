@@ -54,6 +54,14 @@ Linux, Python 3, `iproute2`, and `sudo` are required. The command creates three 
 make demo
 ```
 
+### Installable Debian package
+
+```bash
+make package-deb
+sudo dpkg -i dist/r8-protocol_0.1.0_amd64.deb
+r8ping --address 8:1::2 --peer 8:1::1=127.0.0.1:52808 --count 1 8:1::1
+```
+
 ### Containerized loopback
 
 A multi-stage rootless Docker container is provided for isolated evaluation:

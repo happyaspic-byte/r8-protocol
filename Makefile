@@ -1,4 +1,4 @@
-.PHONY: all test check build demo teardown clean compare-smoke
+.PHONY: all test check build demo teardown clean compare-smoke package-deb
 
 PYTHON ?= python3
 
@@ -22,6 +22,17 @@ test:
 	$(PYTHON) tests/fuzz_redundant.py
 	$(PYTHON) tests/fuzz_redundant_state.py
 	cd rust && cargo test --workspace --all-targets --locked
+
+package-deb:
+	cd rust && cargo build --release --locked -p r8d --bin r8d -p r8ping --bin r8ping
+	rm -rf .tmp-deb
+	mkdir -p .tmp-deb/DEBIAN .tmp-deb/usr/bin .tmp-deb/usr/share/doc/r8-protocol dist
+	cp packaging/debian/DEBIAN/control .tmp-deb/DEBIAN/control
+	cp rust/target/release/r8d rust/target/release/r8ping .tmp-deb/usr/bin/
+	cp LICENSE .tmp-deb/usr/share/doc/r8-protocol/copyright
+	chmod 755 .tmp-deb/usr/bin/r8d .tmp-deb/usr/bin/r8ping
+	dpkg-deb --root-owner-group --build .tmp-deb dist/r8-protocol_0.1.0_amd64.deb
+	rm -rf .tmp-deb
 
 compare-smoke:
 	$(PYTHON) -c 'import pathlib, shutil; from bench.compare import run, validate; out=pathlib.Path(".tmp-compare-smoke"); shutil.rmtree(out, ignore_errors=True); assert run.run_package(out, smoke=True)==0; assert validate.validate_package(out)==[]; shutil.rmtree(out)'

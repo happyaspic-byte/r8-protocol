@@ -1,0 +1,11 @@
+Package: r8-protocol
+Version: 0.1.0
+Section: net
+Priority: optional
+Architecture: amd64
+Maintainer: Roobicom Closed-Lab <noreply@roobicom.invalid>
+Depends: libc6 (>= 2.36)
+License: Apache-2.0
+Description: Isolated-lab R8 UDP daemon and echo client
+ Provides r8d and r8ping for closed-lab loopback and authorized isolated
+ underlay experiments. Not an Internet standard.

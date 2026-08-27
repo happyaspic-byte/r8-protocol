@@ -8,3 +8,5 @@ __pycache__/
 # local experiment output (share curated results only)
 results/local/
 .gjc/
+.tmp-deb*/
+dist/
