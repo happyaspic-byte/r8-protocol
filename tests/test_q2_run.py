@@ -122,6 +122,13 @@ class Q2RunTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "gate-evidence"):
                     q2_run.gate(path, "b" * 64, "gate5", "e" * 64)
 
+    def test_ci_has_hosted_product_smoke_job(self):
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+        self.assertIn("product-smoke:", workflow)
+        self.assertIn("make package-deb", workflow)
+        self.assertIn("python3 examples/loopback_client.py", workflow)
+        self.assertIn("python3 -m unittest tests/test_gateway.py", workflow)
+
     def test_q2_workflow_restores_package_ownership_after_failed_run(self):
         workflow = (ROOT / ".github/workflows/q2-full.yml").read_text()
         restore = workflow.index("Restore Q2 package ownership")

@@ -134,6 +134,32 @@ jobs:
         run: python3 tests/session_interop.py --build
       - name: Python and Rust mobility interoperability
         run: python3 tests/mobility_interop.py
+  product-smoke:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+      - name: Build installable package
+        run: make package-deb
+      - name: Verify package contents
+        run: |
+          dpkg-deb --info dist/r8-protocol_0.1.0_amd64.deb
+          dpkg-deb --contents dist/r8-protocol_0.1.0_amd64.deb | grep -F './usr/bin/r8gateway'
+          dpkg-deb --contents dist/r8-protocol_0.1.0_amd64.deb | grep -F './usr/lib/r8-protocol/r8sdk.py'
+      - name: Run SDK examples
+        run: |
+          python3 examples/encode_dgram.py
+          python3 examples/decode_dgram.py
+          python3 examples/loopback_client.py
+      - name: Run gateway and package tests
+        run: |
+          python3 -m unittest tests/test_gateway.py
+          python3 -m unittest tests/test_sdk.py
+          python3 -c 'from bench import q2; assert q2.verify_contract()==[]'
+
   native-smoke:
     runs-on: ubuntu-26.04
     timeout-minutes: 15
