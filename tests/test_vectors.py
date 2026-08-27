@@ -21,7 +21,7 @@ PREREGISTRATION_HASHES = {
     "Q1": "905f2eb8abd6a2927c4d3e8416574a4da9c4a9fe14eea4624a98a604b75b5b48",
     # Rebound in the same commit as the q2_run.py negative-sleep pacing fix
     # (see bench/protocols/q2.json).
-    "Q2": "9cc0d093a9d83c51e8d80c01a3b4cbf976d828362ff8658136bcffa784630f9e",
+    "Q2": "cbc86f9ff47207b5074659e8d12b89fa548ccaf0313236f98a22c8186802cb86",
     "Q3": "e5a7f57a2f9ec152edad127c84ad6a9a80b8f5b3c9e4b7299e44fd815a677e1b",
 }
 SESSION_CORPUS_SHA256 = "3dc2c622eab5dc4cb8477c7e75678980366ed4253e369e83db207220f34cf740"

@@ -125,7 +125,9 @@ class Q2RunTests(unittest.TestCase):
     def test_ci_has_hosted_product_smoke_job(self):
         workflow = (ROOT / ".github/workflows/ci.yml").read_text()
         self.assertIn("product-smoke:", workflow)
-        self.assertIn("make package-deb", workflow)
+        product_job = workflow[workflow.index("product-smoke:"):workflow.index("native-smoke:")]
+        self.assertIn("pip install --requirement requirements-dev.txt", product_job)
+        self.assertIn("make package-deb", product_job)
         self.assertIn("python3 examples/loopback_client.py", workflow)
         self.assertIn("python3 -m unittest tests/test_gateway.py", workflow)
 
