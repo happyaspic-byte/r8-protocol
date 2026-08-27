@@ -46,6 +46,16 @@ Linux, Python 3, `iproute2`, and `sudo` are required. The command creates three 
 make demo
 ```
 
+### Containerized loopback
+
+A multi-stage rootless Docker container is provided for isolated evaluation:
+
+```bash
+docker compose up -d
+docker compose exec r8d /usr/local/bin/r8ping --address 8:1::2 --peer 8:1::1=127.0.0.1:52808 --count 4 8:1::1
+docker compose down
+```
+
 ## v0.2 closed-lab verification commands
 
 `spec/0004-wire-format-v0.2.md` is the sole active wire contract. Python and Rust services default to loopback. Non-loopback use requires explicit isolated-lab authorization and an applicable binding budget; public, third-party, and non-isolated networks are forbidden. Telemetry must remain redacted and must not expose sensitive identifiers.

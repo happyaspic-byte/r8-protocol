@@ -20,6 +20,14 @@ class Q2RunTests(unittest.TestCase):
         self.assertIn('license = "Apache-2.0"', workspace)
         self.assertNotIn('license = "UNLICENSED"', workspace)
 
+    def test_dockerfile_and_compose_present(self):
+        dockerfile = (ROOT / "Dockerfile").read_text()
+        self.assertIn("FROM rust:", dockerfile)
+        self.assertIn("r8d", dockerfile)
+        self.assertIn("r8ping", dockerfile)
+        compose = (ROOT / "docker-compose.yml").read_text()
+        self.assertIn("services:", compose)
+
     def test_makefile_provides_demo_and_test_targets(self):
         makefile = (ROOT / "Makefile").read_text()
         self.assertIn("demo:", makefile)
