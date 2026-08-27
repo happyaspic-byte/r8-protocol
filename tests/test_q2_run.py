@@ -20,6 +20,14 @@ class Q2RunTests(unittest.TestCase):
         self.assertIn('license = "Apache-2.0"', workspace)
         self.assertNotIn('license = "UNLICENSED"', workspace)
 
+    def test_makefile_provides_demo_and_test_targets(self):
+        makefile = (ROOT / "Makefile").read_text()
+        self.assertIn("demo:", makefile)
+        self.assertIn("test:", makefile)
+        self.assertIn("check:", makefile)
+        self.assertIn("netns-topo.sh", makefile)
+        self.assertIn("teardown", makefile)
+
     def test_type7(self):
         self.assertEqual(q2_run.type7([0, 10], .5), 5)
         self.assertEqual(q2_run.type7([], .95), None)

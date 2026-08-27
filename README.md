@@ -38,6 +38,14 @@ tools/
   wireshark/r8.lua    Wireshark dissector (udp/52808, ethertype 0x88B5)
 ```
 
+## 15-minute isolated demo
+
+Linux, Python 3, `iproute2`, and `sudo` are required. The command creates three temporary network namespaces, runs R8 ping and DGRAM traffic through the isolated router, and tears every namespace down on success or failure.
+
+```bash
+make demo
+```
+
 ## v0.2 closed-lab verification commands
 
 `spec/0004-wire-format-v0.2.md` is the sole active wire contract. Python and Rust services default to loopback. Non-loopback use requires explicit isolated-lab authorization and an applicable binding budget; public, third-party, and non-isolated networks are forbidden. Telemetry must remain redacted and must not expose sensitive identifiers.
