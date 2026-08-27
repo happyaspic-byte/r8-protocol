@@ -38,6 +38,14 @@ tools/
   wireshark/r8.lua    Wireshark dissector (udp/52808, ethertype 0x88B5)
 ```
 
+## Isolated comparison series (P1)
+
+A new closed-lab comparison series lives in `bench/compare/` and does **not** modify frozen Q1, Q2, or Q3 contracts. It compares R8 session mobility against QUIC connection migration, and R8 Profile-3 redundant delivery against Linux MPTCP failover. Missing QUIC/MPTCP prerequisites fail closed and never fabricate success.
+
+```bash
+make compare-smoke
+```
+
 ## 15-minute isolated demo
 
 Linux, Python 3, `iproute2`, and `sudo` are required. The command creates three temporary network namespaces, runs R8 ping and DGRAM traffic through the isolated router, and tears every namespace down on success or failure.

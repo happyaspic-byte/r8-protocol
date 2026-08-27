@@ -38,6 +38,10 @@ class Q2RunTests(unittest.TestCase):
         compose = (ROOT / "docker-compose.yml").read_text()
         self.assertIn("services:", compose)
 
+    def test_makefile_provides_compare_smoke_target(self):
+        makefile = (ROOT / "Makefile").read_text()
+        self.assertIn("compare-smoke:", makefile)
+
     def test_makefile_provides_demo_and_test_targets(self):
         makefile = (ROOT / "Makefile").read_text()
         self.assertIn("demo:", makefile)

@@ -1,4 +1,4 @@
-.PHONY: all test check build demo teardown clean
+.PHONY: all test check build demo teardown clean compare-smoke
 
 PYTHON ?= python3
 
@@ -22,6 +22,9 @@ test:
 	$(PYTHON) tests/fuzz_redundant.py
 	$(PYTHON) tests/fuzz_redundant_state.py
 	cd rust && cargo test --workspace --all-targets --locked
+
+compare-smoke:
+	$(PYTHON) -c 'import pathlib, shutil; from bench.compare import run, validate; out=pathlib.Path(".tmp-compare-smoke"); shutil.rmtree(out, ignore_errors=True); assert run.run_package(out, smoke=True)==0; assert validate.validate_package(out)==[]; shutil.rmtree(out)'
 
 demo:
 	@echo "=== R8 15-minute isolated netns demonstration ==="
