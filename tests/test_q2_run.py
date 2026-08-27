@@ -22,6 +22,17 @@ class Q2RunTests(unittest.TestCase):
                 for forbidden in forbidden_substrings:
                     self.assertNotIn(forbidden, content, f"Sensitive key {forbidden} leaked in {file}")
 
+    def test_operations_runbook_covers_rollout_rollback_and_incidents(self):
+        runbook = (ROOT / "docs/operations-runbook.md").read_text()
+        for heading in (
+            "## Preconditions", "## Deployment", "## Observability",
+            "## Rollback", "## Capacity limits", "## Incident response",
+        ):
+            self.assertIn(heading, runbook)
+        self.assertIn("public and third-party networks are prohibited", runbook.lower())
+        self.assertIn("make demo", runbook)
+        self.assertIn("make compare-smoke", runbook)
+
     def test_repository_uses_apache_2_license(self):
         license_text = (ROOT / "LICENSE").read_text()
         self.assertIn("Apache License", license_text)
