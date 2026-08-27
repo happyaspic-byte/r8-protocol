@@ -12,6 +12,14 @@ spec.loader.exec_module(q2_run)
 
 
 class Q2RunTests(unittest.TestCase):
+    def test_repository_uses_apache_2_license(self):
+        license_text = (ROOT / "LICENSE").read_text()
+        self.assertIn("Apache License", license_text)
+        self.assertIn("Version 2.0, January 2004", license_text)
+        workspace = (ROOT / "rust/Cargo.toml").read_text()
+        self.assertIn('license = "Apache-2.0"', workspace)
+        self.assertNotIn('license = "UNLICENSED"', workspace)
+
     def test_type7(self):
         self.assertEqual(q2_run.type7([0, 10], .5), 5)
         self.assertEqual(q2_run.type7([], .95), None)
