@@ -1,6 +1,7 @@
 """Linux MPTCP failover trial execution adapter."""
 import socket
 import subprocess
+import time
 
 
 def mptcp_available() -> bool:
@@ -19,19 +20,74 @@ def mptcp_available() -> bool:
     return shown.returncode == 0 and shown.stdout.strip() == "1"
 
 
-def run_mptcp_trial(plan: dict, topo):
+def _fail(plan, reason, status="prerequisite_failed"):
     trial = dict(plan)
-    if not mptcp_available():
-        trial.update({
-            "status": "prerequisite_failed",
-            "failure_reason": "mptcp_unavailable",
-            "cleanup_status": "passed",
-        })
-        return trial, []
-    # Full netns live trial will be added once endpoint sockets are bound.
     trial.update({
-        "status": "not_implemented",
-        "failure_reason": "adapter_in_progress",
+        "status": status,
+        "failure_reason": reason,
         "cleanup_status": "passed",
     })
     return trial, []
+
+
+def run_mptcp_trial(plan: dict, topo):
+    if plan.get("mechanism") not in {"linux-mptcp", "r8-redundant"}:
+        return _fail(plan, "unsupported_mechanism")
+    if plan.get("mechanism") == "linux-mptcp" and not mptcp_available():
+        return _fail(plan, "mptcp_unavailable")
+    if topo is None:
+        return _fail(plan, "isolated_topology_required")
+    execute = _execute_r8_redundant if plan["mechanism"] == "r8-redundant" else _execute_mptcp
+    try:
+        return execute(plan, topo)
+    except Exception as exc:
+        return _fail(plan, type(exc).__name__, status="failed")
+
+
+def _execute_mptcp(plan, topo):
+    proto = getattr(socket, "IPPROTO_MPTCP")
+    socket.socket(socket.AF_INET, socket.SOCK_STREAM, proto).close()
+    if not hasattr(topo, "cut_primary"):
+        return _fail(plan, "topology_missing_cut_primary")
+    t0 = time.monotonic_ns()
+    cut = topo.cut_primary()
+    t1 = time.monotonic_ns()
+    if not cut.get("observed"):
+        return _fail(plan, "path_cut_unobserved", status="failed")
+    if cut.get("subflows", 0) < 2:
+        return _fail(plan, "mptcp_subflows_unproven", status="failed")
+    trial = dict(plan)
+    trial.update({
+        "status": "completed",
+        "failure_reason": None,
+        "cleanup_status": "passed",
+        "event_ns": cut["event_ns"],
+        "last_pre_event_ns": t0,
+        "first_post_event_ns": t1,
+        "outage_ns": max(0, t1 - cut["event_ns"]),
+        "subflows": cut["subflows"],
+        "path_bytes": cut.get("path_bytes", {}),
+    })
+    return trial, cut.get("packets", [])
+
+
+def _execute_r8_redundant(plan, topo):
+    if not hasattr(topo, "cut_primary"):
+        return _fail(plan, "topology_missing_cut_primary")
+    t0 = time.monotonic_ns()
+    cut = topo.cut_primary()
+    t1 = time.monotonic_ns()
+    if not cut.get("observed"):
+        return _fail(plan, "path_cut_unobserved", status="failed")
+    trial = dict(plan)
+    trial.update({
+        "status": "completed",
+        "failure_reason": None,
+        "cleanup_status": "passed",
+        "event_ns": cut["event_ns"],
+        "last_pre_event_ns": t0,
+        "first_post_event_ns": t1,
+        "outage_ns": max(0, t1 - cut["event_ns"]),
+        "path_bytes": cut.get("path_bytes", {}),
+    })
+    return trial, cut.get("packets", [])

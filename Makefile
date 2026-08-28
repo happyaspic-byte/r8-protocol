@@ -1,4 +1,4 @@
-.PHONY: all test check build demo teardown clean compare-smoke package-deb
+.PHONY: all test check build demo teardown clean compare-smoke package-deb repro-bundle
 
 PYTHON ?= python3
 
@@ -9,6 +9,8 @@ build:
 
 check:
 	$(PYTHON) -c 'from bench import q2; assert q2.verify_contract()==[], "q2 contract drift"'
+	test -z "$$(gofmt -l .)"
+	go vet ./...
 	cd rust && cargo fmt --all --check
 	cd rust && cargo clippy --workspace --all-targets --locked -- -D warnings
 
@@ -21,6 +23,7 @@ test:
 	$(PYTHON) tests/fuzz_mobility.py
 	$(PYTHON) tests/fuzz_redundant.py
 	$(PYTHON) tests/fuzz_redundant_state.py
+	go test ./...
 	cd rust && cargo test --workspace --all-targets --locked
 
 package-deb:
@@ -39,6 +42,9 @@ package-deb:
 
 compare-smoke:
 	$(PYTHON) -c 'import pathlib, shutil; from bench.compare import run, validate; out=pathlib.Path(".tmp-compare-smoke"); shutil.rmtree(out, ignore_errors=True); assert run.run_package(out, smoke=True)==0; assert validate.validate_package(out)==[]; shutil.rmtree(out)'
+
+repro-bundle:
+	$(PYTHON) bench/repro.py --output .tmp-repro.json
 
 demo:
 	@echo "=== R8 15-minute isolated netns demonstration ==="

@@ -19,3 +19,9 @@ class TestCompareNetns(unittest.TestCase):
             netns.CompareTopology(seed=-1)
         with self.assertRaisesRegex(ValueError, "seed"):
             netns.CompareTopology(seed=1_000_000)
+
+    def test_cut_primary_does_not_fabricate_observations(self):
+        topo = netns.CompareTopology(seed=1)
+        cut = topo.cut_primary()
+        self.assertFalse(cut["observed"])
+        self.assertEqual(cut["packets"], [])

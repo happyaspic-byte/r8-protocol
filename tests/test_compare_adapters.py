@@ -1,45 +1,60 @@
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
-from bench.compare import mptcp_runner, quic_runner
+
+from bench.compare import lisp_runner, mptcp_runner, quic_runner, run, validate
 
 
-class TestCompareAdapters(unittest.TestCase):
-    def setUp(self):
-        self.quic_plan = {
-            "trial_id": "t-quic", "comparison": "mobility", "seed": 0,
-            "mechanism": "quic-migration", "warmup": True, "block": 0,
-            "execution_ordinal": 0,
+class ObservedTopology:
+    def cut_primary(self):
+        return {
+            "observed": True,
+            "event_ns": 1,
+            "control_bytes": 8,
+            "subflows": 2,
+            "path_bytes": {"primary": 64, "secondary": 64},
+            "packets": [],
         }
-        self.mptcp_plan = {
-            "trial_id": "t-mptcp", "comparison": "redundancy", "seed": 0,
-            "mechanism": "linux-mptcp", "warmup": True, "block": 0,
-            "execution_ordinal": 0,
-        }
 
-    def test_adapters_expose_uniform_trial_contract(self):
-        self.assertTrue(callable(quic_runner.run_quic_trial))
-        self.assertTrue(callable(mptcp_runner.run_mptcp_trial))
 
-    def test_quic_adapter_fails_closed_without_aioquic(self):
-        with mock.patch.object(quic_runner, "aioquic_available", return_value=False):
-            trial, packets = quic_runner.run_quic_trial(self.quic_plan, None)
-        self.assertEqual(trial["status"], "prerequisite_failed")
-        self.assertEqual(trial["failure_reason"], "aioquic_unavailable")
-        self.assertEqual(packets, [])
-
-    def test_mptcp_adapter_fails_closed_without_kernel_support(self):
-        with mock.patch.object(mptcp_runner, "mptcp_available", return_value=False):
-            trial, packets = mptcp_runner.run_mptcp_trial(self.mptcp_plan, None)
-        self.assertEqual(trial["status"], "prerequisite_failed")
-        self.assertEqual(trial["failure_reason"], "mptcp_unavailable")
-        self.assertEqual(packets, [])
-
-    def test_adapters_never_emit_synthetic_success(self):
+class TestComparisonAdapters(unittest.TestCase):
+    def test_adapters_require_isolated_topology(self):
         with mock.patch.object(quic_runner, "aioquic_available", return_value=True):
-            trial, packets = quic_runner.run_quic_trial(self.quic_plan, None)
-        self.assertEqual(trial["status"], "not_implemented")
-        self.assertEqual(packets, [])
+            trial, _ = quic_runner.run_quic_trial({"mechanism": "quic-migration"}, None)
+        self.assertEqual(trial["status"], "prerequisite_failed")
+        self.assertEqual(trial["failure_reason"], "isolated_topology_required")
+
         with mock.patch.object(mptcp_runner, "mptcp_available", return_value=True):
-            trial, packets = mptcp_runner.run_mptcp_trial(self.mptcp_plan, None)
-        self.assertEqual(trial["status"], "not_implemented")
-        self.assertEqual(packets, [])
+            trial, _ = mptcp_runner.run_mptcp_trial({"mechanism": "linux-mptcp"}, None)
+        self.assertEqual(trial["status"], "prerequisite_failed")
+        self.assertEqual(trial["failure_reason"], "isolated_topology_required")
+
+    def test_mptcp_requires_two_observed_subflows(self):
+        topo = ObservedTopology()
+        with mock.patch.object(mptcp_runner, "mptcp_available", return_value=True), mock.patch.object(
+            mptcp_runner.socket, "socket"
+        ):
+            trial, _ = mptcp_runner.run_mptcp_trial({"mechanism": "linux-mptcp"}, topo)
+        self.assertEqual(trial["status"], "completed")
+        self.assertEqual(trial["subflows"], 2)
+
+    def test_lisp_preflight_fails_closed(self):
+        with mock.patch.object(lisp_runner, "_which", return_value=None):
+            trial, _ = lisp_runner.run_lisp_trial({"mechanism": "lisp-xtr"})
+        self.assertEqual(trial["status"], "prerequisite_failed")
+        self.assertEqual(trial["failure_reason"], "oor_unavailable")
+
+    def test_lisp_config_uses_only_closed_lab_mapping(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = lisp_runner.write_local_config(Path(tmp))
+            text = path.read_text()
+        self.assertIn("10.8.0.1", text)
+        self.assertNotIn("0.0.0.0", text)
+
+    def test_unprivileged_smoke_is_never_publication_eligible(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp)
+            self.assertEqual(run.run_package(output, smoke=True), 0)
+            self.assertEqual(validate.validate_package(output), [])
+            self.assertEqual((output / "publication_eligible.json").read_text(), "false\n")

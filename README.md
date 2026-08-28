@@ -26,6 +26,7 @@ reference/r8ref.py    strict v0.2 Python UDP implementation
 reference/r8session.py  pinned cookie-first session reference
 reference/r8mobility.py  signed mobility reference
 reference/r8move.py    mobility loopback driver
+wire/                 standard-library-only independent Go strict v0.2 wire package
 rust/                 strict v0.2 Rust workspace
   crates/r8-proto       wire-format library + shared-corpus tests
   crates/r8-session     pinned cookie-first session library
@@ -113,6 +114,11 @@ python3 tests/fuzz_redundant_state.py
 
 # Mandatory dissector coverage; requires tshark and fails rather than skipping when unavailable
 R8_REQUIRE_TSHARK=1 python3 -m unittest discover -s tests -p 'test_dissector.py'
+
+# Independent Go strict wire package
+test -z "$(gofmt -l .)"
+go vet ./...
+go test ./...
 
 # Locked full Rust workspace verification, including session, mobility, native, and redundant
 (cd rust && cargo fmt --all --check)

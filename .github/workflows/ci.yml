@@ -85,6 +85,22 @@ jobs:
       - name: Parser fuzz smoke
         run: python3 tests/fuzz_reference.py
 
+  go:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00
+        with:
+          go-version: "1.24.x"
+          cache: false
+      - name: Go formatting
+        run: test -z "$(gofmt -l .)"
+      - name: Go lint
+        run: go vet ./...
+      - name: Go tests
+        run: go test ./...
+
   rust:
     runs-on: ubuntu-26.04
     timeout-minutes: 15

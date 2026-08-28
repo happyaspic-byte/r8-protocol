@@ -8,8 +8,9 @@ R8 is an experimental protocol for isolated laboratories. Public and third-party
 2. Confirm no namespace interface has a default route, global address, bridge, bond, or attachment to public/third-party networks.
 3. Record the git commit, source identity, host epoch, kernel, MTU, and topology.
 4. Run `make check`, `make test`, and `make demo` before promotion.
-5. Run `make compare-smoke`; `publication_eligible=false` is expected until live QUIC/MPTCP adapters are complete.
-6. For Native/Gate evidence, use the exact-head Q1 → Native → Q2 workflow chain.
+5. Run `make compare-smoke`. Unprivileged smoke remains `publication_eligible=false` until a privileged isolated-netns package with observed path cuts succeeds.
+6. Run `python3 bench/repro.py --output repro.json`. `independent_reproducer` stays false unless a third party supplies identity and evidence; project CI cannot self-claim independence.
+7. For Native/Gate evidence, use the exact-head Q1 → Native → Q2 workflow chain.
 
 ## Deployment
 

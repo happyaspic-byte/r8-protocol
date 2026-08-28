@@ -5,6 +5,7 @@ import json
 MECHANISMS = (
     "r8-mobility",
     "quic-migration",
+    "lisp-xtr",
     "r8-redundant",
     "linux-mptcp",
 )
@@ -25,14 +26,14 @@ def sha256_hex(data):
 def plan_rows():
     ordinal = 0
     for comparison in ("mobility", "redundancy"):
-        pair = (
-            ("r8-mobility", "quic-migration")
+        mechanisms = (
+            ("r8-mobility", "quic-migration", "lisp-xtr")
             if comparison == "mobility"
             else ("r8-redundant", "linux-mptcp")
         )
         for seed in range(WARMUPS_PER_CELL + MEASURED_PER_CELL):
             warmup = seed < WARMUPS_PER_CELL
-            for mechanism in pair:
+            for mechanism in mechanisms:
                 trial_id = sha256_hex(f"{comparison}:{seed}:{mechanism}")
                 yield {
                     "trial_id": trial_id,
@@ -48,8 +49,8 @@ def plan_rows():
 
 def validate_plan_invariants(rows):
     errors = []
-    if len(rows) != 440:
-        errors.append(f"expected 440 rows, got {len(rows)}")
+    if len(rows) != 550:
+        errors.append(f"expected 550 rows, got {len(rows)}")
     seen_ids = set()
     ordinals = set()
     for row in rows:
