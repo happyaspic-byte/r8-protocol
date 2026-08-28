@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Q2 v5 root-only native two-path measurement; no simulation or fallback."""
 import argparse
+import gc
 import hashlib
 import ipaddress
 import json
@@ -740,6 +741,14 @@ def _mark_error(error_code, code):
             error_code.value = code
 
 
+def isolate_measurement_runtime():
+    gc.disable()
+    try:
+        os.setpriority(os.PRIO_PROCESS, 0, -10)
+    except (OSError, AttributeError):
+        pass
+
+
 def _send_worker(plan, state, mapping, sockets, origin, send_times, error_code,
                  queue_high_water, queue_overflow):
     physical = {0: "source-A", 1: "source-B"}
@@ -836,6 +845,7 @@ def _trial_endpoint_process(plan, sockets, started, supervisor_deadline, ready, 
         if not gate.wait(max(0, (supervisor_deadline - raw_ns()) / 1_000_000_000)):
             _mark_error(error_code, 2)
             return
+        isolate_measurement_runtime()
         child_before = _process_cpu_ns(os.getpid())
         origin = origin.value
         sender = threading.Thread(

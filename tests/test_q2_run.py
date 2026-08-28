@@ -176,6 +176,17 @@ class Q2RunTests(unittest.TestCase):
         self.assertIn("endpoint.kill()", source)
         self.assertIn("endpoint.close()", source)
 
+    def test_measurement_child_isolates_runtime_before_send_receive(self):
+        source = inspect.getsource(q2_run._trial_endpoint_process)
+        gate = source.index("gate.wait")
+        isolate = source.index("isolate_measurement_runtime()")
+        sender = source.index("threading.Thread")
+        self.assertLess(gate, isolate)
+        self.assertLess(isolate, sender)
+        helper = inspect.getsource(q2_run.isolate_measurement_runtime)
+        self.assertIn("gc.disable()", helper)
+        self.assertIn("os.setpriority", helper)
+
     def test_admission_drain_and_cpu_baseline_ordering(self):
         source = inspect.getsource(q2_run.execute_trial)
         child_start = source.index("endpoint.start()")
