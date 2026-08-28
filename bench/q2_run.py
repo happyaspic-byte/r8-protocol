@@ -770,7 +770,8 @@ def _send_worker(plan, state, mapping, sockets, origin, send_times, error_code,
                     queue_high_water.value = max(queue_high_water.value, queue["queued_packets"])
                 with queue_overflow.get_lock():
                     queue_overflow.value = max(queue_overflow.value, queue["overflow_packets"])
-            stamp = None
+            stamp = raw_ns() - origin
+            send_times[index] = stamp
             sent_slots = 0
             for slot, packet in enumerate(outbound.packets):
                 if packet is None:
@@ -781,9 +782,6 @@ def _send_worker(plan, state, mapping, sockets, origin, send_times, error_code,
                 if sent != len(frame):
                     fail("binding-mismatch")
                 state.confirm(slot, packet)
-                if stamp is None:
-                    stamp = raw_ns() - origin
-                    send_times[index] = stamp
                 sent_slots += 1
             if not sent_slots:
                 fail("binding-mismatch")

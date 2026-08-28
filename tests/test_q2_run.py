@@ -187,6 +187,12 @@ class Q2RunTests(unittest.TestCase):
         self.assertIn("gc.disable()", helper)
         self.assertIn("os.setpriority", helper)
 
+    def test_send_timestamp_precedes_socket_send(self):
+        source = inspect.getsource(q2_run._send_worker)
+        stamp = source.index("raw_ns() - origin")
+        send = source.index("sockets[physical[path]].send(frame)")
+        self.assertLess(stamp, send)
+
     def test_admission_drain_and_cpu_baseline_ordering(self):
         source = inspect.getsource(q2_run.execute_trial)
         child_start = source.index("endpoint.start()")
