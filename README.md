@@ -152,9 +152,9 @@ Q3 runs require a dedicated root network namespace and must not be invoked again
 | Gate 0 | provenance / wire-change / budget / machine-contract baseline | ✅ durably checkpointed |
 | Gate 1 / M0–M1 | strict v0.2 Python/Rust wire implementation and UDP interop | ✅ durably complete locally; latest retained hosted prior-snapshot CI is `31834671629`; final candidate verification pending |
 | Gate 2 / G003 | pinned cookie-first sessions and Q3 evidence | locally complete; joined VB002 closure awaits fresh Q1 v5 evidence; canonical isolated-netns Q3 v8 evidence retained |
-| Gate 3 / M3 / Q1 | signed proof-gated mobility and equal-notice Q1 | implementation/source/contract CLEAR; first publication-eligible Q1 v5 evidence retained from privileged run `31913402239` at `d62cd80` (`bench/results/q1-closed-lab-v5-run-31913402239`) |
-| Gates 4–5 / M4–M5 | native forwarding and authenticated REDUNDANT | ✅ implemented and hosted-verified: Gate 4/5 evidence retained from privileged Native full run `32681972079` (`bench/results/native-full-run-32681972079`), verified at HEAD on run `32708159800` |
-| Gate 6 / Q2 | paired native two-path measurement | v5 frozen; hosted execution unblocked after Gate 4/5; initial runs `32682123225` and `32708371312` executed measurement, pacing sleep and failure-artifact ownership fixes committed, full publication-eligible package pending |
+| Gate 3 / M3 / Q1 | signed proof-gated mobility and equal-notice Q1 | implementation/source/contract CLEAR; first publication-eligible Q1 v5 evidence retained from privileged run `31913402239` at `d62cd80` (`bench/results/q1-closed-lab-v5-run-31913402239`); exact-HEAD Q1 v5 at `9749ecf` is run `33235536672` (`q1-full-33235536672`, `sha256:007d5b71aaba203c57f8375fc9dc9ea01cc1fd57813c128348f428555e4398fc`) |
+| Gates 4–5 / M4–M5 | native forwarding and authenticated REDUNDANT | ✅ implemented and hosted-verified at exact HEAD `9749ecf` on Native full `33247562223` (`native-full-diagnostics` `sha256:fb62c473fa799224b4ed309c26ef222629c0c48faba90867c22dd593b99f8c5a`); retained historical package remains run `32681972079` (`bench/results/native-full-run-32681972079`) |
+| Gate 6 / Q2 | paired native two-path measurement | v5 frozen; publication-eligible package from exact-HEAD run `33247668452` at `9749ecf` (`q2-full-33247668452`, `sha256:5d7d7f0c94810988478ed821a485572a9e8395d482c3ef8d94367fe389f31ded`; 1,980/1,980 trials, 792,000 packets, epoch `closed-lab-epoch-20260829102216`). Closed-lab-only evidence. |
 
 ### Q3 closed-lab result
 
