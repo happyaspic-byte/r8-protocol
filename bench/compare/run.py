@@ -18,31 +18,25 @@ def run_package(output_dir: Path, smoke: bool = False, privileged: bool = False)
     output_dir.mkdir(parents=True, exist_ok=True)
     plans = [row for row in model.plan_rows() if not smoke or row["seed"] == 0]
     trials, packets = [], []
-    topologies = {}
-    try:
-        for plan in plans:
-            topo = None
-            if privileged:
-                topo = topologies.get(plan["seed"])
-                if topo is None:
-                    topo = CompareTopology(plan["seed"])
-                    try:
-                        topo.setup()
-                    except Exception:
-                        topo.cleanup()
-                        raise
-                    topologies[plan["seed"]] = topo
+    for plan in plans:
+        topo = None
+        if privileged:
+            topo = CompareTopology(plan["seed"])
+            try:
+                topo.setup()
+            except Exception:
+                topo.cleanup()
+                raise
+        try:
             trial, trial_packets = _dispatch(plan, topo)
-            trials.append(trial)
-            packets.extend(trial_packets)
-    finally:
-        for seed, topo in sorted(topologies.items(), reverse=True):
-            if not topo.cleanup():
-                for trial in trials:
-                    if trial.get("seed") == seed:
-                        trial["cleanup_status"] = "failed"
-                        trial["status"] = "failed"
-                        trial["failure_reason"] = "namespace_cleanup_failed"
+        finally:
+            cleanup_ok = topo is None or topo.cleanup()
+        if not cleanup_ok:
+            trial["cleanup_status"] = "failed"
+            trial["status"] = "failed"
+            trial["failure_reason"] = "namespace_cleanup_failed"
+        trials.append(trial)
+        packets.extend(trial_packets)
 
     trial_path = output_dir / "trial.jsonl"
     packet_path = output_dir / "packet.jsonl"

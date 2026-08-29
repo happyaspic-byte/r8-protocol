@@ -154,20 +154,24 @@ class TestCompareNetns(unittest.TestCase):
         topo = netns.CompareTopology(seed=1)
         topo._ready = True
 
+        samples = [
+            [
+                {"ifname": "v-ca", "stats64": {"tx": {"bytes": 100}, "rx": {"bytes": 40}}},
+                {"ifname": "v-cb", "stats64": {"tx": {"bytes": 200}, "rx": {"bytes": 20}}},
+            ],
+            [
+                {"ifname": "v-ca", "stats64": {"tx": {"bytes": 128}, "rx": {"bytes": 64}}},
+                {"ifname": "v-cb", "stats64": {"tx": {"bytes": 256}, "rx": {"bytes": 32}}},
+            ],
+        ]
+        calls = []
+
         def fake_run(cmd, **kwargs):
+            calls.append(tuple(cmd))
             if cmd[:6] == ("ip", "netns", "exec", "r8cmp-1-cli", "ip", "link") and "down" in cmd:
                 return mock.Mock(returncode=0, stdout="", stderr="")
             if "-j" in cmd and "-s" in cmd and "link" in cmd:
-                payload = [
-                    {
-                        "ifname": "v-ca",
-                        "stats64": {"tx": {"bytes": 128}, "rx": {"bytes": 64}},
-                    },
-                    {
-                        "ifname": "v-cb",
-                        "stats64": {"tx": {"bytes": 256}, "rx": {"bytes": 32}},
-                    },
-                ]
+                payload = samples.pop(0)
                 return mock.Mock(returncode=0, stdout=json.dumps(payload), stderr="")
             if "ss" in cmd:
                 return mock.Mock(returncode=0, stdout="Netid State Recv-Q Send-Q\n[0:0] tcp-mptcp 0 0\n[1:0] tcp-mptcp 0 0\n", stderr="")
@@ -175,8 +179,14 @@ class TestCompareNetns(unittest.TestCase):
 
         with mock.patch.object(netns.subprocess, "run", side_effect=fake_run):
             cut = topo.cut_primary()
+        downs = [i for i, cmd in enumerate(calls) if cmd[:6] == ("ip", "netns", "exec", "r8cmp-1-cli", "ip", "link") and "down" in cmd]
+        stats = [i for i, cmd in enumerate(calls) if "-j" in cmd and "-s" in cmd and "link" in cmd]
+        self.assertEqual(len(stats), 2)
+        self.assertEqual(len(downs), 1)
+        self.assertLess(stats[0], downs[0])
+        self.assertLess(downs[0], stats[1])
         self.assertTrue(cut["observed"])
         self.assertEqual(cut["subflows"], 2)
-        self.assertEqual(cut["path_bytes"]["primary"], 192)
-        self.assertEqual(cut["path_bytes"]["secondary"], 288)
+        self.assertEqual(cut["path_bytes"]["primary"], 52)
+        self.assertEqual(cut["path_bytes"]["secondary"], 68)
         self.assertEqual(cut["packets"], [])

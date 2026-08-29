@@ -86,3 +86,58 @@ class TestComparePackage(unittest.TestCase):
             (out / "manifest.json").write_text(model.canonical_json(manifest) + "\n")
             errors = validate.validate_package(out)
             self.assertTrue(any("transfer" in error for error in errors))
+
+    def test_privileged_smoke_uses_fresh_topology_for_each_trial(self):
+        instances = []
+
+        class Topology:
+            def __init__(self, seed):
+                self.seed = seed
+                self.setup_calls = 0
+                self.cleanup_calls = 0
+                instances.append(self)
+
+            def setup(self):
+                self.setup_calls += 1
+
+            def cleanup(self):
+                self.cleanup_calls += 1
+                return True
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            out = pathlib.Path(temp_dir) / "pkg"
+            with mock.patch.object(run, "CompareTopology", Topology), \
+                 mock.patch.object(run, "_dispatch", return_value=({"status": "failed"}, [])):
+                run.run_package(out, smoke=True, privileged=True)
+
+        self.assertEqual(len(instances), 5)
+        self.assertTrue(all(item.setup_calls == 1 for item in instances))
+        self.assertTrue(all(item.cleanup_calls == 1 for item in instances))
+
+    def test_cleanup_failure_marks_only_its_trial(self):
+        instances = []
+
+        class Topology:
+            def __init__(self, seed):
+                self.cleanup_calls = 0
+                instances.append(self)
+
+            def setup(self):
+                pass
+
+            def cleanup(self):
+                self.cleanup_calls += 1
+                return len(instances) != 2
+
+        def dispatch(plan, topology):
+            return ({**plan, "status": "failed", "cleanup_status": "passed", "failure_reason": "transfer_unproven"}, [])
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            out = pathlib.Path(temp_dir) / "pkg"
+            with mock.patch.object(run, "CompareTopology", Topology), mock.patch.object(run, "_dispatch", side_effect=dispatch):
+                run.run_package(out, smoke=True, privileged=True)
+            trials = [json.loads(line) for line in (out / "trial.jsonl").read_text().splitlines()]
+
+        failed_cleanup = [trial for trial in trials if trial["failure_reason"] == "namespace_cleanup_failed"]
+        self.assertEqual(len(failed_cleanup), 1)
+        self.assertEqual(failed_cleanup[0]["execution_ordinal"], 1)

@@ -38,6 +38,18 @@ class CompareTopology:
             raise RuntimeError(f"ip failed: {cmd} -> {res.stderr.strip()}")
         return res.stdout
 
+    def _path_bytes(self):
+        values = {}
+        for iface in json.loads(self._ip("-j", "-s", "link", netns=self.client_ns)):
+            stats64 = iface.get("stats64") or {}
+            tx = (stats64.get("tx") or {}).get("bytes") or 0
+            rx = (stats64.get("rx") or {}).get("bytes") or 0
+            if iface.get("ifname") == "v-ca":
+                values["primary"] = tx + rx
+            elif iface.get("ifname") == "v-cb":
+                values["secondary"] = tx + rx
+        return values
+
     def _sysctl_in_ns(self, netns, setting):
         res = subprocess.run(
             ["ip", "netns", "exec", netns, "sysctl", "-w", setting],
@@ -139,10 +151,13 @@ class CompareTopology:
                 "packets": [],
             }
         try:
+            before = self._path_bytes()
             self._ip("link", "set", "v-ca", "down", netns=self.client_ns)
+            after = self._path_bytes()
             observed = True
         except Exception:
             observed = False
+            before = after = {}
         if not observed:
             return {
                 "observed": False,
@@ -152,18 +167,11 @@ class CompareTopology:
                 "path_bytes": {},
                 "packets": [],
             }
-        path_bytes = {}
-        try:
-            for iface in json.loads(self._ip("-j", "-s", "link", netns=self.client_ns)):
-                stats64 = iface.get("stats64") or {}
-                tx = (stats64.get("tx") or {}).get("bytes") or 0
-                rx = (stats64.get("rx") or {}).get("bytes") or 0
-                if iface.get("ifname") == "v-ca":
-                    path_bytes["primary"] = tx + rx
-                elif iface.get("ifname") == "v-cb":
-                    path_bytes["secondary"] = tx + rx
-        except Exception:
-            path_bytes = {}
+        path_bytes = {
+            key: max(0, after.get(key, 0) - before.get(key, 0))
+            for key in ("primary", "secondary")
+            if key in after or key in before
+        }
         subflows = 0
         try:
             shown = subprocess.run(
