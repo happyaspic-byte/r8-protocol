@@ -15,6 +15,16 @@ class SdkTests(unittest.TestCase):
         reverse = r8sdk.DgramCodec("8:2::20", "8:1::10", 13000, 12000)
         self.assertEqual(reverse.decode(packet), b"hello")
 
+    def test_default_udp_budget_matches_r8d(self):
+        codec = r8sdk.DgramCodec("8:1::10", "8:2::20", 12000, 13000)
+        self.assertEqual(codec.binding_budget, 1252)
+        with self.assertRaisesRegex(r8sdk.r8ref.WireError, "BINDING_BUDGET"):
+            codec.encode(b"x" * 1197)
+        override = r8sdk.DgramCodec(
+            "8:1::10", "8:2::20", 12000, 13000, binding_budget=1280
+        )
+        self.assertEqual(len(override.encode(b"x" * 1197)), 1253)
+
     def test_udp_client_sends_encoded_packet(self):
         receiver = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         receiver.bind(("127.0.0.1", 0))

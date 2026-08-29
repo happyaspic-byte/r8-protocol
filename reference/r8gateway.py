@@ -15,7 +15,7 @@ class GatewayConfig:
     peer_loc: str
     sport: int
     dport: int
-    binding_budget: int = 1280
+    binding_budget: int = 1252
 
     def __post_init__(self):
         ipaddress.IPv6Address(self.local_loc)
@@ -124,7 +124,7 @@ def main(argv=None):
     parser.add_argument("--peer-loc", required=True)
     parser.add_argument("--sport", type=int, required=True)
     parser.add_argument("--dport", type=int, required=True)
-    parser.add_argument("--binding-budget", type=int, default=1280)
+    parser.add_argument("--binding-budget", type=int, default=1252)
     parser.add_argument("--allow-isolated-underlay", action="store_true")
     bridge(parser.parse_args(argv))
     return 0

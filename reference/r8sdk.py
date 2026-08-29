@@ -6,7 +6,7 @@ import r8ref
 
 
 class DgramCodec:
-    def __init__(self, local_loc, peer_loc, sport, dport, binding_budget=1280):
+    def __init__(self, local_loc, peer_loc, sport, dport, binding_budget=1252):
         self.local_loc = ipaddress.IPv6Address(local_loc)
         self.peer_loc = ipaddress.IPv6Address(peer_loc)
         if not 1 <= sport <= 65535 or not 1 <= dport <= 65535:
@@ -36,7 +36,7 @@ class DgramCodec:
 
 
 class UdpClient:
-    def __init__(self, local_loc, peer_loc, peer_endpoint, sport, dport, binding_budget=1280):
+    def __init__(self, local_loc, peer_loc, peer_endpoint, sport, dport, binding_budget=1252):
         host, port = peer_endpoint
         address = ipaddress.ip_address(host)
         if not address.is_loopback:

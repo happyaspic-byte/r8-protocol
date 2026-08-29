@@ -21,6 +21,14 @@ class GatewayTests(unittest.TestCase):
         sport, dport, payload = gateway.decapsulate(receiver, packet)
         self.assertEqual((sport, dport, payload), (12000, 13000, b"legacy-app-data"))
 
+    def test_default_udp_budget_matches_r8d(self):
+        config = gateway.GatewayConfig(
+            local_loc="8:1::10", peer_loc="8:2::20", sport=12000, dport=13000
+        )
+        self.assertEqual(config.binding_budget, 1252)
+        with self.assertRaisesRegex(ValueError, "payload budget"):
+            gateway.encapsulate(config, b"x" * 1197)
+
     def test_payload_budget_is_enforced(self):
         config = gateway.GatewayConfig(
             local_loc="8:1::10", peer_loc="8:2::20", sport=12000, dport=13000,
