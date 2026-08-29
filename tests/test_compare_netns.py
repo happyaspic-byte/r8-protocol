@@ -99,6 +99,41 @@ class TestCompareNetns(unittest.TestCase):
             calls,
         )
         self.assertTrue(any("mptcp" in c and "limits" in c for c in calls))
+        for ns, ifaces in (
+            ("r8cmp-3-cli", ("v-ca", "v-cb")),
+            ("r8cmp-3-srv", ("v-sa", "v-sb")),
+            ("r8cmp-3-ra", ("v-ac", "v-as")),
+            ("r8cmp-3-rb", ("v-bc", "v-bs")),
+        ):
+            for scope in ("all", "default") + ifaces:
+                self.assertIn(
+                    ("ip", "netns", "exec", ns, "sysctl", "-w", f"net.ipv4.conf.{scope}.rp_filter=0"),
+                    calls,
+                )
+
+    def test_setup_continues_when_mptcp_commands_fail(self):
+        from unittest import mock
+
+        topo = netns.CompareTopology(seed=4)
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(tuple(cmd))
+            if "mptcp" in cmd:
+                return mock.Mock(returncode=1, stdout="", stderr="Operation not supported")
+            return mock.Mock(returncode=0, stdout="", stderr="")
+
+        with mock.patch.object(netns.subprocess, "run", side_effect=fake_run):
+            result = topo.setup()
+        self.assertTrue(topo._ready)
+        self.assertEqual(result["seed"], 4)
+        self.assertIn(
+            ("ip", "netns", "exec", "r8cmp-4-cli", "ip", "route", "add", "10.8.2.0/24", "via", "10.8.1.1", "dev", "v-ca"),
+            calls,
+        )
+        self.assertTrue(any("mptcp" in c for c in calls))
+        with mock.patch.object(netns.subprocess, "run", side_effect=fake_run):
+            self.assertTrue(topo.cleanup())
 
     def test_cut_primary_reports_observed_state_not_hardcoded_zeros(self):
         import json

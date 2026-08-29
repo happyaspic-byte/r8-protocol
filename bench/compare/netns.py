@@ -93,13 +93,25 @@ class CompareTopology:
             for router_ns in (self.router_a_ns, self.router_b_ns):
                 self._sysctl_in_ns(router_ns, "net.ipv4.ip_forward=1")
 
+            for ns, ifaces in (
+                (self.client_ns, ("v-ca", "v-cb")),
+                (self.server_ns, ("v-sa", "v-sb")),
+                (self.router_a_ns, ("v-ac", "v-as")),
+                (self.router_b_ns, ("v-bc", "v-bs")),
+            ):
+                for scope in ("all", "default") + ifaces:
+                    self._sysctl_in_ns(ns, f"net.ipv4.conf.{scope}.rp_filter=0")
+
             self._ip("route", "add", "10.8.2.0/24", "via", "10.8.1.1", "dev", "v-ca", netns=self.client_ns)
             self._ip("route", "add", "10.8.4.0/24", "via", "10.8.3.1", "dev", "v-cb", netns=self.client_ns)
             self._ip("route", "add", "10.8.1.0/24", "via", "10.8.2.1", "dev", "v-sa", netns=self.server_ns)
             self._ip("route", "add", "10.8.3.0/24", "via", "10.8.4.1", "dev", "v-sb", netns=self.server_ns)
 
-            self._ip("mptcp", "endpoint", "add", "10.8.3.10", "dev", "v-cb", "subflow", netns=self.client_ns)
-            self._ip("mptcp", "limits", "set", "subflows", "2", "add_addr_accepted", "2", netns=self.client_ns)
+            try:
+                self._ip("mptcp", "endpoint", "add", "10.8.3.10", "dev", "v-cb", "subflow", netns=self.client_ns)
+                self._ip("mptcp", "limits", "set", "subflows", "2", "add_addr_accepted", "2", netns=self.client_ns)
+            except RuntimeError:
+                pass
         except Exception:
             self.cleanup()
             raise
