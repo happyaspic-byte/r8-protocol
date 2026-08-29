@@ -38,6 +38,16 @@ class CompareTopology:
             raise RuntimeError(f"ip failed: {cmd} -> {res.stderr.strip()}")
         return res.stdout
 
+    def _sysctl_in_ns(self, netns, setting):
+        res = subprocess.run(
+            ["ip", "netns", "exec", netns, "sysctl", "-w", setting],
+            capture_output=True,
+            text=True,
+        )
+        if res.returncode != 0:
+            raise RuntimeError(f"sysctl failed: {netns} {setting} -> {res.stderr.strip()}")
+        return res.stdout
+
     def setup(self):
         self.temp_dir = tempfile.mkdtemp(prefix=f"{self.prefix}-")
         try:
@@ -79,6 +89,17 @@ class CompareTopology:
                 self._ip("link", "set", dev, "up", netns=self.router_b_ns)
             for dev in ("v-sa", "v-sb"):
                 self._ip("link", "set", dev, "up", netns=self.server_ns)
+
+            for router_ns in (self.router_a_ns, self.router_b_ns):
+                self._sysctl_in_ns(router_ns, "net.ipv4.ip_forward=1")
+
+            self._ip("route", "add", "10.8.2.0/24", "via", "10.8.1.1", "dev", "v-ca", netns=self.client_ns)
+            self._ip("route", "add", "10.8.4.0/24", "via", "10.8.3.1", "dev", "v-cb", netns=self.client_ns)
+            self._ip("route", "add", "10.8.1.0/24", "via", "10.8.2.1", "dev", "v-sa", netns=self.server_ns)
+            self._ip("route", "add", "10.8.3.0/24", "via", "10.8.4.1", "dev", "v-sb", netns=self.server_ns)
+
+            self._ip("mptcp", "endpoint", "add", "10.8.3.10", "dev", "v-cb", "subflow", netns=self.client_ns)
+            self._ip("mptcp", "limits", "set", "subflows", "2", "add_addr_accepted", "2", netns=self.client_ns)
         except Exception:
             self.cleanup()
             raise
@@ -106,12 +127,44 @@ class CompareTopology:
             observed = True
         except Exception:
             observed = False
+        if not observed:
+            return {
+                "observed": False,
+                "event_ns": event_ns,
+                "control_bytes": 0,
+                "subflows": 0,
+                "path_bytes": {},
+                "packets": [],
+            }
+        path_bytes = {}
+        try:
+            for iface in json.loads(self._ip("-j", "-s", "link", netns=self.client_ns)):
+                stats64 = iface.get("stats64") or {}
+                tx = (stats64.get("tx") or {}).get("bytes") or 0
+                rx = (stats64.get("rx") or {}).get("bytes") or 0
+                if iface.get("ifname") == "v-ca":
+                    path_bytes["primary"] = tx + rx
+                elif iface.get("ifname") == "v-cb":
+                    path_bytes["secondary"] = tx + rx
+        except Exception:
+            path_bytes = {}
+        subflows = 0
+        try:
+            shown = subprocess.run(
+                ["ip", "netns", "exec", self.client_ns, "ss", "-Mn"],
+                capture_output=True,
+                text=True,
+            )
+            if shown.returncode == 0:
+                subflows = sum(1 for line in shown.stdout.splitlines() if "tcp-mptcp" in line)
+        except Exception:
+            subflows = 0
         return {
-            "observed": observed,
+            "observed": True,
             "event_ns": event_ns,
             "control_bytes": 0,
-            "subflows": 0,
-            "path_bytes": {},
+            "subflows": subflows,
+            "path_bytes": path_bytes,
             "packets": [],
         }
 
