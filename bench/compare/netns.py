@@ -108,8 +108,12 @@ class CompareTopology:
             self._ip("route", "add", "10.8.3.0/24", "via", "10.8.4.1", "dev", "v-sb", netns=self.server_ns)
 
             try:
+                self._sysctl_in_ns(self.client_ns, "net.mptcp.enabled=1")
+                self._sysctl_in_ns(self.server_ns, "net.mptcp.enabled=1")
                 self._ip("mptcp", "endpoint", "add", "10.8.3.10", "dev", "v-cb", "subflow", netns=self.client_ns)
                 self._ip("mptcp", "limits", "set", "subflows", "2", "add_addr_accepted", "2", netns=self.client_ns)
+                self._ip("mptcp", "endpoint", "add", "10.8.4.20", "dev", "v-sb", "subflow", netns=self.server_ns)
+                self._ip("mptcp", "limits", "set", "subflows", "2", "add_addr_accepted", "2", netns=self.server_ns)
             except RuntimeError:
                 pass
         except Exception:

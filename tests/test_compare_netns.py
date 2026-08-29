@@ -95,7 +95,19 @@ class TestCompareNetns(unittest.TestCase):
             calls,
         )
         self.assertIn(
+            ("ip", "netns", "exec", "r8cmp-3-cli", "sysctl", "-w", "net.mptcp.enabled=1"),
+            calls,
+        )
+        self.assertIn(
+            ("ip", "netns", "exec", "r8cmp-3-srv", "sysctl", "-w", "net.mptcp.enabled=1"),
+            calls,
+        )
+        self.assertIn(
             ("ip", "netns", "exec", "r8cmp-3-cli", "ip", "mptcp", "endpoint", "add", "10.8.3.10", "dev", "v-cb", "subflow"),
+            calls,
+        )
+        self.assertIn(
+            ("ip", "netns", "exec", "r8cmp-3-srv", "ip", "mptcp", "endpoint", "add", "10.8.4.20", "dev", "v-sb", "subflow"),
             calls,
         )
         self.assertTrue(any("mptcp" in c and "limits" in c for c in calls))
