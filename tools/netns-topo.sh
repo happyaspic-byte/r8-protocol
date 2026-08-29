@@ -44,15 +44,15 @@ cmd_setup() {
 
 cmd_demo() {
     echo "[demo] listener on r8-b (LOC 8:2::20)"
-    sudo ip netns exec r8-b python3 "$R8REF" listen --address 8:2::20 --bind 0.0.0.0 &
+    sudo ip netns exec r8-b python3 "$R8REF" listen --address 8:2::20 --bind 10.8.2.20 --allow-isolated-underlay &
     LPID=$!
     sleep 1
     echo "[demo] ping from r8-a (LOC 8:1::10) across the router"
     sudo ip netns exec r8-a python3 "$R8REF" ping \
-        --address 8:1::10 --peer 8:2::20=10.8.2.20:52808 --count 4 8:2::20
+        --address 8:1::10 --bind 10.8.1.10 --peer 8:2::20=10.8.2.20:52808 --allow-isolated-underlay --count 4 8:2::20
     echo "[demo] dgram from r8-a"
     sudo ip netns exec r8-a python3 "$R8REF" send \
-        --address 8:1::10 --peer 8:2::20=10.8.2.20:52808 8:2::20 "hello over r8"
+        --address 8:1::10 --bind 10.8.1.10 --peer 8:2::20=10.8.2.20:52808 --allow-isolated-underlay 8:2::20 "hello over r8"
     sleep 1
     sudo kill "$LPID" 2>/dev/null || true
 }

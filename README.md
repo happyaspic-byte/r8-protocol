@@ -26,6 +26,7 @@ reference/r8ref.py    strict v0.2 Python UDP implementation
 reference/r8session.py  pinned cookie-first session reference
 reference/r8mobility.py  signed mobility reference
 reference/r8move.py    mobility loopback driver
+wire/                 standard-library-only independent Go strict v0.2 wire package
 rust/                 strict v0.2 Rust workspace
   crates/r8-proto       wire-format library + shared-corpus tests
   crates/r8-session     pinned cookie-first session library
@@ -36,6 +37,61 @@ rust/                 strict v0.2 Rust workspace
 tools/
   netns-topo.sh       closed-lab network-namespace topology (setup|demo|teardown)
   wireshark/r8.lua    Wireshark dissector (udp/52808, ethertype 0x88B5)
+```
+
+## Isolated comparison series (P1)
+
+A closed-lab comparison scaffold lives in `bench/compare/` and does **not** modify frozen Q1, Q2, or Q3 contracts. It preregisters R8/QUIC/LISP mobility and R8/Linux-MPTCP redundancy cells. Current adapters fail closed with `publication_eligible=false`; they do not claim protocol-transfer results or independent provenance.
+
+```bash
+make compare-smoke
+```
+
+## 15-minute isolated demo
+
+Linux, Python 3, `iproute2`, and `sudo` are required. The command creates three temporary network namespaces, runs R8 ping and DGRAM traffic through the isolated router, and tears every namespace down on success or failure.
+
+```bash
+make demo
+```
+
+### Installable Debian package
+
+```bash
+make package-deb
+sudo dpkg -i dist/r8-protocol_0.1.0_amd64.deb
+sudo systemctl enable --now r8d.service
+r8ping --address 8:1::2 --peer 8:1::1=127.0.0.1:52808 --count 1 8:1::1
+```
+
+### Python developer SDK
+
+`reference/r8sdk.py` exposes `DgramCodec` and a loopback-safe `UdpClient`. Three executable examples cover encoding, decoding, and a full loopback send:
+
+```bash
+python3 examples/encode_dgram.py
+python3 examples/decode_dgram.py
+python3 examples/loopback_client.py
+```
+
+### Legacy UDP compatibility gateway
+
+`r8gateway` bridges an unchanged loopback UDP application into bounded R8 DGRAM packets. Public underlays are rejected; private/link-local underlays require `--allow-isolated-underlay`.
+
+```bash
+r8gateway --legacy-bind 127.0.0.1:9000 --legacy-peer 127.0.0.1:9001 \
+  --r8-bind 127.0.0.1:52809 --r8-peer 127.0.0.1:52808 \
+  --local-loc 8:1::10 --peer-loc 8:2::20 --sport 12000 --dport 13000
+```
+
+### Containerized loopback
+
+A multi-stage rootless Docker container is provided for isolated evaluation:
+
+```bash
+docker compose up -d
+docker compose exec r8d /usr/local/bin/r8ping --address 8:1::2 --peer 8:1::1=127.0.0.1:52808 --count 4 8:1::1
+docker compose down
 ```
 
 ## v0.2 closed-lab verification commands
@@ -58,6 +114,11 @@ python3 tests/fuzz_redundant_state.py
 
 # Mandatory dissector coverage; requires tshark and fails rather than skipping when unavailable
 R8_REQUIRE_TSHARK=1 python3 -m unittest discover -s tests -p 'test_dissector.py'
+
+# Independent Go strict wire package
+test -z "$(gofmt -l .)"
+go vet ./...
+go test ./...
 
 # Locked full Rust workspace verification, including session, mobility, native, and redundant
 (cd rust && cargo fmt --all --check)
@@ -91,9 +152,9 @@ Q3 runs require a dedicated root network namespace and must not be invoked again
 | Gate 0 | provenance / wire-change / budget / machine-contract baseline | ✅ durably checkpointed |
 | Gate 1 / M0–M1 | strict v0.2 Python/Rust wire implementation and UDP interop | ✅ durably complete locally; latest retained hosted prior-snapshot CI is `31834671629`; final candidate verification pending |
 | Gate 2 / G003 | pinned cookie-first sessions and Q3 evidence | locally complete; joined VB002 closure awaits fresh Q1 v5 evidence; canonical isolated-netns Q3 v8 evidence retained |
-| Gate 3 / M3 / Q1 | signed proof-gated mobility and equal-notice Q1 | implementation/source/contract CLEAR; first publication-eligible Q1 v5 evidence retained from privileged run `31913402239` at `d62cd80` (`bench/results/q1-closed-lab-v5-run-31913402239`) |
-| Gates 4–5 / M4–M5 | native forwarding and authenticated REDUNDANT | implemented and locally verified; privileged Gate 4/5 evidence pending (hosted runs currently blocked by account Actions billing) |
-| Gate 6 / Q2 | paired native two-path measurement | v5 frozen with zero observations; forbidden until Gate 4/5 evidence clears |
+| Gate 3 / M3 / Q1 | signed proof-gated mobility and equal-notice Q1 | implementation/source/contract CLEAR; first publication-eligible Q1 v5 evidence retained from privileged run `31913402239` at `d62cd80` (`bench/results/q1-closed-lab-v5-run-31913402239`); exact-HEAD Q1 v5 at `9749ecf` is run `33235536672` (`q1-full-33235536672`, `sha256:007d5b71aaba203c57f8375fc9dc9ea01cc1fd57813c128348f428555e4398fc`) |
+| Gates 4–5 / M4–M5 | native forwarding and authenticated REDUNDANT | ✅ implemented and hosted-verified at exact HEAD `9749ecf` on Native full `33247562223` (`native-full-diagnostics` `sha256:fb62c473fa799224b4ed309c26ef222629c0c48faba90867c22dd593b99f8c5a`); retained historical package remains run `32681972079` (`bench/results/native-full-run-32681972079`) |
+| Gate 6 / Q2 | paired native two-path measurement | v5 frozen; publication-eligible package from exact-HEAD run `33247668452` at `9749ecf` (`q2-full-33247668452`, `sha256:5d7d7f0c94810988478ed821a485572a9e8395d482c3ef8d94367fe389f31ded`; 1,980/1,980 trials, 792,000 packets, epoch `closed-lab-epoch-20260829102216`). Closed-lab-only evidence. |
 
 ### Q3 closed-lab result
 

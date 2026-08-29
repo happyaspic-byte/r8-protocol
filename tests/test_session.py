@@ -305,6 +305,56 @@ class SessionVectors(unittest.TestCase):
   self.assertNotIn(x["scid"],machine.established)
   for attribute in ("auth_packet","cached_ack","c2s","s2c","prk","hash"):
    with self.assertRaises(AttributeError): getattr(record,attribute)
+
+ def test_cookie_generation_never_performs_x25519_or_signature(self):
+  i=V["identities"]; x=V["context"]
+  server=s.Identity.from_seed(bytes.fromhex(i["server_ed25519_seed_hex"]))
+  client=s.Identity.from_seed(bytes.fromhex(i["client_ed25519_seed_hex"]))
+  source=s.ipaddress.IPv6Address("11:2233:4455:6677:8899:aabb:ccdd:eeff")
+  destination=s.ipaddress.IPv6Address("ffee:ddcc:bbaa:9988:7766:5544:3322:1100")
+  config=s.ServerConfig(server,s.PeerPin(1,client.eid,client.public),x["service_context"],x["server_context_id"],0,destination,source,1280,2,1)
+  now=[0]; clock=lambda:now[0]
+  machine=s.ServerMachine(config,bytes.fromhex(x["server_boot_instance_hex"]),bytes.fromhex(x["cookie_key_hex"]),None,0,clock,s.PrevalidationLimiter(clock,b"\xa0"*32))
+  peer=s.ClientMachine(client,s.PeerPin(2,server.eid,server.public),x["service_context"],0,source,destination,clock)
+  opening=peer.start(x["scid"],bytes.fromhex(i["client_x25519_secret_hex"]),bytes.fromhex(x["client_nonce_hex"]),_authority=s._HANDSHAKE_MATERIAL_AUTHORITY)
+  binding=s.UdpBinding.from_endpoint("192.0.2.10",52808,1,b"\x90"*16)
+
+  with mock.patch("r8session.x25519") as mocked_x25519, \
+       mock.patch("r8session.sign_open_ack") as mocked_sign_ack, \
+       mock.patch("r8session.sign_open_auth") as mocked_sign_auth, \
+       mock.patch("r8session.verify_signature") as mocked_verify:
+   verify_response = machine.receive_open_packet(opening, binding, x["cookie_bucket"])
+   mocked_x25519.assert_not_called()
+   mocked_sign_ack.assert_not_called()
+   mocked_sign_auth.assert_not_called()
+   mocked_verify.assert_not_called()
+   self.assertIsNotNone(verify_response)
+
+ def test_concurrent_session_encrypt_reserves_strictly_monotonic_counters(self):
+  key=b"\x42"*32
+  session=s.Session(key, send_counter=1)
+  header=b"h"*48
+  prefix=b"\6\1\0\0"
+  counters=[]
+  lock=threading.Lock()
+
+  def worker(count):
+   local=[]
+   for _ in range(count):
+    cnt, _ = session.encrypt(header, prefix, b"hello")
+    local.append(cnt)
+   with lock:
+    counters.extend(local)
+
+  threads=[threading.Thread(target=worker, args=(100,)) for _ in range(10)]
+  for t in threads: t.start()
+  for t in threads: t.join()
+
+  self.assertEqual(len(counters), 1000)
+  self.assertEqual(len(set(counters)), 1000)
+  self.assertEqual(sorted(counters), list(range(1, 1001)))
+  self.assertEqual(session.send_counter, 1001)
+
  def test_binding_cookie_and_prevalidation_limiter(self):
   x=V["context"]; i=V["identities"]
   binding=s.UdpBinding.from_endpoint("192.0.2.10",52808,1,b"\x90"*16)

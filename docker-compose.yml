@@ -1,0 +1,11 @@
+services:
+  r8d:
+    build: .
+    image: r8-protocol:local
+    command: ["--address", "8:1::1", "--bind", "127.0.0.1:52808"]
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/r8ping", "--address", "8:1::2", "--peer", "8:1::1=127.0.0.1:52808", "--count", "1", "8:1::1"]
+      interval: 2s
+      timeout: 2s
+      retries: 5
+      start_period: 1s

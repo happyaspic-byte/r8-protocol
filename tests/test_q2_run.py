@@ -12,6 +12,71 @@ spec.loader.exec_module(q2_run)
 
 
 class Q2RunTests(unittest.TestCase):
+    def test_retained_packages_prohibit_sensitive_keys_and_pins(self):
+        forbidden_substrings = ("client_x25519_secret", "server_x25519_secret", "cookie_key", "client_ed25519_seed", "server_ed25519_seed")
+        for results_dir in (ROOT / "bench/results").iterdir():
+            if not results_dir.is_dir():
+                continue
+            for file in results_dir.glob("*.json*"):
+                content = file.read_text()
+                for forbidden in forbidden_substrings:
+                    self.assertNotIn(forbidden, content, f"Sensitive key {forbidden} leaked in {file}")
+
+    def test_operations_runbook_covers_rollout_rollback_and_incidents(self):
+        runbook = (ROOT / "docs/operations-runbook.md").read_text()
+        for heading in (
+            "## Preconditions", "## Deployment", "## Observability",
+            "## Rollback", "## Capacity limits", "## Incident response",
+        ):
+            self.assertIn(heading, runbook)
+        self.assertIn("public and third-party networks are prohibited", runbook.lower())
+        self.assertIn("make demo", runbook)
+        self.assertIn("make compare-smoke", runbook)
+
+    def test_repository_uses_apache_2_license(self):
+        license_text = (ROOT / "LICENSE").read_text()
+        self.assertIn("Apache License", license_text)
+        self.assertIn("Version 2.0, January 2004", license_text)
+        workspace = (ROOT / "rust/Cargo.toml").read_text()
+        self.assertIn('license = "Apache-2.0"', workspace)
+        self.assertNotIn('license = "UNLICENSED"', workspace)
+
+    def test_systemd_unit_is_loopback_only_and_hardened(self):
+        unit = (ROOT / "packaging/debian/lib/systemd/system/r8d.service").read_text()
+        self.assertIn("--bind 127.0.0.1:52808", unit)
+        self.assertIn("NoNewPrivileges=true", unit)
+        self.assertIn("CapabilityBoundingSet=", unit)
+        self.assertIn("ProtectSystem=strict", unit)
+        self.assertIn("PrivateDevices=true", unit)
+
+    def test_debian_package_target_and_metadata(self):
+        makefile = (ROOT / "Makefile").read_text()
+        self.assertIn("package-deb:", makefile)
+        control = (ROOT / "packaging/debian/DEBIAN/control").read_text()
+        self.assertIn("Package: r8-protocol", control)
+        self.assertIn("Architecture: amd64", control)
+        self.assertIn("License: Apache-2.0", control)
+
+    def test_dockerfile_and_compose_present(self):
+        dockerfile = (ROOT / "Dockerfile").read_text()
+        self.assertIn("FROM rust:", dockerfile)
+        self.assertIn("r8d", dockerfile)
+        self.assertIn("r8ping", dockerfile)
+        compose = (ROOT / "docker-compose.yml").read_text()
+        self.assertIn("services:", compose)
+
+    def test_makefile_provides_compare_smoke_target(self):
+        makefile = (ROOT / "Makefile").read_text()
+        self.assertIn("compare-smoke:", makefile)
+
+    def test_makefile_provides_demo_and_test_targets(self):
+        makefile = (ROOT / "Makefile").read_text()
+        self.assertIn("demo:", makefile)
+        self.assertIn("test:", makefile)
+        self.assertIn("check:", makefile)
+        self.assertIn("netns-topo.sh", makefile)
+        self.assertIn("teardown", makefile)
+
     def test_type7(self):
         self.assertEqual(q2_run.type7([0, 10], .5), 5)
         self.assertEqual(q2_run.type7([], .95), None)
@@ -65,6 +130,25 @@ class Q2RunTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "gate-evidence"):
                     q2_run.gate(path, "b" * 64, "gate5", "e" * 64)
 
+    def test_ci_has_hosted_product_smoke_job(self):
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+        self.assertIn("product-smoke:", workflow)
+        product_job = workflow[workflow.index("product-smoke:"):workflow.index("native-smoke:")]
+        self.assertIn("pip install --requirement requirements-dev.txt", product_job)
+        self.assertIn("make package-deb", product_job)
+        self.assertIn("python3 examples/loopback_client.py", workflow)
+        self.assertIn("python3 -m unittest tests/test_gateway.py", workflow)
+
+    def test_q2_workflow_restores_package_ownership_after_failed_run(self):
+        workflow = (ROOT / ".github/workflows/q2-full.yml").read_text()
+        restore = workflow.index("Restore Q2 package ownership")
+        upload = workflow.index("Upload Q2 package")
+        self.assertLess(restore, upload)
+        ownership_step = workflow[restore:upload]
+        self.assertIn("if: always()", ownership_step)
+        self.assertIn("sudo chown -R", ownership_step)
+        self.assertIn("sudo chmod -R u+rwX", ownership_step)
+
     def test_gate_manifest_hash_goldens_match_hosted_workflow(self):
         self.assertEqual(q2_run._expected_gate4_manifest_hash(1),
                          "e61d83820cb1e2b3da44d03dd75975e2f26ffad83e202048b4367d8f48eab375")
@@ -91,6 +175,23 @@ class Q2RunTests(unittest.TestCase):
         self.assertIn("endpoint.terminate()", source)
         self.assertIn("endpoint.kill()", source)
         self.assertIn("endpoint.close()", source)
+
+    def test_measurement_child_isolates_runtime_before_send_receive(self):
+        source = inspect.getsource(q2_run._trial_endpoint_process)
+        gate = source.index("gate.wait")
+        isolate = source.index("isolate_measurement_runtime()")
+        sender = source.index("threading.Thread")
+        self.assertLess(gate, isolate)
+        self.assertLess(isolate, sender)
+        helper = inspect.getsource(q2_run.isolate_measurement_runtime)
+        self.assertIn("gc.disable()", helper)
+        self.assertIn("os.setpriority", helper)
+
+    def test_send_timestamp_precedes_socket_send(self):
+        source = inspect.getsource(q2_run._send_worker)
+        stamp = source.index("raw_ns() - origin")
+        send = source.index("sockets[physical[path]].send(frame)")
+        self.assertLess(stamp, send)
 
     def test_admission_drain_and_cpu_baseline_ordering(self):
         source = inspect.getsource(q2_run.execute_trial)

@@ -622,6 +622,39 @@ fn deterministic_client_server_cookie_handshake_reaches_authenticated_accept() {
         Err(SessionError::UnexpectedMessage)
     );
 }
+
+#[test]
+fn owned_secret_buffers_zeroize_and_redact_debug() {
+    use zeroize::Zeroize;
+    let mut secret = SecretMaterial {
+        key_id: 7,
+        bytes: [0x5a; 32],
+    };
+    assert_eq!(format!("{secret:?}"), "<SecretMaterial>");
+    secret.zeroize();
+    assert_eq!(secret.bytes, [0; 32]);
+
+    let mut client = ClientMaterial {
+        ephemeral_secret: [0x11; 32],
+        nonce: [0x22; 32],
+    };
+    assert_eq!(format!("{client:?}"), "<ClientMaterial>");
+    client.zeroize();
+    assert_eq!(client.ephemeral_secret, [0; 32]);
+    assert_eq!(client.nonce, [0; 32]);
+
+    let mut server = ServerMaterial {
+        boot_instance: [0x33; 16],
+        current_cookie_key: [0x44; 32],
+        previous_cookie_key: [0x55; 32],
+        previous_key_rotated_ms: 9,
+    };
+    assert_eq!(format!("{server:?}"), "<ServerMaterial>");
+    server.zeroize();
+    assert_eq!(server.current_cookie_key, [0; 32]);
+    assert_eq!(server.previous_cookie_key, [0; 32]);
+}
+
 #[test]
 fn prevalidation_limiter_enforces_ratio_and_source_bounds() {
     let mut limiter = PrevalidationLimiter::new();

@@ -1,0 +1,66 @@
+"""CLI package generator for the external comparison series."""
+from pathlib import Path
+
+from . import lisp_runner, model, mptcp_runner, quic_runner
+from .netns import CompareTopology
+
+
+def _dispatch(plan, topo):
+    mechanism = plan["mechanism"]
+    if mechanism in {"quic-migration", "r8-mobility"}:
+        return quic_runner.run_quic_trial(plan, topo)
+    if mechanism == "lisp-xtr":
+        return lisp_runner.run_lisp_trial(plan, topo)
+    return mptcp_runner.run_mptcp_trial(plan, topo)
+
+
+def run_package(output_dir: Path, smoke: bool = False, privileged: bool = False) -> int:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    plans = [row for row in model.plan_rows() if not smoke or row["seed"] == 0]
+    trials, packets = [], []
+    for plan in plans:
+        topo = None
+        if privileged:
+            topo = CompareTopology(plan["seed"])
+            try:
+                topo.setup()
+            except Exception:
+                topo.cleanup()
+                raise
+        try:
+            trial, trial_packets = _dispatch(plan, topo)
+        finally:
+            cleanup_ok = topo is None or topo.cleanup()
+        if not cleanup_ok:
+            trial["cleanup_status"] = "failed"
+            trial["status"] = "failed"
+            trial["failure_reason"] = "namespace_cleanup_failed"
+        trials.append(trial)
+        packets.extend(trial_packets)
+
+    trial_path = output_dir / "trial.jsonl"
+    packet_path = output_dir / "packet.jsonl"
+    trial_path.write_text("".join(model.canonical_json(row) + "\n" for row in trials))
+    packet_path.write_text("".join(model.canonical_json(row) + "\n" for row in packets))
+
+    eligible = False
+    eligible_path = output_dir / "publication_eligible.json"
+    eligible_path.write_text(model.canonical_json(eligible) + "\n")
+    files = {
+        "trial.jsonl": model.sha256_hex(trial_path.read_bytes()),
+        "packet.jsonl": model.sha256_hex(packet_path.read_bytes()),
+        "publication_eligible.json": model.sha256_hex(eligible_path.read_bytes()),
+    }
+    manifest = {
+        "series": "r8-external-comparison-v1",
+        "smoke": smoke,
+        "privileged": privileged,
+        "row_counts": {"trials": len(trials), "packets": len(packets)},
+        "files": files,
+        "limitations": [
+            "Isolated Linux network-namespace comparison only.",
+            "No Internet, public-network, or standardized IPv8 claim.",
+        ],
+    }
+    (output_dir / "manifest.json").write_text(model.canonical_json(manifest) + "\n")
+    return 0

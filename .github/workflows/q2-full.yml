@@ -61,9 +61,15 @@ jobs:
           SOURCE_ID="$("$PYTHON" bench/q2_run.py source-identity)"
           sudo -E env PATH="$PATH" GITHUB_SHA="$GITHUB_SHA" Q2_CLEAN_TREE=true "$PYTHON" bench/q2_run.py run --output "$RUNNER_TEMP/q2-full" --binary rust/target/release/r8-native --endpoint-binary rust/target/release/r8-redundant-native --gate4-one "$RUNNER_TEMP/gate4-one.json" --gate4-two "$RUNNER_TEMP/gate4-two.json" --gate5 "$RUNNER_TEMP/gate5.json" --host-epoch "$HOST_EPOCH" --source-identity "$SOURCE_ID" --git-commit "$GITHUB_SHA"
           sudo -E env PATH="$PATH" "$PYTHON" bench/q2_run.py regenerate --output "$RUNNER_TEMP/q2-full"
+      - name: Restore Q2 package ownership
+        if: always()
+        run: |
+          if [ -e "$RUNNER_TEMP/q2-full" ]; then
+            sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/q2-full"
+            sudo chmod -R u+rwX "$RUNNER_TEMP/q2-full"
+          fi
       - name: Validate package hashes and cardinalities
         run: |
-          sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/q2-full"
           python3 -c 'import sys; sys.exit(0 if sys.flags.optimize == 0 else 2)'
           python3 bench/q2.py validate --input "$RUNNER_TEMP/q2-full"
       - name: Bind final package manifest

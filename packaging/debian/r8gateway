@@ -1,0 +1,2 @@
+#!/bin/sh
+exec python3 /usr/lib/r8-protocol/r8gateway.py "$@"
