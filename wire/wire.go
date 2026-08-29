@@ -358,6 +358,9 @@ func BuildPacket(input PacketInput, bindingBudget int) ([]byte, error) {
 }
 
 func BuildCTL(header Header, typeValue, code uint8, body []byte, bindingBudget int) ([]byte, error) {
+	if len(body) > MaxPacketSize-HeaderSize-4 {
+		return nil, ErrBudget
+	}
 	header.NextHeader, header.Profile, header.Flags, header.PathSlot, header.SCID = NextHeaderCTL, 0, 0, 0, 0
 	payload := make([]byte, 4+len(body))
 	payload[0], payload[1] = typeValue, code

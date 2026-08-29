@@ -26,6 +26,7 @@ class CompareTopology:
         ]
         self.temp_dir = None
         self._ready = False
+        self._created_namespaces = []
 
     def _ip(self, *args, netns=None):
         cmd = ["ip"]
@@ -39,46 +40,48 @@ class CompareTopology:
 
     def setup(self):
         self.temp_dir = tempfile.mkdtemp(prefix=f"{self.prefix}-")
-        for ns in self.namespaces:
-            subprocess.run(["ip", "netns", "add", ns], check=True, capture_output=True)
-            self._ip("link", "set", "lo", "up", netns=ns)
+        try:
+            for ns in self.namespaces:
+                subprocess.run(["ip", "netns", "add", ns], check=True, capture_output=True)
+                self._created_namespaces.append(ns)
+                self._ip("link", "set", "lo", "up", netns=ns)
 
-        # Dual isolated paths: client <-> routerA <-> server, client <-> routerB <-> server
-        self._ip("link", "add", "v-ca", "type", "veth", "peer", "name", "v-ac")
-        self._ip("link", "add", "v-as", "type", "veth", "peer", "name", "v-sa")
-        self._ip("link", "add", "v-cb", "type", "veth", "peer", "name", "v-bc")
-        self._ip("link", "add", "v-bs", "type", "veth", "peer", "name", "v-sb")
+            self._ip("link", "add", "v-ca", "type", "veth", "peer", "name", "v-ac")
+            self._ip("link", "add", "v-as", "type", "veth", "peer", "name", "v-sa")
+            self._ip("link", "add", "v-cb", "type", "veth", "peer", "name", "v-bc")
+            self._ip("link", "add", "v-bs", "type", "veth", "peer", "name", "v-sb")
 
-        self._ip("link", "set", "v-ca", "netns", self.client_ns)
-        self._ip("link", "set", "v-ac", "netns", self.router_a_ns)
-        self._ip("link", "set", "v-as", "netns", self.router_a_ns)
-        self._ip("link", "set", "v-sa", "netns", self.server_ns)
+            self._ip("link", "set", "v-ca", "netns", self.client_ns)
+            self._ip("link", "set", "v-ac", "netns", self.router_a_ns)
+            self._ip("link", "set", "v-as", "netns", self.router_a_ns)
+            self._ip("link", "set", "v-sa", "netns", self.server_ns)
 
-        self._ip("link", "set", "v-cb", "netns", self.client_ns)
-        self._ip("link", "set", "v-bc", "netns", self.router_b_ns)
-        self._ip("link", "set", "v-bs", "netns", self.router_b_ns)
-        self._ip("link", "set", "v-sb", "netns", self.server_ns)
+            self._ip("link", "set", "v-cb", "netns", self.client_ns)
+            self._ip("link", "set", "v-bc", "netns", self.router_b_ns)
+            self._ip("link", "set", "v-bs", "netns", self.router_b_ns)
+            self._ip("link", "set", "v-sb", "netns", self.server_ns)
 
-        # Path A: 10.8.1.0/24 and 10.8.2.0/24
-        self._ip("addr", "add", "10.8.1.10/24", "dev", "v-ca", netns=self.client_ns)
-        self._ip("addr", "add", "10.8.1.1/24", "dev", "v-ac", netns=self.router_a_ns)
-        self._ip("addr", "add", "10.8.2.1/24", "dev", "v-as", netns=self.router_a_ns)
-        self._ip("addr", "add", "10.8.2.20/24", "dev", "v-sa", netns=self.server_ns)
+            self._ip("addr", "add", "10.8.1.10/24", "dev", "v-ca", netns=self.client_ns)
+            self._ip("addr", "add", "10.8.1.1/24", "dev", "v-ac", netns=self.router_a_ns)
+            self._ip("addr", "add", "10.8.2.1/24", "dev", "v-as", netns=self.router_a_ns)
+            self._ip("addr", "add", "10.8.2.20/24", "dev", "v-sa", netns=self.server_ns)
 
-        # Path B: 10.8.3.0/24 and 10.8.4.0/24
-        self._ip("addr", "add", "10.8.3.10/24", "dev", "v-cb", netns=self.client_ns)
-        self._ip("addr", "add", "10.8.3.1/24", "dev", "v-bc", netns=self.router_b_ns)
-        self._ip("addr", "add", "10.8.4.1/24", "dev", "v-bs", netns=self.router_b_ns)
-        self._ip("addr", "add", "10.8.4.20/24", "dev", "v-sb", netns=self.server_ns)
+            self._ip("addr", "add", "10.8.3.10/24", "dev", "v-cb", netns=self.client_ns)
+            self._ip("addr", "add", "10.8.3.1/24", "dev", "v-bc", netns=self.router_b_ns)
+            self._ip("addr", "add", "10.8.4.1/24", "dev", "v-bs", netns=self.router_b_ns)
+            self._ip("addr", "add", "10.8.4.20/24", "dev", "v-sb", netns=self.server_ns)
 
-        for dev in ("v-ca", "v-cb"):
-            self._ip("link", "set", dev, "up", netns=self.client_ns)
-        for dev in ("v-ac", "v-as"):
-            self._ip("link", "set", dev, "up", netns=self.router_a_ns)
-        for dev in ("v-bc", "v-bs"):
-            self._ip("link", "set", dev, "up", netns=self.router_b_ns)
-        for dev in ("v-sa", "v-sb"):
-            self._ip("link", "set", dev, "up", netns=self.server_ns)
+            for dev in ("v-ca", "v-cb"):
+                self._ip("link", "set", dev, "up", netns=self.client_ns)
+            for dev in ("v-ac", "v-as"):
+                self._ip("link", "set", dev, "up", netns=self.router_a_ns)
+            for dev in ("v-bc", "v-bs"):
+                self._ip("link", "set", dev, "up", netns=self.router_b_ns)
+            for dev in ("v-sa", "v-sb"):
+                self._ip("link", "set", dev, "up", netns=self.server_ns)
+        except Exception:
+            self.cleanup()
+            raise
 
         self._ready = True
         return {
@@ -115,10 +118,11 @@ class CompareTopology:
     def cleanup(self):
         failures = 0
         self._ready = False
-        for ns in reversed(self.namespaces):
+        for ns in reversed(self._created_namespaces):
             res = subprocess.run(["ip", "netns", "del", ns], capture_output=True)
             if res.returncode != 0:
                 failures += 1
+        self._created_namespaces = []
         if self.temp_dir and os.path.exists(self.temp_dir):
             shutil.rmtree(self.temp_dir, ignore_errors=True)
             self.temp_dir = None

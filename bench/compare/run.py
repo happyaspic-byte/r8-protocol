@@ -26,7 +26,11 @@ def run_package(output_dir: Path, smoke: bool = False, privileged: bool = False)
                 topo = topologies.get(plan["seed"])
                 if topo is None:
                     topo = CompareTopology(plan["seed"])
-                    topo.setup()
+                    try:
+                        topo.setup()
+                    except Exception:
+                        topo.cleanup()
+                        raise
                     topologies[plan["seed"]] = topo
             trial, trial_packets = _dispatch(plan, topo)
             trials.append(trial)
@@ -45,15 +49,14 @@ def run_package(output_dir: Path, smoke: bool = False, privileged: bool = False)
     trial_path.write_text("".join(model.canonical_json(row) + "\n" for row in trials))
     packet_path.write_text("".join(model.canonical_json(row) + "\n" for row in packets))
 
+    eligible = False
+    eligible_path = output_dir / "publication_eligible.json"
+    eligible_path.write_text(model.canonical_json(eligible) + "\n")
     files = {
         "trial.jsonl": model.sha256_hex(trial_path.read_bytes()),
         "packet.jsonl": model.sha256_hex(packet_path.read_bytes()),
+        "publication_eligible.json": model.sha256_hex(eligible_path.read_bytes()),
     }
-    eligible = bool(trials) and all(
-        row.get("status") == "completed" and row.get("cleanup_status") == "passed"
-        for row in trials
-    )
-    (output_dir / "publication_eligible.json").write_text(model.canonical_json(eligible) + "\n")
     manifest = {
         "series": "r8-external-comparison-v1",
         "smoke": smoke,

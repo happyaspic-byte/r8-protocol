@@ -14,6 +14,18 @@ class ObservedTopology:
             "control_bytes": 8,
             "subflows": 2,
             "path_bytes": {"primary": 64, "secondary": 64},
+            "packets": [{"path": "primary", "bytes": 64}, {"path": "secondary", "bytes": 64}],
+        }
+
+
+class EmptyCutTopology:
+    def cut_primary(self):
+        return {
+            "observed": True,
+            "event_ns": 1,
+            "control_bytes": 0,
+            "subflows": 2,
+            "path_bytes": {},
             "packets": [],
         }
 
@@ -38,6 +50,23 @@ class TestComparisonAdapters(unittest.TestCase):
             trial, _ = mptcp_runner.run_mptcp_trial({"mechanism": "linux-mptcp"}, topo)
         self.assertEqual(trial["status"], "completed")
         self.assertEqual(trial["subflows"], 2)
+
+    def test_empty_path_cut_does_not_complete_any_mechanism(self):
+        topo = EmptyCutTopology()
+        with mock.patch.object(quic_runner, "aioquic_available", return_value=True):
+            quic, _ = quic_runner.run_quic_trial({"mechanism": "quic-migration"}, topo)
+        with mock.patch.object(quic_runner, "aioquic_available", return_value=True):
+            mobility, _ = quic_runner.run_quic_trial({"mechanism": "r8-mobility"}, topo)
+        with mock.patch.object(mptcp_runner, "mptcp_available", return_value=True), mock.patch.object(
+            mptcp_runner.socket, "socket"
+        ):
+            mptcp, _ = mptcp_runner.run_mptcp_trial({"mechanism": "linux-mptcp"}, topo)
+        redundant, _ = mptcp_runner.run_mptcp_trial({"mechanism": "r8-redundant"}, topo)
+        with mock.patch.object(lisp_runner, "preflight", return_value={"ok": True, "reason": None, "binary": "/usr/bin/oor", "version": "1.3.0"}):
+            lisp, _ = lisp_runner.run_lisp_trial({"mechanism": "lisp-xtr"}, topo)
+        for trial in (quic, mobility, mptcp, redundant, lisp):
+            self.assertNotEqual(trial["status"], "completed")
+            self.assertEqual(trial["failure_reason"], "transfer_unproven")
 
     def test_lisp_preflight_fails_closed(self):
         with mock.patch.object(lisp_runner, "_which", return_value=None):

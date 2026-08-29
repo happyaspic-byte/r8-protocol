@@ -47,6 +47,16 @@ def plan_rows():
                 ordinal += 1
 
 
+def transfer_proven(observation, extra_packets=None):
+    path_bytes = observation.get("path_bytes") or {}
+    packets = observation.get("packets")
+    if not packets:
+        packets = extra_packets or []
+    has_bytes = any(isinstance(value, int) and not isinstance(value, bool) and value > 0 for value in path_bytes.values())
+    has_packets = isinstance(packets, list) and len(packets) > 0
+    return has_bytes and has_packets
+
+
 def validate_plan_invariants(rows):
     errors = []
     if len(rows) != 550:

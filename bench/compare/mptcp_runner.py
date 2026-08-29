@@ -3,6 +3,8 @@ import socket
 import subprocess
 import time
 
+from . import model
+
 
 def mptcp_available() -> bool:
     proto = getattr(socket, "IPPROTO_MPTCP", None)
@@ -56,6 +58,8 @@ def _execute_mptcp(plan, topo):
         return _fail(plan, "path_cut_unobserved", status="failed")
     if cut.get("subflows", 0) < 2:
         return _fail(plan, "mptcp_subflows_unproven", status="failed")
+    if not model.transfer_proven(cut):
+        return _fail(plan, "transfer_unproven", status="failed")
     trial = dict(plan)
     trial.update({
         "status": "completed",
@@ -79,6 +83,8 @@ def _execute_r8_redundant(plan, topo):
     t1 = time.monotonic_ns()
     if not cut.get("observed"):
         return _fail(plan, "path_cut_unobserved", status="failed")
+    if not model.transfer_proven(cut):
+        return _fail(plan, "transfer_unproven", status="failed")
     trial = dict(plan)
     trial.update({
         "status": "completed",

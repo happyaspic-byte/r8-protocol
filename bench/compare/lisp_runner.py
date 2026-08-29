@@ -4,6 +4,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from . import model
+
 REQUIRED_VERSION = "1.3.0"
 PUBLIC_MARKERS = ("map-resolver 8.", "map-server 8.", "0.0.0.0", "lisp.cisco.com")
 
@@ -90,12 +92,20 @@ def run_lisp_trial(plan: dict, topo=None):
                 "cleanup_status": "passed",
             })
             return trial, []
+        if not model.transfer_proven(cut):
+            trial.update({
+                "status": "failed",
+                "failure_reason": "transfer_unproven",
+                "cleanup_status": "passed",
+            })
+            return trial, []
         trial.update({
             "status": "completed",
             "failure_reason": None,
             "cleanup_status": "passed",
             "event_ns": cut["event_ns"],
             "outage_ns": cut.get("outage_ns", 0),
+            "path_bytes": cut.get("path_bytes", {}),
             "oor_binary": check["binary"],
             "oor_version": check["version"],
         })

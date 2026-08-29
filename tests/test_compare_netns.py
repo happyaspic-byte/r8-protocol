@@ -25,3 +25,30 @@ class TestCompareNetns(unittest.TestCase):
         cut = topo.cut_primary()
         self.assertFalse(cut["observed"])
         self.assertEqual(cut["packets"], [])
+
+    def test_setup_failure_deletes_already_created_namespaces(self):
+        import subprocess
+        from unittest import mock
+
+        topo = netns.CompareTopology(seed=7)
+        created = []
+        deleted = []
+
+        def fake_run(cmd, **kwargs):
+            if cmd[:3] == ["ip", "netns", "add"]:
+                ns = cmd[3]
+                if ns.endswith("-ra"):
+                    raise subprocess.CalledProcessError(1, cmd)
+                created.append(ns)
+                return mock.Mock(returncode=0, stdout="", stderr="")
+            if cmd[:3] == ["ip", "netns", "del"]:
+                deleted.append(cmd[3])
+                return mock.Mock(returncode=0, stdout="", stderr="")
+            return mock.Mock(returncode=0, stdout="", stderr="")
+
+        with mock.patch.object(netns.subprocess, "run", side_effect=fake_run):
+            with self.assertRaises(subprocess.CalledProcessError):
+                topo.setup()
+        self.assertEqual(created, ["r8cmp-7-cli", "r8cmp-7-srv"])
+        self.assertEqual(deleted, ["r8cmp-7-srv", "r8cmp-7-cli"])
+        self.assertFalse(topo._ready)

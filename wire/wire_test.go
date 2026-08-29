@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/happyaspic-byte/r8-protocol/wire"
@@ -177,6 +178,40 @@ func TestBuildRejectsInvalidSourceLengths(t *testing.T) {
 	_, err := wire.BuildPacket(wire.PacketInput{Header: wire.Header{HopLimit: 64}, SourceLOC: make([]byte, 15), DestinationLOC: make([]byte, 16)}, wire.MaxPacketSize)
 	if !errors.Is(err, wire.ErrLengthOverflow) {
 		t.Fatalf("BuildPacket() error = %v, want ErrLengthOverflow", err)
+	}
+}
+
+func TestBuildCTLBoundsBodyBeforeAllocation(t *testing.T) {
+	_, file, _, _ := runtime.Caller(0)
+	src, err := os.ReadFile(filepath.Join(filepath.Dir(file), "wire.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(src)
+	start := strings.Index(text, "func BuildCTL(")
+	if start < 0 {
+		t.Fatal("BuildCTL missing")
+	}
+	rest := text[start+1:]
+	end := strings.Index(rest, "\nfunc ")
+	if end < 0 {
+		t.Fatal("BuildCTL end missing")
+	}
+	fn := text[start : start+1+end]
+	alloc := strings.Index(fn, "make([]byte, 4+len(body))")
+	if alloc < 0 {
+		t.Fatal("BuildCTL allocation missing")
+	}
+	if !strings.Contains(fn[:alloc], "MaxPacketSize") {
+		t.Fatal("BuildCTL must reject oversized body before allocation")
+	}
+}
+
+func TestBuildCTLRejectsOversizedBody(t *testing.T) {
+	header := wire.Header{HopLimit: 64}
+	_, err := wire.BuildCTL(header, 1, 0, make([]byte, wire.MaxPacketSize), wire.MaxPacketSize)
+	if !errors.Is(err, wire.ErrBudget) && wire.ErrorCategory(err) != wire.ErrLengthOverflow {
+		t.Fatalf("BuildCTL() error = %v, want ErrBudget or LENGTH_OVERFLOW", err)
 	}
 }
 

@@ -41,7 +41,7 @@ tools/
 
 ## Isolated comparison series (P1)
 
-A new closed-lab comparison series lives in `bench/compare/` and does **not** modify frozen Q1, Q2, or Q3 contracts. It compares R8 session mobility against QUIC connection migration, and R8 Profile-3 redundant delivery against Linux MPTCP failover. Missing QUIC/MPTCP prerequisites fail closed and never fabricate success.
+A closed-lab comparison scaffold lives in `bench/compare/` and does **not** modify frozen Q1, Q2, or Q3 contracts. It preregisters R8/QUIC/LISP mobility and R8/Linux-MPTCP redundancy cells. Current adapters fail closed with `publication_eligible=false`; they do not claim protocol-transfer results or independent provenance.
 
 ```bash
 make compare-smoke

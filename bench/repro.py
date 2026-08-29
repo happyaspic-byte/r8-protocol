@@ -42,11 +42,13 @@ def build_bundle(root: Path, outputs=None, reproducer_identity=None, evidence_pa
     status = _git(["status", "--porcelain"], root)
     outputs = outputs or {}
     hashed = {name: sha256_hex(data) for name, data in outputs.items()}
-    independent = bool(reproducer_identity) and bool(evidence_path)
+    evidence = Path(evidence_path) if evidence_path else None
+    evidence_sha256 = sha256_hex(evidence.read_bytes()) if evidence and evidence.is_file() else None
+    independent = False
     if os.environ.get("GITHUB_ACTIONS") or os.environ.get("CI"):
-        independent = False
         reproducer_identity = None
         evidence_path = None
+        evidence_sha256 = None
     bundle = {
         "schema": SCHEMA_VERSION,
         "commit": commit,
@@ -63,6 +65,7 @@ def build_bundle(root: Path, outputs=None, reproducer_identity=None, evidence_pa
             "independent_reproducer": independent,
             "reproducer_identity": reproducer_identity,
             "evidence": str(evidence_path) if evidence_path else None,
+            "evidence_sha256": evidence_sha256,
         },
         "limitations": [
             "Isolated-lab evidence only.",
@@ -79,12 +82,15 @@ def validate_bundle(bundle: dict):
         errors.append("schema mismatch")
     attestation = bundle.get("attestation") or {}
     if attestation.get("independent_reproducer") is True:
+        errors.append("independent_reproducer requires external verification")
         if bundle.get("environment", {}).get("ci"):
             errors.append("CI cannot self-claim independent_reproducer")
         if not attestation.get("reproducer_identity"):
             errors.append("independent_reproducer requires identity")
         if not attestation.get("evidence"):
             errors.append("independent_reproducer requires evidence")
+        if not attestation.get("evidence_sha256"):
+            errors.append("independent_reproducer requires evidence_sha256")
     if not bundle.get("commit") or not bundle.get("tree"):
         errors.append("missing commit/tree")
     return errors

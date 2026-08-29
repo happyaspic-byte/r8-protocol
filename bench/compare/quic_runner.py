@@ -2,6 +2,8 @@
 import importlib.util
 import time
 
+from . import model
+
 
 def aioquic_available() -> bool:
     return importlib.util.find_spec("aioquic") is not None
@@ -32,9 +34,6 @@ def run_quic_trial(plan: dict, topo):
 
 
 def _execute_quic_migration(plan, topo):
-    from aioquic.quic.configuration import QuicConfiguration
-
-    QuicConfiguration(is_client=True)
     if not hasattr(topo, "cut_primary"):
         return _fail(plan, "topology_missing_cut_primary")
     t0 = time.monotonic_ns()
@@ -42,6 +41,8 @@ def _execute_quic_migration(plan, topo):
     t1 = time.monotonic_ns()
     if not cut.get("observed"):
         return _fail(plan, "path_cut_unobserved", status="failed")
+    if not model.transfer_proven(cut):
+        return _fail(plan, "transfer_unproven", status="failed")
     trial = dict(plan)
     trial.update({
         "status": "completed",
@@ -51,6 +52,7 @@ def _execute_quic_migration(plan, topo):
         "last_pre_event_ns": t0,
         "first_post_event_ns": t1,
         "outage_ns": max(0, t1 - cut["event_ns"]),
+        "path_bytes": cut.get("path_bytes", {}),
         "mechanism_control_bytes": cut.get("control_bytes", 0),
     })
     return trial, cut.get("packets", [])
@@ -64,6 +66,8 @@ def _execute_r8_mobility(plan, topo):
     t1 = time.monotonic_ns()
     if not cut.get("observed"):
         return _fail(plan, "path_cut_unobserved", status="failed")
+    if not model.transfer_proven(cut):
+        return _fail(plan, "transfer_unproven", status="failed")
     trial = dict(plan)
     trial.update({
         "status": "completed",
@@ -73,6 +77,7 @@ def _execute_r8_mobility(plan, topo):
         "last_pre_event_ns": t0,
         "first_post_event_ns": t1,
         "outage_ns": max(0, t1 - cut["event_ns"]),
+        "path_bytes": cut.get("path_bytes", {}),
         "mechanism_control_bytes": cut.get("control_bytes", 0),
     })
     return trial, cut.get("packets", [])
